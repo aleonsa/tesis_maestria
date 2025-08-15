@@ -1,0 +1,37 @@
+# MATLAB
+*.asv
+*.m~
+*.fig
+*.mdl
+*.slx
+*.mex*
+*.mat
+*.p
+*.bak
+*.autosave
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.pyo
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# Virtual Environment (solo dentro de python_codes)
+python_codes/venv/
+python_codes/.venv/
+python_codes/env/
+python_codes/ENV/
+
+# PDFs (Literatura)
+Literatura/*.pdf
+
+# OS generated files
+.DS_Store
+Thumbs.db
