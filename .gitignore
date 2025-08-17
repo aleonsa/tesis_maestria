@@ -32,6 +32,24 @@ python_codes/ENV/
 # PDFs (Literatura)
 Literatura/*.pdf
 
+# LaTeX/Beamer
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.nav
+*.out
+*.snm
+*.synctex.gz
+*.toc
+*.vrb
+*.bcf
+*.run.xml
+*.xdv
+*.vrb
+
 # OS generated files
 .DS_Store
 Thumbs.db

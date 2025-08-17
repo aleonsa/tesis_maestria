@@ -1,0 +1,25 @@
+\begin{frame}
+    \sectionpage
+\end{frame}
+
+\begin{frame}{Motivation and Context}
+    \begin{itemize}
+        \item \textbf{Why is robot control still a relevant problem?}
+        \item \textbf{Classic challenges:} nonlinearity, uncertainty, and disturbances
+        \item \textbf{The key problem:} linear control shows limitations against strong nonlinearities and lacks robustness
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Objectives}
+    \begin{block}{Main Objective}
+        To design a robust finite-time controller for robot manipulators that ensures stability and performance in the presence of uncertainties and disturbances.
+    \end{block}
+    
+    \textbf{Specific Objectives:}
+    \begin{itemize}
+        \item Develop a controller featuring \textbf{discontinuous integral action} for disturbance rejection and zero steady-state error.
+        \item Ensure the stability of the closed-loop system in the presence of \textbf{quadratic Coriolis terms}.
+        \item Generalize the methodology for the \textbf{MIMO case} (n-DOF manipulators).
+        \item Eliminate the need for \textbf{velocity measurements} by employing an output feedback approach using continuous homogeneous observers.
+    \end{itemize}
+\end{frame}

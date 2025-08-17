@@ -1,0 +1,171 @@
+\begin{frame}
+	\sectionpage
+\end{frame}
+
+% \begin{frame}{Differential Inclusions (DI's)}
+% 	Uncertain or discontinuous systems are more appropriately described by \textbf{Differential Inclusions} (DI) $\dot{x} \in F(t,x)$ than by Differential Equations (DE).
+% 	% \vspace{0.5cm}
+% 	% A \textbf{solution} of these DI's is any function $x(t)$ such that, defined in some interval $I\subseteq [0,\infty)$, which is absolutely continuous on each compact subinterval of $I$ and such that $\dot{x} \in F(t,x(t))$ almost everywhere in $I$.
+% 	\begin{block}{Filippov Construction}
+% 		For a discontinuous DE $\dot{x} = f(t,x)$, the Filippov DI is constructed as:
+% 		$$F(t,x) = \bigcap_{\delta > 0} \bigcap_{\mu(S) = 0} \text{co}\{f(B(x,\delta) \setminus S)\}$$
+% 	\end{block}
+% 	where $B(x,\delta)$ is the ball of radius $\delta$ centered at $x$, and $\mu(S) = 0$ means that the set $S$ has Lebesgue measure zero, and $\text{co}$ denotes the convex hull. \cite{Filippov1988}
+% \end{frame}
+
+% \begin{frame}{Differential Inclusions (DI's)}
+% 	\begin{block}{Standard Assumptions}
+% 		$F(t,x)$ satisfies the standard assumptions if:
+% 		\begin{itemize}
+% 			\item[\textbf{(A1)}] $F(t,x)$ is nonempty, compact, convex
+% 			\item[\textbf{(A2)}] Upper semicontinuous in $x$
+% 			\item[\textbf{(A3)}] Measurable in $t$
+% 			\item[\textbf{(A4)}] Locally bounded
+% 		\end{itemize}
+% 	\end{block}
+
+% 	\begin{alertblock}{Existence}
+% 		If (A1)-(A4) hold, then there exists at least one solution for each initial condition $(t_0, x_0)$.
+% 	\end{alertblock}
+
+% \end{frame}
+
+
+% \begin{frame}{Homogeneity}
+%     For a given vector $x=[x_1, x_2, \ldots, x_n]^T \in \mathbb{R}^n$ and for every $\epsilon > 0$, the \textbf{dilation operator} is defined as:
+%     $$
+%         \delta_{\epsilon}^r x \equiv [\epsilon^{r_1} x_1, \epsilon^{r_2} x_2, \ldots, \epsilon^{r_n} x_n]^T,
+%     $$
+%     where $r_i > 0$ are the \textbf{weights} of the coordinates, and let 
+% \end{frame}
+
+\begin{frame}{Differential Inclusions}
+
+	\textbf{Why Differential Inclusions?}
+
+	Uncertain or discontinuous systems are more appropriately described by Differential Inclusions (DI)
+	$$\dot{x} \in F(t,x)$$
+	than by Differential Equations (DE).
+
+	\vspace{0.5cm}
+	\textbf{Solution of a DI:}
+
+	A solution of the DI $\dot{x} \in F(t,x)$ is any function $x(t)$, defined in some interval $I \subseteq [0,\infty)$, which is:
+	\begin{itemize}
+		\item Absolutely continuous on each compact subinterval of $I$
+		\item Satisfies $\dot{x}(t) \in F(t,x(t))$ almost everywhere on $I$
+	\end{itemize}
+
+	For a discontinuous DE $\dot{x} = f(t,x)$, the function $x(t)$ is a \alert{generalized solution} if and only if it is a solution of the associated DI $\dot{x} \in F(t,x)$.
+
+\end{frame}
+
+\begin{frame}{Filippov Differential Inclusions}
+
+	We consider the DI $\dot{x} \in F(t,x)$ associated to $\dot{x} = f(t,x)$ as given by \textbf{A.F. Filippov's approach} - the \alert{Filippov DI} with \alert{Filippov solutions}. \cite{Filippov1988}
+
+	\vspace{0.5cm}
+	\textbf{Standard Assumptions:}
+
+	The multivalued map $F(t,x)$ satisfies the standard assumptions if:
+
+	\begin{itemize}
+		\item[\textbf{(H1)}] $F(t,x)$ is nonempty, compact, convex subset of $\mathbb{R}^n$
+		\item[\textbf{(H2)}] $F(t,x)$ is upper semi-continuous as a set valued map of $x$
+		\item[\textbf{(H3)}] $F(t,x)$ is Lebesgue measurable as a set valued map of $t$
+		\item[\textbf{(H4)}] $F(t,x)$ is locally bounded
+	\end{itemize}
+
+	\vspace{0.3cm}
+
+    \begin{block}{Existence Theorem}
+        If $F(t,x)$ satisfies (H1)-(H4), then for each pair $(t_0,x_0) \in [0,\infty) \times \mathbb{R}^n$ there exists at least one solution $x(t)$ with $x(t_0) = x_0$.
+    \end{block}
+	% \alert{Existence Theorem:} If $F(t,x)$ satisfies (H1)-(H4), then for each pair $(t_0,x_0) \in [0,\infty) \times \mathbb{R}^n$ there exists at least one solution $x(t)$ with $x(t_0) = x_0$.
+
+\end{frame}
+
+\begin{frame}{Homogeneity - Dilation and Functions}
+
+	\textbf{Dilation Operator:}
+
+	For $x = [x_1, \ldots, x_n]^\top$ and $\lambda > 0$:
+	$$\Lambda_r^\lambda x := [\lambda^{r_1} x_1, \ldots, \lambda^{r_n} x_n]^\top$$
+	where $r = [r_1, \ldots, r_n]^\top$ with $r_i > 0$ are the \textbf{weights} of the coordinates.
+
+	\vspace{0.5cm}
+	\textbf{$r$-Homogeneous Function:}
+
+	A function $V: \mathbb{R}^n \to \mathbb{R}$ is called \alert{$r$-homogeneous of degree $l \in \mathbb{R}$} if:
+	$$V(\Lambda_r^\lambda x) = \lambda^l V(x) \quad \text{for every } \lambda > 0$$
+
+	\textbf{$r$-Homogeneous Vector Field:}
+
+	A vector field $f: \mathbb{R}^n \to \mathbb{R}^n$ is called \alert{$r$-homogeneous of degree $l$} if:
+	$$f(\Lambda_r^\lambda x) = \lambda^l \Lambda_r^\lambda f(x)$$
+
+\end{frame}
+
+\begin{frame}{Homogeneity - Norm and Systems}
+
+	\textbf{Homogeneous Norm:}
+
+	Given a vector $r$ and dilation $\Lambda_r^\lambda x$, the homogeneous norm is defined by:
+	$$\|x\|_{r,p} := \left(\sum_{i=1}^n |x_i|^{p/r_i}\right)^{1/p}, \quad \forall x \in \mathbb{R}^n$$
+	for any $p \geq 1$.
+
+	\vspace{0.5cm}
+	\textbf{Homogeneous System:}
+
+	A system is called \alert{homogeneous} if its vector field (or vector-set field) is $r$-homogeneous of some degree.
+
+	\vspace{0.3cm}
+	A vector-set field $F(x) \subset \mathbb{R}^n$ is \alert{$r$-homogeneous of degree $l$} if:
+	$$F(\Lambda_r^\lambda x) = \lambda^l \Lambda_r^\lambda F(x)$$
+
+\end{frame}
+
+\begin{frame}{Homogeneous Differential Inclusions}
+
+	\textbf{Homogeneous DI:}
+
+	A DI $\dot{x} \in F(x)$ is $r$-homogeneous of degree $l$ if the vector-set field $F(x)$ satisfies:
+	$$F(\Lambda_r^\lambda x) = \lambda^l \Lambda_r^\lambda F(x), \quad \forall \lambda > 0$$
+
+	\vspace{0.5cm}
+	\textbf{Key Property - Local to Global:}
+
+	For homogeneous systems of degree $l < 0$, \alert{local stability implies global stability}. This remarkable property allows homogeneity to "extend" local properties to global ones.
+
+	\vspace{0.5cm}
+	\textbf{Lyapunov Analysis:}
+
+	For homogeneous DI, if there exists a homogeneous Lyapunov function $V(x)$ such that:
+	$$\frac{\partial V}{\partial x} \nu \leq -c(\|x\|) \quad \text{for all } \nu \in F(x)$$
+	then the origin is Uniformly Globally Asymptotically Stable (UGAS).
+
+\end{frame}
+
+\begin{frame}{Finite-Time Stability}
+
+	\textbf{Global Uniform Finite-Time Stability (GUFTS):}
+
+	A DI $\dot{x} \in F(x)$ is GUFTS at 0 if:
+	\begin{itemize}
+		\item $x(t) = 0$ is a Lyapunov-stable solution
+		\item For any $R > 0$ there exists $T > 0$ such that any trajectory starting within $\|x\| < R$ reaches zero in time $T$
+	\end{itemize}
+
+	\vspace{0.5cm}
+	\alert{Fundamental Result:} For $r$-homogeneous DI's of degree $l < 0$:
+	$$\text{Local asymptotic stability} \Rightarrow \text{Global finite-time stability}$$
+
+	\vspace{0.5cm}
+	\textbf{Application:} Homogeneous discontinuous controllers achieve:
+	\begin{itemize}
+		\item Finite-time convergence
+		\item Robustness against perturbations
+		\item Global stability from local analysis
+	\end{itemize}
+
+\end{frame}

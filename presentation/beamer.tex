@@ -1,0 +1,67 @@
+%----------------------------------------------------------------------------------------
+%    PACKAGES AND THEMES
+%----------------------------------------------------------------------------------------
+
+\documentclass[aspectratio=169,xcolor=dvipsnames]{beamer}
+
+\makeatletter
+\def\input@path{{theme/}}
+\makeatother
+\usetheme{SimplePlus}
+
+\usepackage{hyperref}
+\usepackage{graphicx} % Allows including images
+\usepackage{booktabs} % Allows the use of \toprule, \midrule and \bottomrule in tables
+\usepackage{natbib} % For bibliography management
+
+%----------------------------------------------------------------------------------------
+%    TITLE PAGE
+%----------------------------------------------------------------------------------------
+
+\title{Robust Finite-Time Control of Robot Manipulators via Discontinous Integral Action}
+\subtitle{A Lyapunov-Based Approach with Output Feedback}
+
+\author{Alejandro León}
+
+\institute
+{
+    Instituto de Ingeniería \\
+    Universidad Nacional Autónoma de México % Your institution for the title page
+}
+\date{\today} % Date, can be changed to a custom date
+
+%----------------------------------------------------------------------------------------
+%    PRESENTATION SLIDES
+%----------------------------------------------------------------------------------------
+
+\begin{document}
+
+\begin{frame}
+    % Print the title page as the first slide
+    \titlepage
+\end{frame}
+
+\begin{frame}{Contents}
+    % Throughout your presentation, if you choose to use \section{} and \subsection{} commands, these will automatically be printed on this slide as an overview of your presentation
+    \tableofcontents
+\end{frame}
+
+%----------------- section 1 --------------------
+\section{Introduction}
+\input{sections/01_Introduction.tex}
+%------------------------------------------------
+
+%----------------- section 2 --------------------
+\section{Theoretical Background}
+\input{sections/02_TheoreticalBackground.tex}
+%------------------------------------------------
+
+\begin{frame}{References}
+    \footnotesize
+    \bibliographystyle{apalike}
+    \bibliography{reference}
+\end{frame}
+
+%----------------------------------------------------------------------------------------
+
+\end{document}
