@@ -1,0 +1,452 @@
+\begin{frame}
+  \sectionpage
+\end{frame}
+
+\begin{frame}{Literature Review: Finite-Time Control for Manipulators}
+\footnotesize
+ \begin{block}{Focus Areas}
+   \begin{itemize}
+     \item Discontinuous PID control for finite-time convergence
+     \item Output feedback design using homogeneous observers
+     \item Finite-time stability analysis for robot manipulators
+     \item Robustness to uncertainties and quadratic nonlinearities
+   \end{itemize}
+ \end{block}
+ 
+ \vspace{0.3cm}
+ 
+ \begin{columns}
+   \begin{column}{0.6\textwidth}
+     \textbf{Papers Analyzed:}
+     \begin{enumerate}
+       \item \textbf{\cite{Mor20}} Discontinuous PID (SISO baseline)
+       \item \textbf{\cite{MerMor20}} Advanced theory and proofs
+       \item \textbf{\cite{CruNun21}} Finite-time for manipulators
+       \item \textbf{\cite{CruMor17}} Homogeneous Lyapunov tools
+     \end{enumerate}
+   \end{column}
+   
+   \begin{column}{0.4\textwidth}
+     \begin{alertblock}{Key Question}
+       How to extend discontinuous PID from SISO to MIMO manipulators with quadratic Coriolis terms?
+     \end{alertblock}
+   \end{column}
+ \end{columns}
+ 
+ \vspace{0.2cm}
+ 
+ \textbf{Research Gap}
+   No existing work combines: \textcolor{blue}{disc-PID} + \textcolor{blue}{MIMO (manipulators)} + \textcolor{blue}{quadratic terms handling} + \textcolor{blue}{output feedback}
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}{Paper 1: Moreno 2020 - Discontinuous PID for SISO Systems}
+  \small
+  \textbf{Core Idea:} Discontinuous integral action $\dot{\sigma} = \text{sign}(e_1)$ achieves finite-time tracking and disturbance rejection for SISO systems with relative degree 2.
+  \begin{columns}
+    \begin{column}{0.65\textwidth}
+      \small
+      
+      \vspace{0.2cm}
+      
+      \only<1>{
+        \textbf{Mathematical Contribution:}
+        \footnotesize
+        \begin{itemize}
+          \item Controller: $u = -k_1 \left \lceil e_1 + k_2 \lceil e_2 \rfloor^{3/2} \right \rfloor^{1/3} - k_3\sigma$
+          \item Finite-time stability proof using homogeneous LF
+          \item Continuous homogeneous observer for velocity estimation:
+          \begin{align*}
+            \dot{\hat{e}}_1 &= -\lambda l_1 \lceil \hat{e}_1 - e_1\rfloor^{2/3} + \hat{e}_2 \\
+            \dot{\hat{e}}_2 &= -\lambda^2 l_2 \lceil \hat{e}_1 - e_1\rfloor^{1/3} - k_1 a_N \left \lceil e_1 + k_2 \lceil\hat{e}_2\rfloor^{3/2} \right \rfloor^{1/3}
+          \end{align*}
+          \item Output feedback implementation (position-only measurements)
+        \end{itemize}
+      }
+      
+      \only<2>{
+        \textbf{Advantages:}
+        \begin{itemize}
+          \item[+] Finite-time convergence with zero steady-state error
+          \item[+] Universal internal model for Lipschitz references/disturbances
+          \item[+] Simple low-dimensional controller structure
+          \item[+] Relaxed minimum-phase assumption (only BIBS required)
+          \item[+] Continuous control signal despite discontinuous integral
+          \item[+] Robust to parameter uncertainties
+        \end{itemize}
+      }
+      
+      \only<3>{
+        \textbf{Limitations:}
+        \begin{itemize}
+          \item[-] \textcolor{red}{SISO systems only} (robots are MIMO)
+          \item[-] \textcolor{red}{Assumes BIBS} (invalid for quadratic Coriolis terms)
+          \item[-] Technical challenges for discontinuous integral action
+        \end{itemize}
+      }
+      
+    \end{column}
+    
+    \begin{column}{0.35\textwidth}
+      \small
+      \only<1>{
+        \begin{equation*}
+          \begin{cases}
+            \dot{e}_1 = e_2 \\
+            \dot{e}_2 = b_0 + a_0 u \\
+            \dot{\sigma} = \text{sign}(e_1)
+          \end{cases}
+        \end{equation*}
+        \footnotesize{SISO system with Relative Degree=2}
+      }
+      
+      \only<2>{
+        \begin{block}{Key Innovation}
+          Discontinuous integral acts as "universal servomechanism" for large class of signals
+        \end{block}
+        
+        \vspace{0.2cm}
+        
+        \footnotesize{
+          \textbf{Assumptions:}
+          \begin{itemize}
+            \item $0 < a_m \leq a_0 \leq a_M$
+            \item $|\dot{\rho}| \leq L$ (Lipschitz)
+            \item BIBS zero dynamics
+          \end{itemize}
+        }
+      }
+      
+      \only<3>{
+        \begin{alertblock}{BIBS Problem}
+          For manipulators:
+          $$C(q,\dot{q})\dot{q} \propto \|\dot{q}\|^2$$
+          States grow quadratically, violating BIBS assumption
+        \end{alertblock}
+      }
+      
+    \end{column}
+  \end{columns}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%5
+\begin{frame}{Paper 2: Mercado-Moreno 2020 - Generalized Discontinuous Integral Theory}
+ \small
+ \textbf{Core Idea:} Homogeneous discontinuous integral action for arbitrary relative degree (RD) systems, generalizing super-twisting algorithm to higher orders.  
+ \begin{columns}
+  \begin{column}{0.65\textwidth}
+     \small
+     \vspace{0.2cm}
+     
+     \only<1>{
+       \textbf{Mathematical Contribution:}
+       \begin{itemize}
+         \item Controller: $u = -k_\rho \chi(\bar{x}_\rho) + z$, $ \dot{z} \in -K_I \psi(\bar{x}_\rho)$
+         \item Discontinuous integral $\psi(\bar{x}_\rho)$
+         \item Smooth homogeneous Lyapunov function for arbitrary $\rho$
+         \item Rigorous finite-time stability proof via modified backstepping
+         \item Continuous control signal despite discontinuous integral
+       \end{itemize}
+     }
+     
+     \only<2>{
+       \textbf{Advantages:}
+       \begin{itemize}
+         \item[+] Generalizes super-twisting to arbitrary relative degree
+         \item[+] Flexible integral structure (polynomial or rational forms)
+         \item[+] Handles larger class of perturbations than classical methods
+         \item[+] Smooth Lyapunov function (vs non-smooth in other works)
+         \item[+] Rigorous mathematical framework with complete proofs
+         \item[+] Scaling properties preserve stability
+       \end{itemize}
+     }
+     
+     \only<3>{
+       \textbf{Limitations:}
+       \begin{itemize}
+         \item[-] \textcolor{red}{SISO systems only} (robots are MIMO)
+         \item[-] \textcolor{red}{Arbitrary relative degree} (unnecessary complexity for RD=2)
+         \item[-] Requires full state measurement $(\sigma, \dot{\sigma}, \ldots, \sigma^{(\rho-1)})$
+         \item[-] Complex gain tuning procedure
+         \item[-] Needs robust exact differentiator for output feedback
+       \end{itemize}
+     }
+     
+   \end{column}
+   
+   \begin{column}{0.35\textwidth}
+     \small
+     \only<1>{
+       \begin{equation*}
+         \begin{cases}
+           \dot{x}_i = x_{i+1}, \; i=1,\ldots,\rho-1 \\
+           \dot{x}_\rho = g[u + \delta] \\
+         \end{cases}
+       \end{equation*}
+       \footnotesize{Arbitrary relative degree $\rho$}
+     }
+     
+     \only<2>{
+       \begin{block}{Key Innovation}
+         Unified framework for discontinuous integral action across all relative degrees
+       \end{block}
+       
+       \vspace{0.2cm}
+       
+       \footnotesize{
+         \textbf{Perturbation Class:}
+         \begin{itemize}
+           \item $|\delta_1| \leq \Delta_1 \|x\|^{d+r_\rho}$
+           \item $|\dot{\delta}_2| \leq \Delta_2$
+           \item Much larger than constant perturbations
+         \end{itemize}
+       }
+     }
+     
+     \only<3>{
+       \begin{alertblock}{Complexity Issue}
+         For robots (RD=2):
+         \begin{itemize}
+           \item Arbitrary $\rho$ adds unnecessary complexity
+           \item Our approach: direct RD=2 design
+         \end{itemize}
+       \end{alertblock}
+     }
+     
+   \end{column}
+ \end{columns}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{frame}{Paper 3: Cruz-Nunez 2020 - Strict Lyapunov Functions for Robot FT Control}
+ \small
+ \textbf{Core Idea:} Energy shaping framework to construct strict Lyapunov functions for finite-time control of robot manipulators using continuous controllers.    
+ \begin{columns}
+   \begin{column}{0.65\textwidth}
+    
+     \vspace{0.2cm}
+     
+     \only<1>{
+       \textbf{Mathematical Contribution:}
+       \begin{itemize}
+         \item Controller: $\tau = -\nabla_{\tilde{q}} U_c(\tilde{q}, q_d) - \nabla_{\dot{q}} F(\dot{q}) + M(q)\ddot{q}_d + C(q,\dot{q})\dot{q}_d$
+         \item Strict Lyapunov functions: $V_G = H^p + \gamma h(\tilde{q})M\dot{q}$, $V_L = H^p + \gamma \tilde{q}^T M\dot{q}$
+         \item Energy shaping conditions on potential $U_c$ and dissipation $F$ functions
+         \item Unified framework for regulation and tracking problems
+         \item Homogeneous controller design with $2r_2 > r_1 \geq r_2 > 0$
+       \end{itemize}
+     }
+     
+     \only<2>{
+       \textbf{Advantages:}
+       \begin{itemize}
+         \item[+] \textcolor{blue}{Applies to robot manipulators} (our target system)
+         \item[+] Finite-time convergence with continuous control
+         \item[+] No acceleration measurements required
+         \item[+] Solves both regulation and tracking problems
+         \item[+] Strict Lyapunov analysis ensures robust stability
+         \item[+] Energy-based design is intuitive for mechanical systems
+       \end{itemize}
+     }
+     
+     \only<3>{
+       \textbf{Limitations:}
+       \begin{itemize}
+         \item[-] \textcolor{red}{No integral action} (no disturbance rejection)
+         \item[-] \textcolor{red}{No discontinuous terms} for robustness
+         \item[-] Energy shaping approach different from PID structure
+         \item[-] Complex conditions on potential energy functions
+         \item[-] Requires full state feedback (position and velocity)
+       \end{itemize}
+     }
+   \end{column}
+   
+   \begin{column}{0.35\textwidth}
+     \small
+     \only<1>{
+       \begin{equation*}
+         H = \frac{1}{2}\dot{q}^T M(q)\dot{q} + U_d(\tilde{q}, q_d)
+       \end{equation*}
+       \footnotesize{Total energy function}
+       
+       \vspace{0.2cm}
+       
+       \footnotesize{
+         \textbf{Key conditions:}
+         \begin{itemize}
+           \item $\tilde{q}^T \nabla_{\tilde{q}} U_d \geq \beta|\tilde{q}|^{p_U+1}$
+           \item $F(\dot{q}) = \frac{1}{p_F+1}\dot{q}^T D \lfloor \dot{q} \rfloor^{p_F}$
+         \end{itemize}
+       }
+     }
+     
+     \only<2>{
+       \begin{block}{Key Achievement}
+         First to solve finite-time tracking for robots with continuous controllers
+       \end{block}
+       
+       \vspace{0.2cm}
+       
+       \footnotesize{
+         \textbf{Energy Shaping:}
+         \begin{itemize}
+           \item Natural for mechanical systems
+           \item Passivity-based design
+           \item Proven stability framework
+         \end{itemize}
+       }
+     }
+     
+     \only<3>{
+       \begin{alertblock}{Missing Elements}
+         For disturbance rejection:
+         \begin{itemize}
+           \item No integral action
+           \item No discontinuous terms
+           \item Limited robustness
+         \end{itemize}
+       \end{alertblock}
+     }
+     
+   \end{column}
+ \end{columns}
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%555
+
+\begin{frame}{Paper 4: Cruz-Moreno 2017 - Homogeneous HOSM Lyapunov Framework}
+ \small
+ \textbf{Core Idea:} Lyapunov-based design framework for homogeneous High-Order Sliding Mode controllers using modified backstepping approach.
+    
+ \begin{columns}
+   \begin{column}{0.65\textwidth}
+          \vspace{0.2cm}
+     
+     \only<1>{
+       \textbf{Mathematical Contribution:}
+       \begin{itemize}
+         \item General CLF framework: $V_\rho(x) = \gamma_{\rho-1}V_{\rho-1} + W_\rho(x)$
+         \item Modified backstepping for discontinuous controllers
+         \item Homogeneous CLF construction for arbitrary relative degree
+         \item Controllers: $u_D = -k_\rho \left \lceil \sigma_\rho(x) \right \rfloor^0$, $u_Q = -k_\rho \frac{\sigma_\rho(x)}{M(x)}$
+         \item Unified framework for nested and polynomial HOSM types
+       \end{itemize}
+     }
+     
+     \only<2>{
+       \textbf{Advantages:}
+       \begin{itemize}
+         \item[+] \textcolor{blue}{Rigorous Lyapunov framework} for HOSM design
+         \item[+] Explicit gain calculation procedure
+         \item[+] Covers large family of discontinuous controllers
+         \item[+] Finite-time stability guarantees with convergence time bounds
+         \item[+] Extension to variable-gain controllers
+         \item[+] Foundation for subsequent discontinuous control work
+       \end{itemize}
+     }
+     
+     \only<3>{
+       \textbf{Limitations:}
+       \begin{itemize}
+         \item[-] \textcolor{red}{SISO systems only}
+         \item[-] \textcolor{red}{Pure sliding mode approach} (no integral PID structure)
+         \item[-] Requires full state measurement up to $\sigma^{(\rho-1)}$
+         \item[-] Complex CLF construction for higher orders
+         \item[-] Conservative gain calculation in practice
+       \end{itemize}
+     }
+   \end{column}
+   
+   \begin{column}{0.35\textwidth}
+     \small
+     \only<1>{
+       \begin{equation*}
+         \begin{cases}
+           \dot{x}_i = x_{i+1}, \; i=1,\ldots,\rho-1 \\
+           \dot{x}_\rho \in [-C,C] + [K_m,K_M]u
+         \end{cases}
+       \end{equation*}
+       \footnotesize{Standard HOSM model}
+       
+       \vspace{0.2cm}
+       
+       \footnotesize{
+         \textbf{Homogeneity:} $r_s = (\rho, \rho-1, \ldots, 1)$
+       }
+     }
+     
+     \only<2>{
+       \begin{block}{Key Achievement}
+         First explicit homogeneous CLF construction for arbitrary order HOSM
+       \end{block}
+       
+       \vspace{0.2cm}
+       
+       \footnotesize{
+         \textbf{CLF Properties:}
+         \begin{itemize}
+           \item $r$-homogeneous of degree $m$
+           \item Smooth despite discontinuous control
+           \item Recursive construction
+         \end{itemize}
+       }
+     }
+     
+     \only<3>{
+       \begin{alertblock}{Gap for disc-PID}
+         Different paradigm:
+         \begin{itemize}
+           \item Sliding mode vs disc-PID structure
+           \item No integral action for disturbances
+           \item SISO limitation
+         \end{itemize}
+       \end{alertblock}
+     }
+     
+   \end{column}
+ \end{columns}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}{Comparative Analysis: Methods vs. Requirements}
+  \begin{table}
+    \centering
+    \footnotesize
+    \begin{tabular}{|l|c|c|c|c|}
+    \hline
+    \textbf{Method} & \textbf{MIMO} & \textbf{Integral} & \textbf{Coriolis} & \textbf{Output} \\
+    & \textbf{Systems} & \textbf{Action} & \textbf{Quadratic} & \textbf{Feedback} \\
+    \hline
+    Moreno 2020 & $\times$ & $\checkmark$ & $\times$ & $\checkmark$ \\
+    \hline
+    Mercado-Moreno 2020 & $\times$ & $\checkmark$ & $\times$ & $\times$ \\
+    \hline
+    Cruz-Nunez 2020 & $\checkmark$ & $\times$ & $\checkmark$ & $\checkmark$ \\
+    \hline
+    Cruz-Moreno 2017 & $\times$ & $\times$ & $\times$ & $\times$ \\
+    \hline
+    \textcolor{blue}{\textbf{Our Approach}} & \textcolor{blue}{$\checkmark$} & \textcolor{blue}{$\checkmark$} & \textcolor{blue}{$\checkmark$} & \textcolor{blue}{$\checkmark$} \\
+    \hline
+    \end{tabular}
+  \end{table}
+
+  \vspace{0.3cm}
+
+  \begin{columns}
+    \begin{column}{0.5\textwidth}
+      \textbf{Key Observations:}
+      \begin{itemize}
+        \item No method combines ALL features
+        \item SISO limitation in discontinuous integral approaches
+        \item Missing quadratic terms handling
+      \end{itemize}
+    \end{column}
+    
+    \begin{column}{0.5\textwidth}
+      \textbf{Trade-offs Identified:}
+      \begin{itemize}
+        \item Discontinuous Integral vs. MIMO
+        \item Integral action vs. manipulator application
+      \end{itemize}
+    \end{column}
+  \end{columns}
+\end{frame}
+

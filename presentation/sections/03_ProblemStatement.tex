@@ -1,0 +1,98 @@
+\begin{frame}
+	\sectionpage
+\end{frame}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}{Mathematical Formulation}
+  \begin{block}{Manipulator Dynamics}
+    \textbf{Nominal}
+    $$ M(q)\ddot{q} + C(q,\dot{q})\dot{q} + G(q) = \tau $$
+    
+    \textbf{Uncertainties + Disturbances}
+    $$ \Delta M(q)\ddot{q} + \Delta C(q, \dot{q})\dot{q} + \Delta G(q) + d(q,\dot{q}, \ddot{q}) = \tau $$
+  \end{block}
+
+  \begin{columns}
+    \begin{column}{0.5\textwidth}
+      \textbf{Control Objectives:}
+      \begin{itemize}
+        \item<1-| structure@1> Design $\tau$ to achieve:
+          \begin{itemize}
+            \item Finite-Time Regulation (FTR) 
+            \item Finite-Time Tracking (FTT)
+          \end{itemize}
+        \item<2-| structure@2> Handle uncertainties (specially in \textcolor{red}{$\Delta C(q,\dot{q}) \dot{q}$}) and unknown (bounded) $d$.
+        \item<3-| structure@3> Implement Output Feedback Controller
+      \end{itemize}
+    \end{column} 
+    \begin{column}{0.5\textwidth}
+      \only<1>{
+        \footnotesize \\
+        \noindent \textbf{FTR:} If $ q_d \in \mathbb{R}^n $ is constant, then the joint position error $ \tilde{q} = q - q_d $ and the joint velocity $\dot{q} $ satisfy $\lim_{t\rightarrow T(\tilde{q}_0,\dot{q}_0)}\tilde{q}(t) = 0$ and $\lim_{t\rightarrow T(\tilde{q}_0,\dot{q}_0)}\dot{q}(t) = 0$, for all IC $\tilde{q}_0, \dot{q}_0 \in \mathbb{R}^n$.\\
+        \vspace{0.25cm}
+        \noindent \textbf{FTT:} If $  \left\| q_d \right\| < \alpha_\nu $ and $ \alpha_\nu \in \mathbb{R}_{>0} $ is known, then $ \tilde{q}$ and the joint velocity error $\dot{\tilde{q}} = \dot{q} - \dot{q}_d $ satisfy $\lim_{t\rightarrow T(\tilde{q}_0,\dot{q}_0)}\tilde{q}(t) = 0$ and $\lim_{t\rightarrow T(\tilde{q}_0,\dot{q}_0)}\dot{\tilde{q}}(t) = 0$, for all IC $\tilde{q}_0, \dot{\tilde{q}}_0 \in \mathbb{R}^n$.
+      }
+      \end{column}
+  \end{columns}
+\end{frame}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{frame}{Technical Challenges}
+\begin{columns}
+  \begin{column}{0.5\textwidth}
+  \textbf{Main Challenges:}
+    \begin{itemize}
+      \item<1-| alert@1> Quadratic Coriolis terms $C(q,\dot{q})\dot{q}$
+      \item<2-| alert@2> Discontinuous dynamics analysis
+      \item<3-| alert@3> MIMO coupling effects
+      \item<4-| alert@4> Output feedback design
+    \end{itemize}
+  \end{column}
+
+  \begin{column}{0.5\textwidth}
+    \only<1>{
+      \begin{alertblock}{Coriolis Challenge}
+        $$C(q,\dot{q})\dot{q} = \sum_{i,j,k} C_{ijk}(q) \dot{q}_j \dot{q}_k$$
+        \begin{itemize}
+          \item \textcolor{red}{Quadratic in velocity} $\rightarrow$ strong nonlinearity
+          \item Cross-coupling between all joints
+          \item Velocity-dependent uncertainty amplification
+        \end{itemize}
+      \end{alertblock}
+    }
+
+    \only<2>{
+      \begin{alertblock}{Discontinuous Analysis}
+        \textbf{Problem:} $\tau$ contains $\text{sign}(e)$ terms
+        \begin{itemize}
+          \item Classical derivatives don't exist
+          \item Need differential inclusions: $\dot{x} \in F(x)$
+          \item Lyapunov analysis via Clarke derivatives
+          \item Prove finite-time convergence
+        \end{itemize}
+      \end{alertblock}
+    }
+
+    \only<3>{
+      \begin{alertblock}{MIMO Complexity}
+        Each joint affects others through:
+        \begin{itemize}
+          \item Inertial coupling
+          \item Centrifugal forces
+          \item Gravitational terms
+        \end{itemize}
+      \end{alertblock}
+    }
+  
+    \only<4>{
+      \begin{alertblock}{Observer Design and Analysis}
+        \begin{itemize}
+          \item Estimate $\dot{q}$ from position measurements only:
+            $$\hat{\dot{q}} = f(q, \hat{q})$$
+          \item Analyse how does this affect to closed-loop stability.
+        \end{itemize}
+      \end{alertblock}
+    } 
+  \end{column}  
+
+  \end{columns}
+\end{frame}
