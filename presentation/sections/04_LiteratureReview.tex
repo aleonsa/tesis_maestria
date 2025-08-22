@@ -118,10 +118,10 @@
       }
       
       \only<3>{
-        \begin{alertblock}{BIBS Problem}
-          For manipulators:
-          $$C(q,\dot{q})\dot{q} \propto \|\dot{q}\|^2$$
-          States grow quadratically, violating BIBS assumption
+        \begin{alertblock}{Lipschitz violation}
+          For manipulators: $\rho = \frac{C(q,\dot{q})\dot{q}}{M(q)}$
+          $$\dot{\rho} \propto \frac{d}{dt}[C(q,\dot{q})\dot{q}] \text{ unbounded}$$
+          Violates Assumption 3: $|\dot{\rho}| \leq L$
         \end{alertblock}
       }
       
@@ -141,7 +141,7 @@
        \textbf{Mathematical Contribution:}
        \begin{itemize}
          \item Controller: $u = -k_\rho \chi(\bar{x}_\rho) + z$, $ \dot{z} \in -K_I \psi(\bar{x}_\rho)$
-         \item Discontinuous integral $\psi(\bar{x}_\rho)$
+         \item Discontinuous integral $\psi(\bar{x}_\rho)$ can depend only on a portion of the state 
          \item Smooth homogeneous Lyapunov function for arbitrary $\rho$
          \item Rigorous finite-time stability proof via modified backstepping
          \item Continuous control signal despite discontinuous integral
