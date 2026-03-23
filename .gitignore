@@ -1,0 +1,60 @@
+# ── macOS ──────────────────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ── MATLAB ─────────────────────────────────────────────────────────────────
+*.asv           # autosave
+*.m~
+*.mex*          # compiled MEX
+slprj/          # Simulink cache
+*.slxc
+codegen/
+*.pyc.mat
+
+# ── Python ─────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+.ipynb_checkpoints/
+venv/
+.venv/
+*.egg-info/
+dist/
+build/
+.env
+
+# ── LaTeX build artifacts ───────────────────────────────────────────────────
+*.aux
+*.log
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.nav
+*.snm
+*.toc
+*.out
+*.bbl
+*.bcf
+*.blg
+*.run.xml
+*.lof
+*.lot
+# Keep beamer.pdf (compiled presentation) — remove this line to ignore it too
+# *.pdf
+
+# ── Generated figures ───────────────────────────────────────────────────────
+figures/
+fcs_m2pc_v2/data/figures_real_bemf/
+python_scripts/*.png
+
+# ── Generated .mat from python_scripts (reproducible) ──────────────────────
+python_scripts/*.mat
+
+# ── Claude Code / IDE metadata ─────────────────────────────────────────────
+MEMORY.md
+AGENTS.md
+CLAUDE.md
+opencode.json
+.claude/
+.opencode/
