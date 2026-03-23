@@ -1,0 +1,80 @@
+%--------------------------------------------------
+%    PACKAGES AND THEMES
+%------------------------------------
+\documentclass[aspectratio=169,xcolor=dvipsnames]{beamer}
+\makeatletter
+\def\input@path{{theme/}}
+\makeatother
+\usetheme{SimplePlus}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{natbib}
+\usepackage{amsmath,amssymb}
+\usepackage{bm}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning, shapes.geometric}
+
+% Para placeholder de figuras
+\newcommand{\placeholder}[2][0.8\textwidth]{%
+    \begin{center}
+    \fcolorbox{gray}{gray!10}{%
+        \parbox{#1}{\centering\vspace{1cm}\textit{#2}\vspace{1cm}}%
+    }
+    \end{center}
+}
+
+%----------------------------------------------------------------------------------------
+%    TITLE PAGE
+%----------------------------------------------------------------------------------------
+\title{Reducción de Rizo de Par en Motores BLDC mediante\\MPC con Estimación Adaptable de BEMF}
+\subtitle{FCS-M2PC + ADALINE}
+\author{Alejandro León}
+\institute
+{
+    Instituto de Ingeniería \\
+    Universidad Nacional Autónoma de México
+}
+\date{\today}
+
+%----------------------------------------------------------------------------------------
+%    PRESENTATION SLIDES
+%----------------------------------------------------------------------------------------
+\begin{document}
+
+\begin{frame}
+    \titlepage
+\end{frame}
+
+\begin{frame}{Contenido}
+    \tableofcontents
+\end{frame}
+
+%----------------- section 1 --------------------
+\section{Introducción y Planteamiento}
+\input{sections/01_introduction.tex}
+
+%----------------- section 2 --------------------
+\section{Marco Teórico: FCS-M2PC}
+\input{sections/02_fcs_m2pc.tex}
+
+%----------------- section 3 --------------------
+\section{ADALINE: Aprendizaje de BEMF}
+\input{sections/03_adaline.tex}
+
+%----------------- section 4 --------------------
+\section{Resultados de Simulación}
+\input{sections/04_results.tex}
+
+%----------------- section 5 --------------------
+\section{Trabajo Futuro: Control Repetitivo}
+\input{sections/05_future.tex}
+
+%----------------------------------------------------------------------------------------
+\begin{frame}{Referencias}
+    \footnotesize
+    \bibliographystyle{apalike}
+    \bibliography{reference}
+\end{frame}
+
+\end{document}

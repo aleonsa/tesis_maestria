@@ -1,127 +1,116 @@
-\section{Introducción}
+% ==============================================================
+% SECCIÓN 1: INTRODUCCIÓN Y PLANTEAMIENTO
+% ==============================================================
 
-% -------------------------------------------------------------------------
-% Diapositiva 1: Contexto y Motivación
-% -------------------------------------------------------------------------
-\begin{frame}{Contexto y Motivación}
-    \begin{columns}
-        \begin{column}{0.6\textwidth}
-            \textbf{Motores BLDC y PMSM:}
-            \begin{itemize}
-                \item Alta eficiencia y densidad de potencia.
-                \item Aplicaciones críticas: Vehículos eléctricos, robótica, aeroespacial.
-            \end{itemize}
-            
-            \vspace{0.5cm}
-            
-            \textbf{El Problema del Rizado de Par (Torque Ripple):}
-            \begin{itemize}
-                \item Vibraciones mecánicas y ruido acústico.
-                \item Desgaste prematuro de componentes.
-                \item \alert{Causa principal:} Interacción entre corrientes no ideales y la fuerza contraelectromotriz (Back-EMF) con armónicos.
-            \end{itemize}
-        \end{column}
-        \begin{column}{0.4\textwidth}
-            \begin{figure}
-                \centering
-                % SUGERENCIA: Imagen genérica de un BLDC o diagrama de aplicación
-                \includegraphics[width=\textwidth]{images/bldc_application_example.png}
-                \caption{Aplicaciones de alto rendimiento.}
-            \end{figure}
-        \end{column}
-    \end{columns}
-\end{frame}
-
-% -------------------------------------------------------------------------
-% Diapositiva 2: Estrategias de Control
-% -------------------------------------------------------------------------
-\begin{frame}{Evolución de las Estrategias de Control}
-    \begin{block}{Control Clásico (PI - FOC)}
+% --- Slide 1: Contexto ---
+\begin{frame}{Contexto: Motores BLDC y el Problema del Rizo de Par}
+    \begin{columns}[T]
+    \begin{column}{0.55\textwidth}
         \begin{itemize}
-            \item Modulador PWM fijo.
-            \item Limitado por el ancho de banda del lazo lineal.
-            \item Dificultad para manejar restricciones y no-linealidades.
+            \item Motores BLDC: alta eficiencia, bajo mantenimiento, dominantes en EVs y robótica.
+            \vspace{0.3cm}
+            \item \textbf{Problema central:} el rizo de par (\textit{torque ripple}) degrada precisión, genera vibraciones y ruido acústico.
+            \vspace{0.3cm}
+            \item \textbf{Fuentes del rizo:}
+            \begin{itemize}
+                \item BEMF no ideal (armónicos 5to, 7mo, 11vo...)
+                \item Cogging torque (estructura magnética)
+                \item Dead-time del inversor
+                \item \textcolor{red}{Model mismatch en el controlador}
+            \end{itemize}
         \end{itemize}
-    \end{block}
-
-    \vfill
-
-    \begin{block}{Control Predictivo (FCS-MPC) \hfill \textit{Enfoque de esta Tesis}}
-        \begin{itemize}
-            \item Aprovecha la naturaleza discreta del inversor (Estados finitos).
-            \item \textbf{Ventaja:} Respuesta dinámica superior y manejo intuitivo de restricciones.
-            \item \textbf{Desafío:} \alert{Alta dependencia del modelo matemático.}
-        \end{itemize}
-    \end{block}
-\end{frame}
-
-% -------------------------------------------------------------------------
-% Diapositiva 3: El Desafío del "Model Mismatch"
-% -------------------------------------------------------------------------
-\begin{frame}{El Desafío: Discrepancia del Modelo (Mismatch)}
-    El rendimiento del FCS-MPC depende de la precisión de la predicción:
-    
-    \begin{equation*}
-        i(k+1) = i(k) + \frac{T_s}{L} \left( u(k) - \alert{e(k)} - R i(k) \right)
-    \end{equation*}
-
-    \begin{columns}
-        \begin{column}{0.5\textwidth}
-            \textbf{Modelo Ideal (Controlador):}
-            $$ \hat{e}(k) \approx k_e \omega \sin(\theta_e) $$
-            \textit{"El controlador asume un mundo perfecto."}
-        \end{column}
-        \begin{column}{0.5\textwidth}
-            \textbf{Planta Real (Motor Físico):}
-            $$ e(k) = \sum_{n=1,5,7...} A_n \sin(n\theta_e + \phi_n) + \text{Ruido} $$
-            \textit{"La realidad tiene armónicos y perturbaciones."}
-        \end{column}
-    \end{columns}
-
-    \vspace{0.5cm}
+    \end{column}
+    \begin{column}{0.42\textwidth}
     \centering
-    \small \textbf{Consecuencia:} Si $\hat{e}(k) \neq e(k)$, surge un error de predicción que se traduce en rizado de corriente.
-\end{frame}
-
-% -------------------------------------------------------------------------
-% Diapositiva 4: Análisis Preliminar de Datos (Tu aporte con Python)
-% -------------------------------------------------------------------------
-\begin{frame}{Evidencia Experimental: Caracterización de BEMF}
-    Se analizaron datos experimentales de una prueba de arrastre (Open Circuit) para identificar la "huella" del motor.
-    
-    \begin{columns}
-        \begin{column}{0.5\textwidth}
-            \begin{itemize}
-                \item \textbf{Método:} FFT sobre datos normalizados por velocidad.
-                \item \textbf{Hallazgo:} Presencia significativa de armónicos $5^\circ$ ($2.2\%$) y $7^\circ$ ($1.1\%$).
-                \item Estos armónicos generan oscilaciones de par de orden $6\omega_e$.
-            \end{itemize}
-        \end{column}
-        \begin{column}{0.5\textwidth}
-            \begin{figure}
-                \centering
-                % AQUÍ VA LA GRÁFICA QUE HICIMOS EN PYTHON (bemf_final.png)
-                % La que muestra la forma de onda reconstruida y las barras de FFT
-                \includegraphics[width=\textwidth]{images/bemf_characterization_python.png}
-                \caption{Análisis espectral de la Back-EMF real.}
-            \end{figure}
-        \end{column}
+    \includegraphics[width=0.95\linewidth]{fig/bldc_motor_diagram.png}
+    {\footnotesize Diagrama circuito equivalente\\motor BLDC trifásico}
+\end{column}
     \end{columns}
+
 \end{frame}
 
-% -------------------------------------------------------------------------
-% Diapositiva 5: Objetivos y Propuesta
-% -------------------------------------------------------------------------
-\begin{frame}{Propuesta y Objetivos de la Tesis}
-    \textbf{Objetivo General:}
-    Diseñar y validar estrategias de FCS-MPC robustas ante incertidumbres de la Back-EMF para minimizar el rizado de corriente.
+% --- Slide 2: Limitaciones del control clásico ---
+\begin{frame}{Limitaciones del Control Clásico}
+    \begin{block}{Enfoques Convencionales}
+        \begin{itemize}
+            \item \textbf{Conmutación Six-Step:} Simple, pero rizo significativo a baja velocidad.
+            \item \textbf{FOC (Field-Oriented Control):} Reduce rizo, pero depende de sensores de posición (Hall/Encoder) $\rightarrow$ costo y confiabilidad.
+        \end{itemize}
+    \end{block}
+    \vspace{0.3cm}
+    \begin{alertblock}{El Problema del \textit{Model Mismatch}}
+        Incluso el \textbf{FCS-MPC} (Finite Control Set -- Model Predictive Control) sufre cuando el modelo interno difiere de la planta real:
+        \begin{itemize}
+            \item La mayoría de esquemas MPC asumen BEMF trapezoidal o senoidal ideal.
+            \item Los armónicos reales de la BEMF no están en el modelo $\rightarrow$ \textbf{predicción errónea} $\rightarrow$ \textbf{rizo residual}.
+        \end{itemize}
+    \end{alertblock}
+\end{frame}
 
-    \vspace{0.5cm}
+% --- Slide 3: Hipótesis y Objetivo ---
+\begin{frame}{Hipótesis y Objetivo}
+    \begin{block}{Hipótesis}
+        Si la forma de onda de BEMF real del motor (incluyendo armónicos) se aprende de manera \textbf{adaptativa en línea} y se integra al modelo predictivo del FCS-M2PC, entonces:
+        \begin{enumerate}
+            \item La referencia de corriente generada producirá \textbf{torque constante}.
+            \item El rizo de par se reducirá significativamente vs.\ modelos fijos.
+            \item El sistema se \textbf{auto-calibrará} sin datos offline del motor.
+        \end{enumerate}
+    \end{block}
     
-    \textbf{Metodología (Gemelo Digital):}
-    \begin{enumerate}
-        \item \textbf{FCS-M2PC Mejorado (Offline):} Inyección de armónicos $H_5$ y $H_7$ en el modelo de predicción (Basado en datos).
-        \item \textbf{Observador de Modos Deslizantes (Online):} Implementación de un diferenciador de \textit{Levant (Super-Twisting)} para estimar la BEMF desconocida en tiempo real.
-        \item \textbf{Validación:} Comparación en simulación de alta fidelidad incluyendo ruido de medición y efectos parásitos.
-    \end{enumerate}
+    \vspace{0.3cm}
+    
+    \begin{exampleblock}{Objetivo General}
+        Desarrollar un esquema de control predictivo de corriente \textbf{FCS-M2PC} con estimación adaptativa de BEMF basada en \textbf{ADALINE} (Adaptive Linear Neuron), capaz de reducir el rizo de par en motores BLDC en entorno \textbf{sensorless}.
+    \end{exampleblock}
+\end{frame}
+
+% --- Slide 4: Arquitectura propuesta ---
+\begin{frame}{Arquitectura Propuesta}
+    \begin{center}
+    \resizebox{\textwidth}{!}{% <--- Abre el redimensionamiento
+    \begin{tikzpicture}[
+        node distance=1.2cm and 1.6cm,
+        block/.style={draw, rounded corners, minimum width=2.2cm, minimum height=0.9cm, align=center, font=\small},
+        arrow/.style={-{Stealth[length=2.5mm]}, thick},
+        every node/.style={font=\small}
+    ]
+        % Nodos
+        \node[block, fill=blue!15] (pi) {PI\\Velocidad};
+        \node[block, fill=orange!20, right=of pi] (iref) {Generación\\$\mathbf{i}^*(\theta)$};
+        \node[block, fill=red!15, right=of iref] (m2pc) {FCS-M2PC};
+        \node[block, fill=green!15, right=of m2pc] (inv) {VSI};
+        \node[block, fill=gray!15, right=of inv] (motor) {BLDC};
+        
+        % ADALINE abajo
+        \node[block, fill=violet!20, below=1.5cm of iref] (adaline) {\textbf{ADALINE}\\$\hat{s}(\theta) = \mathbf{W}^T\mathbf{x}(\theta)$};
+        
+        % Flechas
+        \draw[arrow] (pi) -- node[above]{\tiny $T_{\text{ref}}$} (iref);
+        \draw[arrow] (iref) -- node[above]{\tiny $\mathbf{i}^*_{\alpha\beta}$} (m2pc);
+        \draw[arrow] (m2pc) -- node[above]{\tiny $\mathbf{u}^*$} (inv);
+        \draw[arrow] (inv) -- (motor);
+        
+        % Feedback velocidad
+        \draw[arrow] (motor.south) -- ++(0,-0.5) -| node[near start, below]{\tiny $\omega_m, \theta_e$} (pi.south);
+        
+        % ADALINE connections
+        \draw[arrow, violet] (adaline) -- node[right]{\tiny $\hat{\mathbf{s}}_{\alpha\beta}$} (iref);
+        \draw[arrow, violet] (adaline.east) -| node[near start, below]{\tiny $\hat{\mathbf{e}}_{\alpha\beta}$} (m2pc.south);
+        
+        % LMS feedback
+        \draw[arrow, red, dashed] (motor.south) -- ++(0,-3) -| node[near start, above]{\tiny LMS: $\mathbf{W} \leftarrow \mathbf{W} + \mu\epsilon\mathbf{x}$} (adaline.south);
+        
+        % Referencia
+        \node[left=0.5cm of pi] (wref) {$\omega_{\text{ref}}$};
+        \draw[arrow] (wref) -- (pi);
+    \end{tikzpicture}
+    }%
+    \end{center}
+    
+    \vspace{0.1cm}
+    \begin{itemize}
+        \item \textcolor{violet}{\textbf{ADALINE}} alimenta tanto la \textbf{generación de referencia} como el \textbf{modelo de predicción} del M2PC.
+        \item \textcolor{red}{\textbf{LMS}} actualiza los pesos en cada paso usando el error de estimación.
+    \end{itemize}
 \end{frame}
