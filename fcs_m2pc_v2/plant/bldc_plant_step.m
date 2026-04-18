@@ -23,8 +23,9 @@ di_dt = (1/p.L) * (u_applied - e_real - p.R * i_ab);
 i_ab  = i_ab + di_dt * p.Ts;
 
 % ── Electromagnetic torque ──────────────────────────────────────────────
+% Factor (3/2) from amplitude-invariant Clarke: P_abc = (3/2)*P_ab, Te = P_abc/w_m
 if abs(w_m) > 0.5
-    Te = (p.P/2) * (e_real' * i_ab) / w_m;
+    Te = (3/2) * (e_real' * i_ab) / w_m;
 else
     % Low-speed: use shape directly to avoid division by near-zero w_m
     nr = norm(shape_real);

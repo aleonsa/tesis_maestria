@@ -189,4 +189,60 @@ grid on; box on;
 sgtitle('Convergencia del ADALINE Online', ...
         'FontSize', 14, 'FontWeight', 'bold');
 
+% ── Figure 4: Coronado-style αβ current tracking ────────────────────────
+% Last ~100 ms of simulation (steady-state after load step), both iα and iβ
+% per method, reference (black dashed) vs measured (method color).
+samples_win = min(round(0.10 / p.Ts), Total_Steps - 1);
+s0          = max(1, Total_Steps - samples_win);
+t_win       = t_ms(s0:end);
+
+figure('Color', 'w', 'Position', [200, 50, 700, 140*n_methods]);
+
+for idx = 1:n_methods
+    m  = methods{idx};
+    ia = results.(m).i(1, s0:end);
+    ib = results.(m).i(2, s0:end);
+    ia_ref = results.(m).i_ref(1, s0:end);
+    ib_ref = results.(m).i_ref(2, s0:end);
+
+    subplot(n_methods, 1, idx);
+    plot(t_win, ia_ref, 'k--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    hold on;
+    plot(t_win, ib_ref, 'k--', 'LineWidth', 1.2, 'HandleVisibility', 'off');
+    plot(t_win, ia, 'Color', colors.(m), 'LineWidth', 0.9, ...
+         'DisplayName', [m ' i_\alpha']);
+    plot(t_win, ib, 'Color', colors.(m) * 0.6, 'LineWidth', 0.9, ...
+         'DisplayName', [m ' i_\beta']);
+    ylabel('i_{\alpha\beta} [A]', 'Interpreter', 'tex', 'FontSize', 8);
+    title(sprintf('%s  |  RMSE α=%.4f A   β=%.4f A   NMSE α=%.4f   β=%.4f', ...
+          m, results.(m).rmse_alpha, results.(m).rmse_beta, ...
+          results.(m).nmse_alpha,    results.(m).nmse_beta), ...
+          'FontSize', 8, 'FontWeight', 'bold');
+    legend('Location', 'northeast', 'FontSize', 7, 'NumColumns', 2);
+    grid on; box on;
+    if idx < n_methods
+        set(gca, 'XTickLabel', []);
+    else
+        xlabel('Tiempo [ms]');
+    end
+end
+
+sgtitle('Grupo 1 — Seguimiento de Corriente \alpha\beta (estado estable, 100 ms)', ...
+        'FontSize', 13, 'FontWeight', 'bold', 'Interpreter', 'tex');
+
+% ── Console RMSE/NMSE table ──────────────────────────────────────────────
+fprintf('\n');
+fprintf('╔══════════════════════════════════════════════════════════════════╗\n');
+fprintf('║         GRUPO 1 — Tracking de Corriente (estado estable)       ║\n');
+fprintf('╠══════════════╦══════════════╦══════════════╦══════════╦══════════╣\n');
+fprintf('║ Método       ║  RMSE α [A]  ║  RMSE β [A]  ║  NMSE α  ║  NMSE β  ║\n');
+fprintf('╠══════════════╬══════════════╬══════════════╬══════════╬══════════╣\n');
+for idx = 1:n_methods
+    m = methods{idx};
+    fprintf('║ %-12s ║   %8.4f   ║   %8.4f   ║  %6.4f  ║  %6.4f  ║\n', ...
+            m, results.(m).rmse_alpha, results.(m).rmse_beta, ...
+            results.(m).nmse_alpha,    results.(m).nmse_beta);
+end
+fprintf('╚══════════════╩══════════════╩══════════════╩══════════╩══════════╝\n\n');
+
 end

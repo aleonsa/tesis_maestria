@@ -26,4 +26,16 @@ w_ss           = log.w_m(post_idx);
 log.w_pp       = max(w_ss) - min(w_ss);
 log.w_ss_error = abs(p.w_ref - mean(w_ss));
 
+% ── Current tracking error (steady-state window) ────────────────────────
+% RMSE: sqrt(mean(error²))   — absolute [A]
+% NMSE: sum(error²)/sum(i²)  — normalized (Coronado eq. 9)
+i_ss     = log.i(:, post_idx);      % [2 × M]
+i_ref_ss = log.i_ref(:, post_idx);  % [2 × M]
+err      = i_ss - i_ref_ss;
+
+log.rmse_alpha = sqrt(mean(err(1,:).^2));
+log.rmse_beta  = sqrt(mean(err(2,:).^2));
+log.nmse_alpha = sum(err(1,:).^2) / max(sum(i_ss(1,:).^2), 1e-12);
+log.nmse_beta  = sum(err(2,:).^2) / max(sum(i_ss(2,:).^2), 1e-12);
+
 end
