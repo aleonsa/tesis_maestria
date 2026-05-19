@@ -1,0 +1,31 @@
+% Comandos usados
+\ProvidesPackage{Comandos}
+% Color teoremas
+\definecolor{problemblue}{RGB}{55,85,120}
+\declaretheoremstyle[headfont=\color{problemblue}\bfseries,bodyfont=\normalfont,spaceabove=6pt,spacebelow=6pt]{problemstyle}
+% Palabras utiles
+\newcommand{\listFig}{Lista de Figuras}
+\newcommand{\listAcron}{Siglas }
+\renewcommand{\appendixpagename}{Apéndices}
+\renewcommand{\lstlistingname}{Listado}
+
+
+% Entornos matemáticos
+\newtheorem{theorem}{Theorem}[chapter]
+\newtheorem{definition}{Definition}[chapter]
+\newtheorem{proposition}{Proposition}[chapter]
+\newtheorem{observation}{Observation}[chapter]
+\newtheorem{lemma}{Lemma}[chapter]
+\newtheorem{property}{Property}[chapter]
+\newtheorem{assumtion}{Assumption}[chapter]
+\newtheorem{corollary}{Corollary}[chapter]
+\declaretheorem[name=Problema,style=problemstyle]{problema}
+\setcounter{problema}{0}
+\declaretheorem[name=Objetivo,style=problemstyle]{objetivo}
+\setcounter{objetivo}{0}
+
+
+% Operadores y macros personalizadas (agrega las tuyas aquí)
+% Ejemplo:
+% \newcommand{\dif}{{\mathrm{d}}}
+% \newcommand{\mref}{\mathrm{ref}}

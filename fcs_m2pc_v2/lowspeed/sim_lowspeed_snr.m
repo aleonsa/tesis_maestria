@@ -27,7 +27,7 @@ t_final   = 1.5;                         % [s]
 Nsim      = round(t_final / p.Ts);
 t         = (0:Nsim-1)' * p.Ts;          % [s]
 
-rpm_start = 35;
+rpm_start = 80;
 rpm_end   = 0;
 w_m = linspace(rpm_start, rpm_end, Nsim)' * (2*pi/60);  % mech [rad/s]
 w_e = (p.P/2) * w_m;                                    % elec [rad/s]

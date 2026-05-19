@@ -58,3 +58,6 @@ CLAUDE.md
 opencode.json
 .claude/
 .opencode/
+
+# ── Firmware: vendor de terceros (clone local, no se versiona) ─────────────
+vendor/

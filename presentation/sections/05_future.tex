@@ -2,7 +2,35 @@
 % SECCIÓN 5: TRABAJO FUTURO — CONTROL REPETITIVO
 % ==============================================================
 
-% --- Slide 18: Limitaciones actuales ---
+% --- Slide 18: Análisis a baja velocidad ---
+\begin{frame}{Extensión: Análisis de Límites a Baja Velocidad}
+    \textbf{Problema identificado:} el observador de BEMF falla cuando $\omega \rightarrow 0$,
+    ya que $\mathbf{e} = K_e\,\omega\,\mathbf{s}(\theta) \rightarrow \mathbf{0}$ y la señal se
+    hunde en el ruido del ADC ($\sigma \approx 50\,\text{mA}$, 12-bit).
+
+    \vspace{0.2cm}
+
+    \begin{columns}[T]
+    \begin{column}{0.52\textwidth}
+        \textbf{Se caracterizó en simulación:}
+        \begin{itemize}
+            \item Resolución del encoder vs.\ velocidad: por debajo de $\sim\!15$ rpm el encoder
+                  queda ``congelado'' entre muestras $\rightarrow$ el observador debe interpolar.
+            \item Ripple baseline del M2PC a \{5, 10, 20, 60\} rpm con encoder ideal
+                  (velocidad impuesta, sin PI).
+        \end{itemize}
+        \vspace{0.2cm}
+        \textbf{Conclusión:} el rizo crece sustancialmente a baja velocidad $\rightarrow$
+        motiva extender el controlador para este régimen.
+    \end{column}
+    \begin{column}{0.45\textwidth}
+        \includegraphics[width=\linewidth]{fig/baseline_ripple_vs_speed.png}
+        {\tiny Ripple de par vs.\ velocidad — M2PC con encoder 2048\,PPR}
+    \end{column}
+    \end{columns}
+\end{frame}
+
+% --- Slide 19: Limitaciones actuales ---
 \begin{frame}{¿Qué Falta? Fuentes de Rizo que ADALINE No Elimina}
     El ADALINE corrige el \textit{model mismatch} de BEMF, pero quedan fuentes de rizo \textbf{que no son error de BEMF}:
     
@@ -73,21 +101,18 @@
     ]
         \node[done] (f0) {\textbf{Fase 0}\\ADALINE Offline\\$\checkmark$ Completada};
         \node[done, right=of f0] (f1) {\textbf{Fase 1}\\ADALINE Online\\$\checkmark$ Completada};
-        \node[curr, right=of f1] (f2) {\textbf{Fase 2}\\Lazo cerrado\\adaptable};
-        \node[future, right=of f2] (f3) {\textbf{Fase 3}\\Control\\Repetitivo};
-        \node[future, right=of f3] (f4) {\textbf{Fase 4}\\Documentación\\Tesis};
-        
+        \node[curr, right=of f1] (f2) {\textbf{Fase 2}\\Encoder + baja\\velocidad};
+        \node[future, right=of f2] (fq) {\textbf{???}\\Por definir};
+
         \draw[arrow] (f0) -- (f1);
         \draw[arrow] (f1) -- (f2);
-        \draw[arrow] (f2) -- (f3);
-        \draw[arrow] (f3) -- (f4);
-        
+        \draw[arrow] (f2) -- (fq);
+
         % Anotaciones debajo
         \node[below=0.3cm of f0, font=\tiny, align=center, text=ForestGreen] {40 params\\RMSE 0.0009};
-        \node[below=0.3cm of f1, font=\tiny, align=center, text=ForestGreen] {LMS online\\64\% $\downarrow$ ripple};
-        \node[below=0.3cm of f2, font=\tiny, align=center, text=YellowOrange] {Drift térmico\\Estabilidad};
-        \node[below=0.3cm of f3, font=\tiny, align=center, text=gray] {Cogging+dead-time\\RC plug-in};
-        \node[below=0.3cm of f4, font=\tiny, align=center, text=gray] {Figuras tesis\\Análisis final};
+        \node[below=0.3cm of f1, font=\tiny, align=center, text=ForestGreen] {LMS online\\$\sim$9\% $\downarrow$ ripple};
+        \node[below=0.3cm of f2, font=\tiny, align=center, text=YellowOrange] {2048 PPR\\Análisis $\omega$ bajo};
+        \node[below=0.3cm of fq, font=\tiny, align=center, text=gray] {Next steps\\(reunión hoy)};
     \end{tikzpicture}
     \end{center}
     
@@ -107,7 +132,7 @@
         
         \vspace{0.2cm}
         
-        \item La integración ADALINE + FCS-M2PC reduce el rizo de par en \textbf{64\%} respecto al modelo trapezoidal convencional, sin requerir datos previos del motor.
+        \item La integración ADALINE + FCS-M2PC reduce el rizo de par en $\sim$\textbf{9\%} respecto al modelo trapezoidal convencional, sin requerir datos previos del motor.
         
         \vspace{0.2cm}
         

@@ -1,0 +1,69 @@
+\documentclass[../Tesis_JALS_Maestria.tex]{subfiles}
+
+
+\begin{document}
+	\chapter*{Notación}
+	\addcontentsline{toc}{chapter}{Notación}
+	\markboth{Notación}{Notación}
+
+	{
+		\renewcommand{\arraystretch}{1.3}
+		\rowcolors{2}{rowsteel}{white}
+\begin{longtable}{
+		>{\centering\arraybackslash}p{3cm}
+		>{\centering\arraybackslash}p{4cm}
+		p{8cm}
+	}
+
+	\rowcolor{headersteel}
+	\color{white}\textbf{Símbolo} &
+	\color{white}\textbf{Nota} &
+	\color{white}\textbf{Significado} \\
+	\endfirsthead
+
+	\rowcolor{headersteel}
+	\color{white}\textbf{Símbolo} &
+	\color{white}\textbf{Nota} &
+	\color{white}\textbf{Significado} \\
+	\endhead
+
+	\multicolumn{3}{r}{\emph{Continúa en la siguiente página}} \\
+	\endfoot
+
+	\endlastfoot
+
+			$\mathbb{R}$ &-- &		Conjunto de números reales. \\
+			$\mathbb{R}^n$ &		$n$ es un número natural &Espacio real euclidiano de dimensión $n$. \\
+
+			$\mathbb{R}^{n\times m}$ &
+			$n$ y $m$ son números naturales &
+			Espacio de matrices reales de $n$ renglones y $m$ columnas. \\
+
+			$A^{\mathsf{T}}$ &
+			$A \in \mathbb{R}^{n\times m}$ &
+			Matriz transpuesta de $A$, \emph{i.e.}, una matriz en $\mathbb{R}^{m\times n}$. \\
+
+
+			$\mathbb{I}_n$ &
+			- &
+			Matriz identidad de dimensión $n\times n$. \\
+
+			$\det(A)$ &
+			$A \in \mathbb{R}^{n\times n}$ &
+			Determinante de $A$. \\
+
+			$\lambda(A)$ &
+			$A \in \mathbb{R}^{n\times n}$ &
+			Conjunto de valores propios de $A$. \\
+
+			$A>0$ ($A\geq 0$) &$A \in \mathbb{R}^{n\times n}$  & $A$ es una matriz simétrica positiva (semi-) definida.\\
+
+			$A>B$ ($A\geq B$) &$A,B\in\mathbb{R}^{n\times n}$ &   $A-B$ es una matriz simétrica positiva (semi-) definida.\\
+
+	% ---- caption AL FINAL ---
+	\caption[Not]{Notación}
+	\label{Tab:Notacion}\\
+\end{longtable}
+}
+
+\end{document}

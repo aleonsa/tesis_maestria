@@ -61,16 +61,16 @@
     \begin{table}[h]
     \centering
     \small
-    \begin{tabular}{@{}lcccr@{}}
+    \begin{tabular}{@{}lccr@{}}
     \toprule
-    \textbf{Método} & \textbf{Ripple [\%]} & \textbf{$T_e$ P-P [Nm]} & \textbf{$\omega$ P-P [rad/s]} & \textbf{Params} \\
+    \textbf{Método} & \textbf{Ripple [\%]} & \textbf{$\omega$ P-P [rad/s]} & \textbf{Params} \\
     \midrule
-    TRAP (baseline)      & 11.98 & 0.8629 & 1.7992 & --- \\
-    SIN                  &  5.39 & 0.4168 & 0.6564 & --- \\
-    \textbf{LEARNED (NN)} &  4.35 & 0.3347 & 0.2001 & $\sim$25k \\
-    \textbf{ADALINE offline} &  4.39 & 0.3646 & 0.2147 & \textbf{40} \\
-    \textbf{ADALINE on (TRAP)} &  4.31 & 0.3336 & 0.1858 & \textbf{40} \\
-    \textbf{ADALINE on (SIN)}  &  4.30 & 0.3309 & 0.2165 & \textbf{40} \\
+    TRAP (baseline)            & 4.20 & 0.399 & --- \\
+    SIN                        & 3.77 & 0.230 & --- \\
+    \textbf{LEARNED (NN)}      & 3.65 & 0.243 & $\sim$25k \\
+    \textbf{ADALINE offline}   & 3.65 & 0.243 & \textbf{40} \\
+    \textbf{ADALINE on (TRAP)} & 3.90 & 0.201 & \textbf{40} \\
+    \textbf{ADALINE on (SIN)}  & 3.81 & 0.202 & \textbf{40} \\
     \bottomrule
     \end{tabular}
     \end{table}
@@ -81,7 +81,7 @@
     \begin{itemize}
         \item ADALINE offline $\approx$ NN profunda ($\Delta = 0.04\%$) con \textbf{625X menos parámetros}.
         \item ADALINE online converge al nivel del offline: $\checkmark$ desde TRAP, $\checkmark$ desde SIN.
-        \item \textbf{Reducción de ripple vs.\ TRAP: 64\%} --- el motor se auto-calibra.
+        \item \textbf{Reducción de ripple vs.\ TRAP: $\sim$9\%} --- el motor se auto-calibra.
     \end{itemize}
 \end{frame}
 

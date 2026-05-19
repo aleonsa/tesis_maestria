@@ -1,0 +1,5 @@
+-Escribir cada capitulo por separado y asegurarse de que cada uno se ejecute correctamente (Ver carpeta Capitulos individuales).
+
+-Una vez que cada capítulo este correcto juntar cada archivo .tex en la carpeta Capitulos.
+
+-Desde el archivo principal Tesis_RMP_Master.tex se mandan a llamar a los capítulos de la carpeta mencionada anterior.

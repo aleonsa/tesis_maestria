@@ -17,7 +17,7 @@ p.d  = 0.0006738;    % Viscous damping coefficient [N·m·s/rad]
 
 % ── Inverter & sampling ────────────────────────────────────────────────
 p.Vdc      = 240;    % DC bus voltage [V]
-p.Ts       = 50e-6;  % Sampling period [s]
+p.Ts       = 30e-6;  % Sampling period [s] — matches Coronado'25 experimental (33.33 kHz)
 p.rho_divs = 10;     % Time subdivisions for M2PC duty-cycle search
 
 % Voltage vectors in αβ (8 states of a 2-level VSI)

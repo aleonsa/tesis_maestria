@@ -1,0 +1,12 @@
+# Config de clangd para que entienda el código bare-metal de la B-G431B-ESC1.
+# Esto NO afecta el build (que ocurre en la Pi con arm-none-eabi-gcc).
+# Solo sirve para que Zed/clangd resuelva headers y macros en el Mac.
+
+CompileFlags:
+  Add:
+    # Selecciona la variante exacta del chip dentro de stm32g4xx.h
+    - -DSTM32G431xx
+    # Headers del CMSIS Device Pack (registros específicos del G431)
+    - -I/Users/aleon/Documents/tesis_maestria/vendor/STM32CubeG4/Drivers/CMSIS/Device/ST/STM32G4xx/Include
+    # Headers del CMSIS Core (Cortex-M4: SysTick, NVIC, etc.)
+    - -I/Users/aleon/Documents/tesis_maestria/vendor/STM32CubeG4/Drivers/CMSIS/Core/Include
