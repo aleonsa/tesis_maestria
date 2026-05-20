@@ -51,6 +51,13 @@ include_directories(
 )
 
 # ============================================================================
+# lib — código compartido entre apps (clock, uart, ...).
+# Debe declararse ANTES que las apps que lo consumen.
+# ============================================================================
+add_subdirectory(lib)
+
+# ============================================================================
 # Apps — cada subdir es un ejecutable independiente.
 # ============================================================================
 add_subdirectory(apps/01_blink)
+add_subdirectory(apps/02_pwm_adc)

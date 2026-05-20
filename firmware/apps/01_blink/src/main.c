@@ -1,18 +1,19 @@
 /*
  * blink.c — bare-metal CMSIS sin HAL.
- * Toggle del LED user (PC6) de la B-G431B-ESC1 a 1 Hz exacto, base SysTick.
+ * Toggle del LED user (PC6) + heartbeat por UART2 a 1 Hz.
  *
  * Reloj:        HSE 8 MHz → PLL → SYSCLK = 170 MHz (ver clock.c).
- * Periféricos:  GPIOC bit 6 + SysTick del core Cortex-M4.
- * Frecuencia:   toggle cada 500 ms → 1 Hz (medible con osciloscopio sobre PC6).
+ * Periféricos:  GPIOC bit 6 (LED), SysTick (timing), USART2 (debug VCP).
+ * Salida UART:  PB3 (TX) / PB4 (RX) → ST-LINK VCP → /dev/ttyACM0 en la Pi.
  *
- * Validación cruzada SysTick ↔ PLL: si tras cambiar systick_init(16000)
- * por systick_init(170000) y configurar el PLL el LED sigue parpadeando
- * a la misma velocidad visual, la cadena M=2, N=85, R=2 está correcta.
+ * Validación:   LED parpadea 1 Hz visual + el host ve "tick N" cada segundo
+ *               por `cat /dev/ttyACM0` a 115200 8N1.
  */
 
+#include <stdio.h>
 #include "stm32g431xx.h"
 #include "clock.h"
+#include "uart.h"
 
 /* Contador de ticks de SysTick — 1 tick = 1 ms. Wrap-around a ~49.7 días. */
 static volatile uint32_t g_ticks = 0;
@@ -73,8 +74,23 @@ int main(void) {
     /* SysTick a 1 ms con HCLK = 170 MHz → 170000 ciclos por interrupción. */
     systick_init(170000U);
 
+    /* USART2 sobre PB3/PB4 → VCP del ST-LINK → /dev/ttyACM0 en la Pi. */
+    uart2_init(115200U);
+
+    /*
+     * Deshabilita buffering en stdout para que cada printf salga inmediatamente.
+     * Sin esto, newlib puede acumular bytes en un buffer hasta que se llene
+     * o aparezca '\n' — incómodo cuando se depura paso a paso.
+     */
+    setvbuf(stdout, NULL, _IONBF, 0);
+
+    printf("\r\n[boot] STM32G431 @170MHz, USART2 OK\r\n");
+
+    uint32_t tick = 0;
     while (1) {
         GPIOC->ODR ^= GPIO_ODR_OD6;
+        printf("tick %lu  uptime=%lu ms\r\n",
+               (unsigned long)tick++, (unsigned long)g_ticks);
         delay_ms(500U);
     }
 }

@@ -10,3 +10,5 @@ CompileFlags:
     - -I/Users/aleon/Documents/tesis_maestria/vendor/STM32CubeG4/Drivers/CMSIS/Device/ST/STM32G4xx/Include
     # Headers del CMSIS Core (Cortex-M4: SysTick, NVIC, etc.)
     - -I/Users/aleon/Documents/tesis_maestria/vendor/STM32CubeG4/Drivers/CMSIS/Core/Include
+    # Headers compartidos (clock.h, uart.h) — apps los hacen #include "clock.h"
+    - -I/Users/aleon/Documents/tesis_maestria/firmware/lib
