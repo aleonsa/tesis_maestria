@@ -4,20 +4,130 @@
 
 \begin{document}
 
-	\chapter{Modelo matemático y planteamiento del problema}
+\chapter{Modelo y planteamiento del problema}
+\label{cap:modelo}
 
-	\section{Modelo matemático}
-	\lipsum[1-2]
+En el capítulo anterior se introdujeron los elementos del motor BLDC, el inversor y los marcos de referencia que se usarán a lo largo de la tesis. Toca ahora reescribir el modelo en una forma adecuada para el control, derivar la referencia de corriente que sostiene un par constante, identificar dónde aparece el rizo de par cuando el modelo difiere de la planta y enunciar formalmente el problema que esta tesis se propone resolver.
 
-	\section{Planteamiento del problema}
-	\lipsum[3]
+% =================================================================
+\section{Modelo del motor en el marco \texorpdfstring{$\alpha\beta$}{alpha-beta}}
+\label{sec:modelo-ab-cap3}
 
-	\begin{problema}
-		[Enunciado del problema]
-	\end{problema}
+Bajo las hipótesis ya enunciadas en el capítulo \ref{cap:preliminares} ---fases balanceadas, sin saturación, sin pérdidas en el hierro---, y aplicando la transformada de Clarke al modelo trifásico, el motor BLDC queda descrito por
+\begin{subequations}
+\label{eq:modelo-ab-estado}
+\begin{align}
+    L \frac{d\mathbf{i}_{\alpha\beta}}{dt} &= \mathbf{u}_{\alpha\beta} - R\,\mathbf{i}_{\alpha\beta} - \mathbf{e}_{\alpha\beta}(\theta_e), \label{eq:elec-ab}\\
+    J \frac{d\omega_m}{dt} &= T_e - d\,\omega_m - T_L, \label{eq:mec-ab}\\
+    \frac{d\theta_e}{dt} &= p\,\omega_m, \label{eq:cin-ab}
+\end{align}
+\end{subequations}
+con las definiciones de la sección \ref{sec:modelo-abc}. La BEMF se factoriza como
+\begin{equation}
+    \mathbf{e}_{\alpha\beta}(\theta_e) = K_e\,\omega_m\,\mathbf{s}(\theta_e),
+    \label{eq:bemf-factorizada}
+\end{equation}
+donde $\mathbf{s}(\theta_e) \in \mathbb{R}^2$ es la función de forma de la BEMF en el marco $\alpha\beta$, normalizada de tal manera que $K_e$ recoja la amplitud y $\mathbf{s}$ solo la forma de onda. El par electromagnético desarrollado por el motor toma la expresión correspondiente:
+\begin{equation}
+    T_e = K_t\,\mathbf{s}^{\mathsf T}(\theta_e)\,\mathbf{i}_{\alpha\beta}.
+    \label{eq:torque-ab}
+\end{equation}
+La ecuación \eqref{eq:torque-ab} es la pieza central del análisis que sigue. El par es el producto interno entre la forma de onda de la BEMF y el vector de corriente, escalado por $K_t$. Si $\mathbf{s}(\theta_e)$ no es senoidal pura, la corriente que mantiene $T_e$ constante tampoco lo será, y la calidad del par dependerá directamente del conocimiento que el controlador tenga de $\mathbf{s}$.
 
-	\begin{objetivo}
-		[Enunciado del objetivo]
-	\end{objetivo}
+Para los propósitos de simulación y de implementación digital, el modelo continuo se discretiza con el método de Euler. Con un periodo de muestreo $T_s$ pequeño respecto a la dinámica eléctrica del motor, la dinámica de corriente \eqref{eq:elec-ab} se aproxima como
+\begin{equation}
+    \mathbf{i}_{\alpha\beta}(k+1) = \mathbf{i}_{\alpha\beta}(k) + \frac{T_s}{L}\bigl[\mathbf{u}_{\alpha\beta}(k) - R\,\mathbf{i}_{\alpha\beta}(k) - \mathbf{e}_{\alpha\beta}(k)\bigr],
+    \label{eq:modelo-discreto}
+\end{equation}
+que es la base sobre la que opera el FCS-MPC y su variante M2PC, como se mostrará en el capítulo \ref{cap:desarrollo}.
+
+% =================================================================
+\section{Generación de la referencia de corriente}
+\label{sec:iref}
+
+El objetivo de control de par es mantener el par electromagnético $T_e$ tan cerca como sea posible de un valor de referencia $T_\mathrm{ref}$, que se produce típicamente por un lazo externo de velocidad. La pregunta inmediata es: ¿qué corriente $\mathbf{i}_{\alpha\beta}^*$ debe entregar el lazo interno para que $T_e = T_\mathrm{ref}$?
+
+Por \eqref{eq:torque-ab}, cualquier corriente que satisfaga $K_t\,\mathbf{s}^{\mathsf T}\,\mathbf{i}^* = T_\mathrm{ref}$ produce el par deseado. Como la ecuación tiene una sola restricción y la corriente vive en $\mathbb{R}^2$, el conjunto de soluciones es una recta. Para seleccionar un único punto de esa recta es necesario un criterio adicional. El criterio estándar en la literatura de control de máquinas \citep{lehuy1986minimization, krishnan2009pmbldc} es minimizar las pérdidas en el cobre, que son proporcionales a $\|\mathbf{i}\|^2$. El problema queda entonces como
+\begin{equation}
+    \min_{\mathbf{i}\in\mathbb{R}^2}\; \|\mathbf{i}\|^2
+    \quad \text{sujeto a} \quad
+    K_t\,\mathbf{s}^{\mathsf T}(\theta_e)\,\mathbf{i} = T_\mathrm{ref}.
+    \label{eq:opt-iref}
+\end{equation}
+La solución se obtiene formando el Lagrangiano $\mathcal{L} = \|\mathbf{i}\|^2 + \lambda(T_\mathrm{ref} - K_t\,\mathbf{s}^{\mathsf T}\,\mathbf{i})$, derivando respecto a $\mathbf{i}$ y sustituyendo en la restricción:
+\begin{equation}
+    \mathbf{i}_{\alpha\beta}^*(\theta_e) = \frac{T_\mathrm{ref}}{K_t\,\|\mathbf{s}(\theta_e)\|^2}\,\mathbf{s}(\theta_e).
+    \label{eq:iref-optima}
+\end{equation}
+Esta es la referencia de corriente óptima en el sentido de pérdidas mínimas, originalmente propuesta por \citet{lehuy1986minimization}. La interpretación geométrica es directa: la corriente debe ser paralela a $\mathbf{s}(\theta_e)$ en todo instante, con una amplitud inversamente proporcional al cuadrado de la norma de $\mathbf{s}$.
+
+La fórmula \eqref{eq:iref-optima} tiene dos consecuencias relevantes para esta tesis. Primero, si $\mathbf{s}(\theta_e)$ es senoidal pura, entonces $\|\mathbf{s}\|^2$ es constante y la referencia es una senoide perfecta; este es el caso del PMSM y el motivo por el que la transformación de Park funciona tan bien en esa familia. Segundo, si $\mathbf{s}(\theta_e)$ es trapezoidal o contiene armónicos, entonces $\|\mathbf{s}\|^2$ varía con $\theta_e$, y la referencia óptima contiene esas mismas variaciones: la corriente que mantiene un par constante es, ella misma, una función no senoidal de la posición.
+
+% =================================================================
+\section{El rizo de par como \textit{model mismatch}}
+\label{sec:rizo-mismatch}
+
+En la práctica, el controlador no conoce $\mathbf{s}(\theta_e)$ exactamente: lo que tiene es un modelo $\hat{\mathbf{s}}(\theta_e)$, típicamente derivado de una hipótesis simplificadora ---trapezoidal ideal, senoidal ideal o, en el mejor de los casos, una tabla de búsqueda obtenida del fabricante---. Llamemos $\tilde{\mathbf{s}}(\theta_e) = \mathbf{s}(\theta_e) - \hat{\mathbf{s}}(\theta_e)$ al error del modelo de BEMF. Este error se propaga al rizo de par por dos vías distintas, ambas inherentes a la arquitectura del FCS-M2PC.
+
+\textbf{La primera vía es la generación de referencia.} Usando $\hat{\mathbf{s}}$ en lugar de $\mathbf{s}$ en \eqref{eq:iref-optima}, el controlador genera
+\begin{equation}
+    \hat{\mathbf{i}}_{\alpha\beta}^*(\theta_e) = \frac{T_\mathrm{ref}}{K_t\,\|\hat{\mathbf{s}}(\theta_e)\|^2}\,\hat{\mathbf{s}}(\theta_e),
+    \label{eq:iref-incorrecta}
+\end{equation}
+y el par realmente producido, suponiendo seguimiento perfecto de corriente, es
+\begin{equation}
+    T_e = K_t\,\mathbf{s}^{\mathsf T}(\theta_e)\,\hat{\mathbf{i}}_{\alpha\beta}^*(\theta_e) = T_\mathrm{ref}\,\frac{\mathbf{s}^{\mathsf T}(\theta_e)\,\hat{\mathbf{s}}(\theta_e)}{\|\hat{\mathbf{s}}(\theta_e)\|^2}.
+    \label{eq:torque-incorrecto}
+\end{equation}
+El cociente $\mathbf{s}^{\mathsf T}\hat{\mathbf{s}}/\|\hat{\mathbf{s}}\|^2$ es igual a uno solamente cuando $\mathbf{s} = \hat{\mathbf{s}}$. En cuanto $\tilde{\mathbf{s}} \neq 0$, ese cociente varía con $\theta_e$ y aparece directamente como rizo de par en $T_e$, aun cuando el lazo interno de corriente sea perfecto.
+
+\textbf{La segunda vía es la predicción del controlador predictivo.} El FCS-M2PC, como se verá en \eqref{eq:modelo-discreto} y en el capítulo \ref{cap:desarrollo}, predice la corriente al final del periodo de muestreo usando una estimación de la BEMF; al usar $\hat{\mathbf{e}}_{\alpha\beta} = K_e\,\omega_m\,\hat{\mathbf{s}}(\theta_e)$ en lugar de la BEMF real, la corriente predicha está sesgada por $T_s\,K_e\,\omega_m\,\tilde{\mathbf{s}}/L$. El vector de voltaje escogido para minimizar la función de costo es, en consecuencia, subóptimo, y el error de seguimiento de corriente se transfiere al par a través de \eqref{eq:torque-ab}.
+
+Las dos vías se refuerzan. El error de modelo en $\mathbf{s}$ corrompe la referencia que el lazo interno trata de seguir, y simultáneamente corrompe la predicción que el lazo interno usa para decidir qué hacer. Esta observación es la motivación central de la tesis: si se pudiera reemplazar $\hat{\mathbf{s}}$ por una estimación que se acerque a $\mathbf{s}$ a partir de datos del motor en operación, las dos vías de propagación del rizo se atacarían simultáneamente con un mismo mecanismo.
+
+% =================================================================
+\section{Planteamiento del problema}
+\label{sec:problema}
+
+Las consideraciones anteriores permiten enunciar formalmente el problema que se aborda en esta tesis.
+
+\begin{problema}
+\label{prob:principal}
+Considérese el motor BLDC modelado por \eqref{eq:modelo-ab-estado}--\eqref{eq:torque-ab}, alimentado por un VSI de dos niveles que produce los ocho vectores de voltaje admisibles del cuadro \ref{tab:vsi-vectores}. Supóngase que la posición eléctrica $\theta_e$ y las corrientes $\mathbf{i}_{\alpha\beta}$ son medibles, que los parámetros eléctricos $R$, $L$ y $K_e$ son conocidos con una incertidumbre acotada, y que la función de forma de la BEMF $\mathbf{s}(\theta_e)$ es periódica de periodo $2\pi$ con energía espectral concentrada en los primeros $H$ armónicos, pero su forma exacta es \emph{desconocida a priori}.
+
+Diseñar un esquema de control en tiempo discreto que, a partir de una referencia de par $T_\mathrm{ref}$ generada por un lazo externo de velocidad, seleccione en cada periodo de muestreo $T_s$ una combinación de vectores admisibles del inversor tal que el par electromagnético resultante $T_e(t)$ siga a $T_\mathrm{ref}$ minimizando el rizo
+\[
+    \Delta T_e \;=\; \max_{t \in [t_0,\,t_0+\Delta]} T_e(t)\,-\,\min_{t \in [t_0,\,t_0+\Delta]} T_e(t),
+\]
+medido en régimen permanente, donde $\Delta$ corresponde a un número entero de periodos eléctricos.
+\end{problema}
+
+El requisito de que $\mathbf{s}(\theta_e)$ sea desconocida a priori distingue este planteamiento de la mayoría de los esquemas FCS-MPC reportados, que asumen una forma de onda fija (trapezoidal o senoidal) en su modelo interno. La restricción a una clase de funciones periódicas con espectro finito ---asunción razonable para cualquier motor real, donde la energía cae rápido por encima del onceavo armónico--- es la que abre la puerta a estimar $\mathbf{s}$ con un número pequeño de parámetros.
+
+% =================================================================
+\section{Hipótesis}
+\label{sec:hipotesis}
+
+La hipótesis sobre la que se construye esta tesis es la siguiente. Si la función de forma de la BEMF $\mathbf{s}(\theta_e)$ se estima en línea con un modelo lineal en parámetros, parsimonioso y bien condicionado para su actualización por descenso de gradiente, y esa estimación se inyecta simultáneamente en la generación de la referencia de corriente y en el modelo de predicción del FCS-M2PC, entonces el rizo de par residual se reducirá de manera significativa respecto a esquemas que emplean modelos fijos de BEMF, sin requerir datos previos del motor ni aumentar la carga computacional a niveles incompatibles con una implementación en un microcontrolador de gama media.
+
+Tres elementos sostienen esta hipótesis y se justifican a lo largo del capítulo \ref{cap:desarrollo}. Primero, la base de Fourier truncada en $H$ armónicos representa cualquier BEMF de motor real con error despreciable usando $2H$ parámetros, lo que la convierte en un modelo lineal de baja dimensión. Segundo, el algoritmo LMS sobre esa base es óptimamente condicionado, ya que la matriz de autocorrelación es múltiplo de la identidad bajo posición uniformemente distribuida, y converge sin sufrir dispersión de modos. Tercero, la corrección actúa en los dos puntos donde el error de BEMF se traduce en rizo de par, de modo que la mejora se acumula.
+
+% =================================================================
+\section{Objetivos}
+\label{sec:objetivos}
+
+\begin{objetivo}
+\label{obj:general}
+Diseñar, analizar y validar en simulación un esquema de control predictivo de corriente FCS-M2PC con estimación adaptable en línea de la función de forma de la BEMF basada en un ADALINE con regresores de Fourier, capaz de reducir el rizo de par en motores BLDC con BEMF no senoidal sin requerir caracterización previa del motor.
+\end{objetivo}
+
+\noindent Los objetivos específicos que estructuran este trabajo son:
+\begin{enumerate}[i)]
+    \item Formular el FCS-M2PC propuesto por \citet{coronado2025} en una forma que admita una BEMF estimada como parámetro de su modelo interno, sin perder las garantías de tiempo finito de aplicación dentro de un periodo de muestreo.
+    \item Diseñar el ADALINE con base de Fourier para la representación de la BEMF, fijar la regla de actualización LMS y analizar sus propiedades de convergencia bajo posición uniformemente distribuida.
+    \item Construir un observador discreto que recupere $\mathbf{s}(\theta_e)$ a partir de mediciones de corriente y voltaje en lazo cerrado, proporcionando la señal de aprendizaje al ADALINE en ausencia de un sensor de BEMF.
+    \item Integrar las tres piezas anteriores en una arquitectura única y comparar su desempeño contra esquemas FCS-M2PC con modelos fijos de BEMF (trapezoidal, senoidal y aprendido offline con redes neuronales profundas), usando un caso de estudio numérico.
+    \item Caracterizar el rizo residual y discutir las fuentes que el esquema propuesto no puede atacar por construcción, identificando direcciones de trabajo futuro.
+\end{enumerate}
 
 \end{document}

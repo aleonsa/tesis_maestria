@@ -1,20 +1,232 @@
 % Bibliografía de la tesis. Estilo: apalike (natbib).
-% Agrega aquí tus referencias en formato BibTeX.
 
-@article{ejemplo_articulo,
-	title={[Título del artículo]},
-	author={[Autor(es)]},
-	journal={[Revista]},
-	volume={},
-	number={},
-	pages={},
-	year={},
-	publisher={}
+% =========================================================
+%   GRUPO DE TRABAJO (UNAM — Instituto de Ingeniería)
+% =========================================================
+
+@article{coronado2025,
+    author  = {Coronado-Andrade, Axel and Alvarez-Icaza, Luis},
+    title   = {Finite control set model predictive control for current ripple reduction on {BLDCs}},
+    journal = {IEEE Open Journal of Power Electronics},
+    year    = {2025},
+    note    = {Manuscript draft},
 }
 
-@book{ejemplo_libro,
-	title={[Título del libro]},
-	author={[Autor(es)]},
-	year={},
-	publisher={}
+@article{coronado2023,
+    author  = {Coronado-Andrade, Axel and de la Guerra, Alejandra and Alvarez-Icaza, Luis},
+    title   = {Load Torque Observer for {BLDC} Motors Based on a {HOSM} Differentiator},
+    journal = {Machines},
+    year    = {2023},
+    publisher = {MDPI},
+}
+
+@inproceedings{coronado2021,
+    author    = {Coronado-Andrade, Axel and de la Guerra, Alejandra and Alvarez-Icaza, Luis},
+    title     = {Implementation of a {BLDC} Motor Observer Scheme using the {INSTASPIN} Platform},
+    booktitle = {2021 18th International Conference on Electrical Engineering, Computing Science and Automatic Control (CCE)},
+    year      = {2021},
+    pages     = {1--6},
+    publisher = {IEEE},
+    address   = {Mexico City, Mexico},
+    doi       = {10.1109/CCE53527.2021.9633107},
+}
+
+% =========================================================
+%   FCS-MPC EN CONVERTIDORES Y MOTORES
+% =========================================================
+
+@article{kouro2009mpc,
+    author  = {Kouro, Samir and Cort{\'e}s, Patricio and Vargas, Ren{\'e} and Ammann, Ulrich and Rodr{\'i}guez, Jos{\'e}},
+    title   = {Model Predictive Control --- A Simple and Powerful Method to Control Power Converters},
+    journal = {IEEE Transactions on Industrial Electronics},
+    volume  = {56},
+    number  = {6},
+    pages   = {1826--1838},
+    year    = {2009},
+    doi     = {10.1109/TIE.2008.2008349},
+}
+
+@inproceedings{park2016torque,
+    author    = {Park, Junhwi and Kwak, Yunchang and Jo, Yeongjun and Bae, Jongnam and Lee, Dong-Hee},
+    title     = {Torque Ripple Reduction of {BLDC} Motor using Predicted Current Control},
+    booktitle = {2016 IEEE Transportation Electrification Conference and Expo, Asia-Pacific (ITEC)},
+    year      = {2016},
+    address   = {Busan, Korea},
+    publisher = {IEEE},
+}
+
+% =========================================================
+%   ESTIMACIÓN DE BEMF / SENSORLESS
+% =========================================================
+
+@phdthesis{shao2003direct,
+    author = {Shao, Jianwen},
+    title  = {Direct Back {EMF} Detection Method for Sensorless Brushless {DC} ({BLDC}) Motor Drives},
+    school = {Virginia Polytechnic Institute and State University},
+    year   = {2003},
+    type   = {{M.Sc.} Thesis},
+}
+
+@inproceedings{shao2019ismo,
+    author    = {Shao, Yanzhen and Wang, Bo and Yu, Yong and Dong, Qinghua and Tian, Minghe and Xu, Dianguo},
+    title     = {An Integral Sliding Mode Back-{EMF} Observer for Position-Sensorless Permanent Magnet Synchronous Motor Drives},
+    booktitle = {2019 22nd International Conference on Electrical Machines and Systems (ICEMS)},
+    year      = {2019},
+    publisher = {IEEE},
+}
+
+@article{li2019highstability,
+    author  = {Li, Tuanjie and Zhou, Jiaxing},
+    title   = {High-Stability Position-Sensorless Control Method for Brushless {DC} Motors at Low Speed},
+    journal = {IEEE Transactions on Power Electronics},
+    volume  = {34},
+    number  = {5},
+    pages   = {4895--4907},
+    year    = {2019},
+}
+
+@article{yao2019commutation,
+    author  = {Yao, Xuliang and Ma, Chenwei and Zhao, Jicheng and {De Belie}, Frederik},
+    title   = {Rapid estimation and compensation method of commutation error caused by {Hall} sensor installation error for {BLDC} motors},
+    journal = {IET Electric Power Applications},
+    volume  = {13},
+    number  = {},
+    pages   = {},
+    year    = {2019},
+    doi     = {10.1049/iet-epa.2018.5941},
+}
+
+% =========================================================
+%   REDES NEURONALES Y ADALINE PARA MOTORES
+% =========================================================
+
+@book{widrow1985adaptive,
+    author    = {Widrow, Bernard and Stearns, Samuel D.},
+    title     = {Adaptive Signal Processing},
+    year      = {1985},
+    publisher = {Prentice-Hall},
+    address   = {Englewood Cliffs, NJ},
+}
+
+@inproceedings{widrow1960adaline,
+    author    = {Widrow, Bernard and Hoff, Marcian E.},
+    title     = {Adaptive Switching Circuits},
+    booktitle = {IRE WESCON Convention Record},
+    pages     = {96--104},
+    year      = {1960},
+}
+
+@inproceedings{ali2024ann,
+    author    = {Ali, Md Akhtar and Sindhu, M. R. and Ramakrishna, Duvvuri S. P.},
+    title     = {Sensorless Speed Control of Brushless {DC} Motor using Artificial Neural Network Predicted Back {EMF}},
+    booktitle = {2024 IEEE International Conference on Power Electronics, Drives and Energy Systems (PEDES)},
+    year      = {2024},
+    publisher = {IEEE},
+    doi       = {10.1109/PEDES61459.2024.10961065},
+}
+
+@inproceedings{zhao2025adaline,
+    author    = {Zhao, Chenhao and Zuo, Yuefei and Wang, Huanzhi and Yu, Kailiang and Yu, Yanlei and Lee, Christopher H. T.},
+    title     = {Finite-Time Adaptive Linear Neuron Control for Torque Ripple Suppression of Permanent Magnet Synchronous Motors},
+    booktitle = {2025 28th International Conference on Electrical Machines and Systems (ICEMS)},
+    year      = {2025},
+    address   = {Busan, Korea},
+    publisher = {IEEE},
+}
+
+% =========================================================
+%   CONTROL REPETITIVO (referencia teórica, no se profundiza)
+% =========================================================
+
+@inproceedings{ahn2003adaptive,
+    author    = {Ahn, Hyun-Sik},
+    title     = {Discrete-Time Adaptive Repetitive Control and Its Application to a Linear {BLDC} Motor},
+    booktitle = {Proceedings of the Fourth International Conference on Control and Automation (ICCA'03)},
+    year      = {2003},
+    address   = {Montreal, Canada},
+}
+
+@article{hara1988repetitive,
+    author  = {Hara, Shinji and Yamamoto, Yutaka and Omata, Tohru and Nakano, Michio},
+    title   = {Repetitive Control System: A New Type Servo System for Periodic Exogenous Signals},
+    journal = {IEEE Transactions on Automatic Control},
+    volume  = {33},
+    number  = {7},
+    pages   = {659--668},
+    year    = {1988},
+}
+
+% =========================================================
+%   IDENTIFICACIÓN Y PARÁMETROS DEL MOTOR
+% =========================================================
+
+@article{jimenez2021bldc,
+    author  = {Jimenez-Gonzalez, Jose and Gonzalez-Monta{\~n}ez, Felipe and Jimenez-Mondragon, Victor Manuel and Liceaga-Castro, Jes{\'u}s Ulises and Escarela-Perez, Rafael and Olivares-Galvan, Juan Carlos},
+    title   = {Parameter Identification of {BLDC} Motor Using Electromechanical Tests and Recursive Least-Squares Algorithm: Experimental Validation},
+    journal = {Actuators},
+    volume  = {10},
+    number  = {7},
+    pages   = {143},
+    year    = {2021},
+    publisher = {MDPI},
+    doi     = {10.3390/act10070143},
+}
+
+% =========================================================
+%   REFERENCIAS DE LIBRO Y SOPORTE TEÓRICO
+% =========================================================
+
+@book{krause2013analysis,
+    author    = {Krause, Paul C. and Wasynczuk, Oleg and Sudhoff, Scott D. and Pekarek, Steven},
+    title     = {Analysis of Electric Machinery and Drive Systems},
+    year      = {2013},
+    edition   = {3rd},
+    publisher = {Wiley-IEEE Press},
+}
+
+@book{rashid2014power,
+    author    = {Rashid, Muhammad H.},
+    title     = {Power Electronics: Devices, Circuits, and Applications},
+    year      = {2014},
+    edition   = {4th},
+    publisher = {Pearson},
+}
+
+@book{haykin2014adaptive,
+    author    = {Haykin, Simon},
+    title     = {Adaptive Filter Theory},
+    year      = {2014},
+    edition   = {5th},
+    publisher = {Pearson},
+}
+
+@book{rodriguez2012predictive,
+    author    = {Rodr{\'i}guez, Jos{\'e} and Cort{\'e}s, Patricio},
+    title     = {Predictive Control of Power Converters and Electrical Drives},
+    year      = {2012},
+    publisher = {Wiley-IEEE Press},
+}
+
+@book{krishnan2009pmbldc,
+    author    = {Krishnan, Ramu},
+    title     = {Permanent Magnet Synchronous and Brushless {DC} Motor Drives},
+    year      = {2009},
+    publisher = {CRC Press},
+}
+
+@article{lehuy1986minimization,
+    author  = {Le-Huy, Hoang and Perret, Robert and Feuillet, Robert},
+    title   = {Minimization of Torque Ripple in Brushless {DC} Motor Drives},
+    journal = {IEEE Transactions on Industry Applications},
+    volume  = {IA-22},
+    number  = {4},
+    pages   = {748--755},
+    year    = {1986},
+}
+
+@book{chiasson2005modeling,
+    author    = {Chiasson, John N.},
+    title     = {Modeling and High Performance Control of Electric Machines},
+    year      = {2005},
+    publisher = {Wiley-IEEE Press},
 }

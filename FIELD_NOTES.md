@@ -28,6 +28,12 @@
 - [N1.5 — Pines complementarios y dead-time: cómo el TIM1 evita el shoot-through](#n15--pines-complementarios-y-dead-time-cómo-el-tim1-evita-el-shoot-through)
 - [N1.6 — TRGO: el cordón umbilical entre el TIM1 y el ADC](#n16--trgo-el-cordón-umbilical-entre-el-tim1-y-el-adc)
 - [N1.7 — Break inputs: la protección de hardware contra el desastre](#n17--break-inputs-la-protección-de-hardware-contra-el-desastre)
+- [N1.8 — Por qué 50 kHz: el balance de 6 restricciones](#n18--por-qué-50-khz-el-balance-de-6-restricciones)
+- [N1.9 — La trampa del Alternate Function: AF no es uniforme por periférico](#n19--la-trampa-del-alternate-function-af-no-es-uniforme-por-periférico)
+- [N1.10 — Cómo se mide la corriente del motor: shunt → OPAMP → ADC](#n110--cómo-se-mide-la-corriente-del-motor-shunt--opamp--adc)
+- [N1.11 — OPAMPs internos del STM32G4: modos, PGA, calibración](#n111--opamps-internos-del-stm32g4-modos-pga-calibración)
+- [N1.12 — El ADC del STM32G4: cómo se convierte voltaje en número](#n112--el-adc-del-stm32g4-cómo-se-convierte-voltaje-en-número)
+- [N1.13 — Bring-up del ADC: tres trampas que encontramos](#n113--bring-up-del-adc-tres-trampas-que-encontramos)
 
 ---
 
@@ -845,20 +851,21 @@ En el registro `CR1` del TIM1, los bits 6:5 (`CMS[1:0]`) configuran el sub-modo:
 - Una sola interrupción de output compare por ciclo PWM.
 - El "update event" (overflow + underflow) sigue ocurriendo, así que TRGO puede dispararse 2 veces por periodo si quisiéramos doble muestreo (para Fase 1 una basta).
 
-### Cálculo de ARR para 30 kHz
+### Cálculo de ARR para 50 kHz
 
 Con HCLK = 170 MHz y prescaler PSC = 0:
 
-$$f_{PWM} = \frac{f_{clk}}{2 \cdot ARR} \quad\Rightarrow\quad ARR = \frac{170 \times 10^6}{2 \cdot 30 \times 10^3} = 2833.\overline{3}$$
+$$f_{PWM} = \frac{f_{clk}}{2 \cdot ARR} \quad\Rightarrow\quad ARR = \frac{170 \times 10^6}{2 \cdot 50 \times 10^3} = 1700$$
 
-No es entero. Opciones:
+**Exacto, sin redondeo.** Una de las razones para elegir 50 kHz versus 30 kHz, que daba ARR=2833.3 con +82 ppm de error.
 
-| ARR | f_PWM real | Error |
+| f_PWM | ARR | Error de cuantización |
 |---|---|---|
-| **2833** | **30 002.5 Hz** | **+82 ppm** |
-| 2834 | 29 991.9 Hz | −270 ppm |
+| 30 kHz | 2833 | +82 ppm |
+| **50 kHz** | **1700** | **0 ppm** |
+| 100 kHz | 850 | 0 ppm (pero inviable computacionalmente) |
 
-Vamos con **ARR = 2833**. 82 ppm de error es invisible — el AS5600 tiene órdenes de magnitud más error en posición, el cristal del PCB tiene ±20 ppm de tolerancia.
+La decisión **50 kHz vs 30 kHz** depende de tradeoffs entre rizado de corriente, presupuesto computacional, AS5600, etc. → ver nota dedicada [N1.8](#n18--por-qué-50-khz-el-balance-de-6-restricciones).
 
 ### Por qué importa
 
@@ -1598,4 +1605,1293 @@ Tres razones para entenderlo aunque no lo usemos en Fase 1:
 3. **El bit MOE en BDTR es el "big red button" de toda la cadena**. Es lo último que se configura (después de ARR, CCRx, CCxE, CCxNE, DTG, etc.) y lo primero que se apaga ante un fault. Tener este modelo mental hace que el flujo de inicialización tenga sentido lógico, no solo histórico.
 
 ---
+
+## N1.8 — Por qué 50 kHz: el balance de 6 restricciones
+
+### Panorama
+
+`f_PWM` no es un parámetro libre. Es una decisión que pelea entre **6 restricciones simultáneas**, algunas que empujan hacia arriba y otras hacia abajo. La pregunta no es "¿cuál es la frecuencia ideal?" sino "¿cuál es el mejor compromiso?".
+
+La decisión original del proyecto era **30 kHz**, documentada en la memoria con el argumento del "rizado de corriente alto con L baja". Pero el análisis cuantitativo de los 6 factores (sesión 7, 2026-05-20) reveló que ese argumento era subóptimo: a 30 kHz el rizado **sigue siendo del 92% relativo**, y subir a 50 kHz lo baja a 56% sin sacrificar nada crítico. Decisión revisada: **50 kHz**.
+
+### Los 6 factores
+
+#### 1. Rizado de corriente (empuja hacia ARRIBA)
+
+Cuando un PWM aplica voltaje de bus durante T_on y 0 durante T_off, la corriente en la inductancia oscila con amplitud peak-to-peak:
+
+$$\Delta i_{pp} \approx \frac{V_{bus} \cdot T_s}{L}$$
+
+Con `L = 0.86 mH` (motor 2804 nominal) y `Vbus = 12 V`:
+
+| f_PWM | T_s | Δi_pp | Δi / i_nominal (0.5 A) |
+|---|---|---|---|
+| 10 kHz | 100 μs | 1.40 A | 280% (desastre) |
+| 20 kHz | 50 μs | 0.70 A | 140% (muy malo) |
+| 30 kHz | 33 μs | 0.46 A | **92%** (borderline) |
+| **50 kHz** | **20 μs** | **0.28 A** | **56%** (bueno) |
+| 70 kHz | 14 μs | 0.20 A | 40% (muy bueno) |
+| 100 kHz | 10 μs | 0.14 A | 28% (excelente) |
+
+El motor 2804 tiene **L bajísima** por ser pequeño y de 14 polos. El motor de Coronado tiene L=2.05 mH (paper) → su rizado a 30 kHz es solo 39%, manejable. Para nosotros, 30 kHz es **estructuralmente insuficiente** porque el rizado domina la señal.
+
+#### 2. Constante eléctrica del motor (empuja hacia ARRIBA, valor mínimo)
+
+$$\tau_e = \frac{L}{R} = \frac{0.86 \times 10^{-3}}{2.3} = 374\,\mu s$$
+
+Regla de diseño de control: `T_s < τ_e / 10 = 37 μs`. Eso es el límite mínimo de muestreo para que el modelo discretizado del sistema mantenga validez.
+
+| f_PWM | Ts/τ_e | Modelo discreto válido |
+|---|---|---|
+| 20 kHz | 13% | No |
+| 30 kHz | 9% | Justo en el borde |
+| **50 kHz** | **5%** | Sí, con holgura |
+| 100 kHz | 3% | Sí |
+
+A 20 kHz el modelo predictivo del FCS-MPC pierde precisión. **Otra razón para no bajar de 30 kHz**, y para preferir 50 kHz.
+
+#### 3. Presupuesto computacional del MCU (empuja hacia ABAJO, valor máximo)
+
+Cada periodo PWM tenemos `T_s = 1/f_PWM` segundos para ejecutar la ISR completa: lectura de ADC, lectura de AS5600, transformaciones Clarke, predicción FCS-M2PC, escritura de PWM, ADALINE-LMS update.
+
+| f_PWM | T_s | Ciclos del CPU @ 170 MHz | Margen |
+|---|---|---|---|
+| 30 kHz | 33 μs | 5667 ciclos | Muy cómodo |
+| **50 kHz** | **20 μs** | **3400 ciclos** | **Apretado pero factible** |
+| 70 kHz | 14 μs | 2380 ciclos | Crítico |
+| 100 kHz | 10 μs | 1700 ciclos | Inviable con FCS-MPC clásico |
+
+Para FCS-M2PC con horizonte 1 y 7 candidatos en STM32G4, el típico ronda **1500-2500 ciclos** (medido en literatura). A 50 kHz tenemos 3400 ciclos = ~700-1900 de holgura. **Suficiente, pero hay que vigilarlo en Semana 6** cuando midamos la ISR real.
+
+#### 4. AS5600 (empuja hacia ABAJO)
+
+El AS5600 actualiza internamente a **~7 kHz** (sample cada ~150 μs). Esto crea un problema: el algoritmo de control quiere posición fresca en cada periodo PWM, pero el sensor no la entrega tan rápido.
+
+| f_PWM | Ciclos PWM entre updates frescos del AS5600 |
+|---|---|
+| 30 kHz | 4.3 |
+| **50 kHz** | **7.1** |
+| 70 kHz | 10.0 |
+| 100 kHz | 14.3 |
+
+Cuantos más ciclos sin update real, peor la extrapolación de θ entre lecturas. **Este factor empuja a quedarse bajo**, pero hasta 50 kHz es manejable (extrapolación lineal con ~7 ciclos sin update, ~1.05 ms de inferencia entre puntos, asumiendo ω constante en esa ventana).
+
+Por encima de 70 kHz habría que cambiar a un encoder con ancho de banda mayor (AS5048A/AS5047P por SPI, ~6× más rápido).
+
+#### 5. Pérdidas por conmutación (no restrictivo en nuestro rango)
+
+Cada conmutación de MOSFET disipa una energía discreta `E_sw`. La potencia disipada por conmutaciones es `P_sw = E_sw × f_PWM × N_switches`. Crece linealmente con f_PWM.
+
+Los MOSFETs STL180N6F7 en el L6387 están dimensionados para operar hasta ~100 kHz sin estrés térmico significativo. **No es restrictivo en nuestro rango (30-50 kHz).** Solo importaría si quisiéramos ir a 100+ kHz.
+
+#### 6. Pérdida fraccionaria por dead-time (empuja hacia ABAJO)
+
+Dead-time = 500 ns absoluto. Fracción del periodo PWM perdida a "tierra de nadie":
+
+| f_PWM | T_s | DT / T_s |
+|---|---|---|
+| 30 kHz | 33 μs | 1.5% |
+| **50 kHz** | **20 μs** | **2.5%** |
+| 70 kHz | 14 μs | 3.6% |
+| 100 kHz | 10 μs | 5.0% |
+
+A 50 kHz perdemos 2.5% del periodo a dead-time. Esto se manifiesta como **distorsión periódica con el ángulo eléctrico** en la corriente — exactamente la perturbación que el ADALINE va a aprender. Argumento débil: subir a 50 kHz aumenta ligeramente la perturbación, pero también es **más trabajo útil para el ADALINE**.
+
+### Tabla resumen
+
+| Factor | 30 kHz | **50 kHz** | 70 kHz | Notas |
+|---|---|---|---|---|
+| Rizado relativo | 92% | **56%** | 40% | 50 kHz mejor |
+| Modelo discreto válido | borderline | **OK** | OK | 50 kHz mejor |
+| Presupuesto ISR | 5667 cy | **3400 cy** | 2380 cy | 30 kHz mejor, 50 cabe |
+| AS5600 ciclos/update | 4.3 | **7.1** | 10.0 | 30 kHz mejor, 50 manejable |
+| Pérdidas switching | bajas | **bajas** | medias | no restrictivo |
+| DT como % de Ts | 1.5% | **2.5%** | 3.6% | 30 kHz mejor pero diferencia despreciable |
+
+**Veredicto**: 50 kHz balancea mejor. Lo único en que 30 kHz gana es presupuesto computacional, donde 50 kHz "cabe" según literatura aunque sin tanto margen.
+
+### Cálculo exacto del ARR
+
+$$ARR = \frac{170 \times 10^6}{2 \times 50\,000} = 1700 \quad \text{(exacto, 0 ppm de error de cuantización)}$$
+
+Bonus respecto a 30 kHz: 30 kHz pedía ARR=2833.33, redondeado a 2833 con error +82 ppm. **50 kHz cae justo en un entero.** Eliminamos un sub-bug potencial donde el muestreo cuasi-síncrono podría desincronizarse muy lentamente.
+
+### Plan de validación en Semana 6
+
+Cuando midamos la ISR real (Semana 6 según el plan de PROGRESO_HARDWARE.md), tendremos que verificar:
+
+- **¿La ISR completa cabe en <15 μs (75% del Ts=20μs)?** Si no, hay margen para optimizar:
+  - CORDIC para sin/cos en lugar de funciones de math.h.
+  - Fixed-point Q1.15 para la predicción.
+  - Reducir candidatos del FCS-M2PC (de 7 a 5).
+- **¿La extrapolación del AS5600 mantiene θ_e con < 1° de error a velocidades nominales (~1500 rpm mecánicas, ~10500 rpm eléctricas con 7 pares de polos)?**
+
+Si alguna de estas falla, hay 2 fallbacks documentados:
+1. Bajar a 30 kHz como concesión.
+2. Cambiar el AS5600 por AS5048A/AS5047P (SPI, ~6× ancho de banda).
+
+### Por qué importa (meta-lección)
+
+Esta nota es un caso clínico de **revisar decisiones antes de cementarlas en código**. La f_PWM=30 kHz estuvo en la memoria del proyecto durante varias sesiones con el argumento "ripple de corriente alto si Ts es grande" — argumento parcialmente correcto pero **subóptimo**, porque no se hizo el análisis cuantitativo.
+
+Lección general: cuando una decisión técnica empieza a aparecer en código (constantes, comentarios, plan), es el último momento para preguntar "¿por qué este número y no otro?" — y exigir respuesta cuantitativa, no solo cualitativa.
+
+---
+
+## N1.9 — La trampa del Alternate Function: AF no es uniforme por periférico
+
+### Panorama
+
+Cuando configuras un pin en modo Alternate Function (AF), no solo eliges "este pin será controlado por un periférico". Eliges **cuál de hasta 16 funciones alternativas** ese pin específico ofrece. El número AF (0–15) **es propio del pin**, no del periférico.
+
+La trampa: es **tentador asumir "todos los pines TIM1 son AF6"** porque ves que PA8, PA9, PA10 (TIM1_CH1/CH2/CH3) son AF6 y generalizas. Pero ST diseña la pin-mux **pin por pin**, priorizando las funciones más comunes en los números AF más bajos disponibles. **El mismo periférico puede caer en AF distintos según el pin.**
+
+Si configuras un pin con el AF equivocado, **la silicio routea la salida a OTRA función** — no es un error de compilación, no hay warning, los registros se ven "correctos" (MODER=AF, AFR=6). Pero el pin físico está ejecutando algo distinto a lo que quieres.
+
+### Analogía
+
+Piensa en un edificio con 16 ascensores numerados 0–15. Cada planta (= pin) puede conectarse a cualquier ascensor, pero **qué destino llega a esa planta vía cada ascensor depende de la planta**:
+
+- Planta PA8: ascensor 6 lleva a **TIM1_CH1**.
+- Planta PA12: ascensor 6 lleva a **TIM1_CH2N**.
+- Planta PB15: ascensor 6 lleva a **otra cosa**. TIM1_CH3N está en **ascensor 4**.
+- Planta PC13: ascensor 6 lleva a **TIM8_CH4N**. TIM1_CH1N está en **ascensor 4**.
+
+Tomar el ascensor 6 en todas las plantas te lleva a destinos diferentes. Asumir "ascensor 6 = TIM1 siempre" porque funcionó en algunas plantas es la causa del bug.
+
+### Detalle técnico — el bug concreto en el banco
+
+Cuando configuré los 6 pines TIM1 en `pwm.c` (sesión 7), asumí AF6 universal:
+
+```c
+gpio_set_af(GPIOA, 8U,  6U);   // PA8  CH1   → AF6 ✓
+gpio_set_af(GPIOA, 9U,  6U);   // PA9  CH2   → AF6 ✓
+gpio_set_af(GPIOA, 10U, 6U);   // PA10 CH3   → AF6 ✓
+gpio_set_af(GPIOA, 12U, 6U);   // PA12 CH2N  → AF6 ✓
+gpio_set_af(GPIOB, 15U, 6U);   // PB15 CH3N  → AF6 ❌ (debe ser AF4)
+gpio_set_af(GPIOC, 13U, 6U);   // PC13 CH1N  → AF6 ❌ (debe ser AF4; AF6 es TIM8_CH4N)
+```
+
+DS12589 Tabla 13 — fila de PC13 (los 16 AFs):
+
+| AF | Función en PC13 |
+|---|---|
+| AF0 | — |
+| AF1 | — |
+| AF2 | TIM1_BKIN |
+| AF3 | — |
+| **AF4** | **TIM1_CH1N** ← lo que necesitamos |
+| AF5 | — |
+| AF6 | TIM8_CH4N |
+| ... | ... |
+
+Y PB15:
+
+| AF | Función en PB15 |
+|---|---|
+| AF1 | TIM15_CH2 |
+| AF2 | TIM15_CH1N |
+| AF3 | COMP3_OUT |
+| **AF4** | **TIM1_CH3N** ← lo que necesitamos |
+| AF5 | SPI2_MOSI/I2S2_SD |
+
+### Síntomas del bug
+
+Solo la fase B del puente funcionaba (sus dos pines PA9+PA12 están ambos en GPIOA con AF6 correcto para TIM1). Las fases A y C:
+
+- **PC13 con AF6 → estaba routeada a TIM8_CH4N**, un periférico que no estaba habilitado → output del pin queda en estado indefinido (efectivamente alto-impedancia).
+- **PB15 con AF6 → ninguna función específica en esa AF**, output indefinido.
+
+Sin el low-side recibiendo señal del TIM1, el L6387 nunca conmutaba el low-side MOSFET → **bootstrap cap del high-side nunca se cargaba** → high-side tampoco podía conmutar → output del puente flotante en ~8V (mitad de Vbus por simetría del body diode).
+
+Tiempo total perdido diagnosticando: ~2 sesiones de pruebas asumiendo problema de hardware (L6387 dañado, fuente baja, dead-time mal, etc.) cuando era un **3 (tres) en lugar de un 4 en cuatro bits de un registro**.
+
+### Por qué fue difícil detectarlo
+
+El dump diagnóstico que escribí mostraba:
+
+```
+PB15 AFR  = 6  (expected 6 = TIM1)
+PC13 AFR  = 6  (expected 6 = TIM1)
+```
+
+**Y ahí estaba mi error**: el "expected" lo escribí yo basándome en mi misma asunción incorrecta. El bug existía **tanto en el código que configuraba el AF como en el código que validaba la configuración**, así que el diagnóstico decía "todo OK" cuando en realidad estaba mostrando exactamente el bug. Estabas usando el mismo mapa erróneo para preguntar si estás perdido.
+
+### Por qué importa
+
+1. **El AF es siempre por pin, nunca por periférico.** Siempre, siempre verificar la Tabla 13 del datasheet del chip específico (DS12589 para STM32G431) **pin por pin**. Ningún atajo.
+
+2. **Los dumps de validación pueden esconder bugs si el "expected" está sacado del mismo modelo mental que el código que generó el bug.** Para validar realmente: el "expected" debe venir de **una fuente independiente** (el datasheet directamente, otro desarrollador, una herramienta de referencia como STM32CubeMX).
+
+3. **Para futuros pines de la placa B-G431B-ESC1**: cuando llegue I²C1 para el AS5600 (Semana 7), verificar AF de PB6/PB7 directamente del datasheet. **No asumir nada.**
+
+4. **Si hay manera de detectar este error sin scope**: imprimir `GPIOx->ODR` (output data register) para los pines TIM1 mientras el counter corre. Si el AF está mal, GPIO no controla el output → puede dar lecturas raras. Pero esto es indirecto. La validación real es **comparar AFR contra la tabla 13** del datasheet con el código en una pantalla y la datasheet en otra.
+
+### Tabla maestra de AFs para TIM1 en STM32G431 (B-G431B-ESC1)
+
+Persistir aquí para referencia futura:
+
+| Pin | Canal TIM1 | **AF correcto** |
+|---|---|---|
+| PA8 | CH1 (high-side fase A) | AF6 |
+| PA9 | CH2 (high-side fase B) | AF6 |
+| PA10 | CH3 (high-side fase C) | AF6 |
+| PA12 | CH2N (low-side fase B) | AF6 |
+| **PC13** | **CH1N (low-side fase A)** | **AF4** |
+| **PB15** | **CH3N (low-side fase C)** | **AF4** |
+
+---
+
+## N1.10 — Cómo se mide la corriente del motor: shunt → OPAMP → ADC
+
+### Panorama
+
+El algoritmo FCS-M2PC quiere saber **qué corriente fluye por cada fase del motor** para predecir qué va a hacer la siguiente PWM. Pero la corriente no es algo que un microcontrolador pueda "ver" directamente. Solo puede medir **voltajes**, y solo en sus pines ADC.
+
+La cadena para convertir "corriente del motor" en "número en memoria" tiene 3 etapas:
+
+```
+1. Shunt    : convierte corriente en voltaje pequeño (mV)
+2. OPAMP    : amplifica ese voltaje a algo medible (V)
+3. ADC      : convierte ese voltaje a un número digital (entero 0..4095)
+```
+
+Cada etapa introduce sus propios compromisos (resolución, ruido, latencia). Esta nota explica cada una y por qué fueron necesarias.
+
+### Analogía
+
+Es como medir la velocidad del viento. No puedes "ver" el viento directamente. Pones algo que el viento empuje (un molino), mides cuánto se mueve esa cosa, y de ahí calculas la velocidad. El molino convierte "movimiento de aire" en "movimiento mecánico". Después necesitas algo que convierta "movimiento mecánico" en "número" (un encoder, un tachómetro). Cada conversión introduce una ligera distorsión.
+
+En nuestro caso: shunt convierte corriente en voltaje; OPAMP "agranda" ese voltaje; ADC convierte voltaje en número.
+
+### Etapa 1: el shunt
+
+Un **shunt** es una resistencia de valor **muy bajo** (típicamente 1-50 mΩ) colocada **en serie** con el camino de la corriente. En el B-G431B-ESC1 hay 3 shunts, uno en el camino del low-side de cada fase.
+
+```
+       Vbus
+        │
+       MOSFET high-side
+        │
+     ───●────→ a la fase del motor
+        │
+       MOSFET low-side
+        │
+       SHUNT (Rsense ~10 mΩ)
+        │
+       GND
+       ───
+```
+
+Cuando la corriente del motor fluye a través del shunt, la **ley de Ohm** dice:
+
+$$V_{shunt} = i_{motor} \times R_{sense}$$
+
+Para `R_sense = 10 mΩ = 0.01 Ω` y corriente de 1 A:
+
+$$V_{shunt} = 1 \text{ A} \times 0.01 \,\Omega = 10 \text{ mV}$$
+
+### El compromiso del valor de R_sense
+
+¿Por qué un valor tan bajo (10 mΩ)? Tres razones:
+
+**1. Mínima caída de tensión en el motor.** Si R_sense fuera 1 Ω, a 1 A perdería 1 V — el motor solo "vería" Vbus − 1 V. Con 10 mΩ, la pérdida es 10 mV: invisible.
+
+**2. Mínima potencia disipada como calor.** P = i² × R:
+- Con R = 10 mΩ y 2 A pico: P = 4 × 0.01 = **40 mW** (no necesita disipador)
+- Con R = 100 mΩ y 2 A pico: P = 4 × 0.1 = **400 mW** (ya pide disipación cuidadosa)
+
+**3. Respuesta rápida en frecuencia.** Un shunt es básicamente una resistencia pura, sin inductancia parásita (si está bien diseñado). Su ancho de banda llega a MHz, mucho más que lo que necesitamos (50 kHz × 10 = ~500 kHz como Nyquist práctico).
+
+### El problema del shunt: las señales son MUY pequeñas
+
+Con `R = 10 mΩ` y corriente de motor en rango [−2 A, +2 A], el voltaje del shunt está en rango **[−20 mV, +20 mV]**.
+
+Comparado con el rango de entrada del ADC (0 V a 3.3 V = **3300 mV**), nuestra señal usa apenas **40 mV / 3300 mV ≈ 1.2%** del rango. Si simplemente conectáramos el shunt al ADC:
+- Solo usaríamos ~50 de los 4096 niveles del ADC.
+- El ruido térmico del propio ADC (~1 mV) dominaría sobre la señal de motor.
+- Resolución efectiva: ~6 bits útiles en lugar de 12.
+
+**Solución**: amplificar la señal antes del ADC. Eso lo hace el OPAMP.
+
+### Etapa 2: el OPAMP
+
+Un **OPAMP** (operational amplifier) en motor control sirve para:
+
+1. **Amplificar** la señal del shunt por un factor de ganancia G (típicamente 20-50).
+2. **Sumar un offset** para que la señal AC bipolar (±20 mV) quede centrada en el medio del rango del ADC (~1.65 V) en lugar de oscilar alrededor de 0.
+
+Con ganancia G = 50 y offset = 1.65 V, la señal después del OPAMP es:
+
+$$V_{out} = 1.65 + (50 \times V_{shunt}) = 1.65 + (50 \times i \times 0.01) = 1.65 + 0.5 \cdot i$$
+
+Para i = +2 A: V_out = 1.65 + 1.0 = **2.65 V**
+Para i = 0:    V_out = 1.65 V
+Para i = −2 A: V_out = 1.65 − 1.0 = **0.65 V**
+
+Ahora la señal cubre **2 V de los 3.3 V** del ADC. Usamos ~60% del rango → resolución efectiva ~11 bits útiles → buena.
+
+### ¿OPAMP interno o externo?
+
+El STM32G431 tiene **3 OPAMPs internos** (OPAMP1, OPAMP2, OPAMP3) — uno por cada shunt. Esto es **clave del diseño de la placa**: ST escogió este chip específicamente porque integra todo lo que un motor controller necesita.
+
+Ventajas vs OPAMPs externos discretos:
+- **Sin retardos de PCB**: la señal del OPAMP va directo al ADC por silicio (10 ns de latencia), no por traces.
+- **Sin componentes extra**: la placa tiene solo R's de feedback discretas; el OPAMP está en el MCU.
+- **Calibración fácil**: ganancia y offset configurables por registros.
+
+En la B-G431B-ESC1, las **R's de feedback** que definen la ganancia ya están soldadas en el PCB. La ganancia exacta hay que leerla del esquemático MB1419 — eso lo haremos en N1.11.
+
+### Etapa 3: el ADC
+
+El **ADC** (Analog-to-Digital Converter) toma un voltaje continuo de entrada y lo convierte a un número entero. Características clave del ADC del STM32G4:
+
+| Parámetro | Valor |
+|---|---|
+| **Resolución** | 12 bits = **4096 niveles** |
+| Rango de entrada | 0 V a Vref+ ≈ 3.3 V |
+| **Resolución por bit** | 3.3 V / 4096 ≈ **0.806 mV/bit** |
+| Tiempo de conversión típico | 6.5 + 12.5 = 19 ciclos del ADC clock |
+| ADC clock máximo | 60 MHz |
+| **Tiempo total mínimo por conversión** | 19 / 60 MHz ≈ **316 ns** |
+
+Después del OPAMP, cada 1 A de corriente se traduce a 500 mV. Con 0.806 mV/bit:
+
+$$\text{Bits por amperio} = \frac{500 \text{ mV}}{0.806 \text{ mV/bit}} \approx 620 \text{ bits/A}$$
+
+Es decir, 1 A de corriente cambia el valor del ADC en ~620 cuentas. Sobreabundante para el rango del FCS-M2PC.
+
+### ¿Por qué dos ADCs en paralelo (dual simultaneous)?
+
+El STM32G431 tiene **2 ADCs independientes** (ADC1 y ADC2). En motor control trifásico, queremos las 3 corrientes "al mismo tiempo" — pero un solo ADC solo puede muestrear un canal a la vez.
+
+Solución: **dual regular simultaneous mode**.
+- ADC1 muestrea canal X.
+- ADC2 muestrea canal Y **en el mismo instante**.
+- Las dos conversiones suceden en paralelo, terminan a la vez.
+
+Plan de distribución (tentativo, ajustaremos en N1.12):
+- **ADC1**: i_a, i_c, Vbus, temperatura.
+- **ADC2**: i_b, (lo que necesitemos).
+
+i_a y i_b se muestrean **simultáneamente** (uno en ADC1, otro en ADC2). i_c lo calculamos: **i_c = −(i_a + i_b)** (suma de las 3 fases = 0 en un sistema trifásico balanceado, propiedad de Clarke).
+
+### Sincronización con el TIM1
+
+El ADC no muestrea "cuando se le antoja" — recibe un **trigger externo** del TIM1, exactamente en el pico/valle del contador (que coincide con el centro del rizado triangular de la corriente, como vimos en N1.6).
+
+La configuración:
+- `TIM1->CR2.MMS = 010` → update event sale como TRGO. ✅ (ya hecho)
+- `ADC1->CFGR.EXTSEL = 9` → trigger es TIM1_TRGO.
+- `ADC1->CFGR.EXTEN = 01` → trigger en rising edge.
+
+Cuando el contador del TIM1 alcance su pico (CNT=ARR) o valle (CNT=0), TRGO sube → ADC arranca conversión → 316 ns después, los 12 bits están listos.
+
+### Latencia total de la cadena
+
+¿Cuánto tarda desde que la corriente cambia hasta que el FCS-M2PC ve el número?
+
+| Etapa | Latencia |
+|---|---|
+| Shunt (resistivo, casi instantáneo) | ~10 ns |
+| OPAMP interno (3 MHz BW típico) | ~50 ns |
+| Conversión ADC (sample + convert) | ~316 ns |
+| Trigger TRGO → ADC start | ~20 ns |
+| **TOTAL** | **~400 ns** |
+
+Esto es **0.4 μs de un periodo PWM de 20 μs** — solo 2% de latencia. Despreciable para FCS-M2PC.
+
+### Por qué importa
+
+1. **Sin medición precisa, FCS-MPC predice basura.** El algoritmo asume que la corriente medida ahora es exactamente la real. Si hay error (offset, ganancia mal calibrada, ruido), el modelo predictivo diverge.
+
+2. **El timing es estructural, no opcional.** Si muestreáramos sin sincronización con el PWM, el rizado triangular de la corriente añadiría ruido aleatorio. Con TRGO en el pico, leemos el valor promedio real.
+
+3. **La cadena entera es analógica hasta el ADC.** Cualquier ruido EMI que entre por el cable del motor o la fuente puede acoplarse al shunt y propagarse al ADC. Diseño de PCB importante: tracks cortos, planos de GND, etc. (Esto ya lo hizo ST, pero hay que saberlo para diagnosticar si hay ruido.)
+
+4. **La calibración del offset es crítica.** El OPAMP tiene un offset DC pequeño pero no cero (~5 mV típico). Al ADC eso es ~6 cuentas de offset. Si no lo restamos, el FCS-M2PC va a "ver" una corriente DC que no existe. **Por eso en Semana 6 calibraremos**: 1000 muestras con motor desconectado → promedio → restar a futuras medidas.
+
+5. **Conexión con el resto del pipeline**: i_a e i_b medidos → Clarke transform (en N1.13 o cerca) → i_α, i_β → entran al cálculo de FCS-M2PC. Es el "primer eslabón" entre hardware y algoritmo.
+
+---
+
+## N1.11 — OPAMPs internos del STM32G4: modos, PGA, calibración
+
+### Panorama
+
+El STM32G431 tiene **3 amplificadores operacionales integrados al silicio** (OPAMP1, OPAMP2, OPAMP3). No son "extras" — son periféricos de primera clase como el TIM1 o el ADC, con sus propios registros y modos de operación.
+
+Cada uno tiene:
+- 4 entradas posibles para `VINP` (entrada no inversora), mux interno.
+- 2 entradas posibles para `VINM` (entrada inversora), o feedback interno.
+- 1 salida `VOUT` que puede ir a un pin físico **y/o** directo al ADC.
+- Auto-calibración de offset.
+
+En la B-G431B-ESC1, los 3 OPAMPs se usan para amplificar las señales de los 3 shunts de corriente. **Esta nota explica cómo los configuramos.**
+
+### Analogía
+
+Un OPAMP discreto típico tiene 8 patas y va sobre el PCB con resistores externos a su alrededor. Los OPAMPs del G4 son lo mismo pero **dentro del chip**: las patas se reemplazan por pines del MCU configurables, y muchas resistencias internas opcionales. Lo que afuera serían 5–10 componentes discretos, adentro son 2 bits en un registro.
+
+### Los 3 modos de operación (RM0440 §25.3.5)
+
+#### 1. Standalone mode
+
+Más parecido a un OPAMP discreto: VINP, VINM y VOUT son todos pines externos del MCU. Las R's de ganancia van afuera, en el PCB. Útil cuando:
+- Necesitas una topología no soportada por los modos internos (ej. integrador con cap).
+- El ancho de banda interno no alcanza para tu aplicación.
+
+```
+                 STM32 (silicio)
+                ┌──────────────┐
+   VINP   ───→  │      +       │
+                │       \      │
+                │        ●───────→ VOUT (pin)
+                │       /      │
+   VINM   ───→  │      -       │
+                └──────────────┘
+   (gain definida por R's externas entre VOUT y VINM)
+```
+
+#### 2. Follower mode
+
+Ganancia 1, buffer de impedancia. La salida sigue la entrada. Útil para muestrear señales de alta impedancia antes del ADC. **No nos sirve para shunts** porque no amplifica.
+
+#### 3. PGA mode (lo que nosotros vamos a usar)
+
+El OPAMP tiene una red de feedback **interna** con resistores que definen la ganancia. Configuras `PGA_GAIN[2:0]` en `OPAMPx_CSR` y eliges:
+
+| PGA_GAIN | Ganancia no-inversora | Ganancia inversora |
+|---|---|---|
+| 000 | x2 | x-1 |
+| 001 | x4 | x-3 |
+| 010 | x8 | x-7 |
+| 011 | x16 | x-15 |
+| 100 | x32 | x-31 |
+| 101 | x64 | x-63 |
+
+**Para corriente bipolar AC**, la ganancia inversora con offset al medio de Vrefint es lo típico, pero acá la placa MB1419 usa una topología distinta (verificable en el esquemático) que da ganancia de **~16** típicamente.
+
+#### Sub-modo: PGA con feedback externo
+
+Hay un caso especial: el bit `PGA_GAIN[3]` permite **routear el tap de feedback hacia el pin VINM externo**. Esto significa:
+- La ganancia base del PGA interno funciona, pero...
+- Una resistencia externa entre VINM (pin físico) y GND modifica esa ganancia.
+
+**Esto es lo que usa la B-G431B-ESC1**: ST diseñó el PCB con R's externas entre los pines `Curr_fdbk*_OPAmp-` y GND, que ajustan finamente la ganancia y permiten sumar un offset (necesario para AC bipolar).
+
+### Bandwidth del OPAMP
+
+DS12589 sección 6.3.x — Operational Amplifiers electrical characteristics:
+
+| Parámetro | Valor típico | Comentario |
+|---|---|---|
+| GBW (Gain-Bandwidth product) | 7–13 MHz | Producto ganancia × ancho de banda |
+| Slew rate (modo normal) | ~5 V/μs | Velocidad máxima de cambio de la salida |
+| Slew rate (modo high-speed, OPAHSM=1) | ~25 V/μs | Más velocidad, más consumo |
+| Input offset (sin calibrar) | ±5 mV | Reducible a ±3 mV con auto-calibración |
+
+A ganancia 4 (que es lo que esperamos en la placa), ancho de banda efectivo = GBW/4 ≈ **3.25 MHz**. Para muestrear a 50 kHz necesitas que el OPAMP esté establecido en ~10× el período de muestreo = 200 ns. 3.25 MHz → tiempo de respuesta ~300 ns. Justo en el borde, pero suficiente.
+
+Si quisiéramos más margen: `OPAHSM = 1` (high-speed mode) extiende GBW a ~20 MHz con costo en consumo (~mA extra). Por defecto lo dejamos en modo normal y vemos si hay problemas.
+
+### Auto-calibración del offset
+
+El OPAMP físico tiene un offset DC pequeño pero no cero (típicamente ±5 mV). En motor control esto es importante porque:
+- Offset de 5 mV en el OPAMP → ×4 ganancia → 20 mV en la salida → 25 cuentas del ADC.
+- 25 cuentas falsas de corriente cada ciclo → FCS-M2PC ve corriente DC fantasma → controlador injerta corriente real para "corregir" el fantasma → torque DC inducido.
+
+El OPAMP tiene **auto-calibración de offset** que reduce esto a ±3 mV. Procedimiento (RM0440 §25.3.7):
+
+```c
+// 1. Habilitar OPAMP
+OPAMP1->CSR |= OPAMP_CSR_OPAEN;
+
+// 2. Iniciar calibración del par diferencial P
+OPAMP1->CSR |= OPAMP_CSR_CALON;       // arranca calibración
+OPAMP1->CSR &= ~OPAMP_CSR_CALSEL;     // CALSEL=01 = P pair
+OPAMP1->CSR |= 0x1U << OPAMP_CSR_CALSEL_Pos;
+
+// 3. Incrementar TRIMOFFSETP de 0 a 31 hasta que CALOUT flip
+for (uint32_t i = 0; i < 32; i++) {
+    OPAMP1->CSR = ... // set TRIMOFFSETP = i
+    delay_ms(2);  // CALOUT tarda hasta 2 ms en estabilizar
+    if ((OPAMP1->CSR & OPAMP_CSR_CALOUT) == 0) break;
+}
+
+// 4. Repetir para par N (CALSEL=11)
+// 5. Setear USERTRIM=1 para usar los valores calibrados
+```
+
+**Decisión**: vamos a hacer esta calibración **en el bring-up inicial** (una sola vez, después de pwm_init), no en cada arranque del sistema. Los valores quedan en SRAM y se pierden con cada reset, pero a 2 ms × 32 iteraciones × 2 pares = ~128 ms de calibración solo al arranque. Aceptable.
+
+Hay también una **calibración a nivel de aplicación**: con todo OPAMP y ADC corriendo, motor desconectado, capturar 1000 muestras, promediar, y guardar como `i_offset`. Eso lo cubrimos en N1.14 (Semana 6 del planning).
+
+### Conexión OPAMP → ADC
+
+El bit `OPAINTOEN` (Output Internal connection) del CSR permite **routear la salida del OPAMP directo al ADC**, sin pasar por el pin físico:
+
+```
+OPAINTOEN = 0:  VOUT → pin OPAMPx_VOUT físico → ADC ve el pin (si tiene canal ahí)
+OPAINTOEN = 1:  VOUT → conexión interna al ADC + pin OPAMPx_VOUT también activo
+```
+
+**Ventajas de OPAINTOEN = 1**:
+- Ruta más corta → menos ruido EMI.
+- El pin OPAMPx_VOUT queda libre para otra cosa si se quiere.
+- En el G4 está optimizado: el ADC tiene canales internos dedicados que reciben el OPAMP directo.
+
+Para la B-G431B-ESC1: ST usa `OPAINTOEN = 1` típicamente, porque los pines de los VOUT (`OP1_OUT` = PA2, etc.) están routeados también al ADC. Confirmar al implementar.
+
+### Mapeo de OPAMPs a canales ADC internos
+
+El silicio del G4 conecta cada OPAMP a un canal específico del ADC cuando `OPAINTOEN = 1`:
+
+| OPAMP | Canal ADC interno |
+|---|---|
+| OPAMP1 | ADC1 IN13 |
+| OPAMP2 | ADC2 IN16 |
+| OPAMP3 | ADC2 IN18 |
+
+(Verificable en DS12589 Tabla 14 "OPAMP output to ADC channel mapping" — voy a confirmar al implementar.)
+
+Implicaciones:
+- OPAMP1 (fase A) solo es accesible desde ADC1.
+- OPAMP2 y OPAMP3 (fases B y C) accesibles desde ADC2.
+- Esto **fuerza** la distribución: ADC1 para fase A, ADC2 para fases B y C.
+
+**No podemos elegir libremente** qué ADC muestrea cuál fase — está determinado por el silicio. La distribución óptima es:
+- ADC1: i_a (OPAMP1) + Vbus (PA0) + temperatura (PB14).
+- ADC2: i_b (OPAMP2) + i_c (OPAMP3).
+
+Para dual simultaneous, ADC1 e i_a + ADC2 e i_b se muestrean al mismo tiempo. i_c se mide en el siguiente slot del ADC2 (o se calcula: i_c = −(i_a + i_b)).
+
+### Registros principales: OPAMPx_CSR
+
+Vista de un golpe (32 bits):
+
+```
+[31] LOCK          : write-protect del registro (no usar)
+[30] PGA_GAIN[4]
+[29] OPAHSM        : high-speed mode (0=normal)
+[28:24] TRIMOFFSETP : auto-cal value P
+[23:19] TRIMOFFSETN : auto-cal value N
+[18] USERTRIM      : 1 = usa valores calibrados
+[17:14] PGA_GAIN[4:1]
+[13] CALOUT        : output de la calibración (read only)
+[12] CALSEL[1]
+[11] CALON         : 1 = arranca calibración
+[10:8] PGA_GAIN[3:0]: ganancia configurada
+[7] VP_SEL[1]      : selecciona entrada VINP
+[6] VP_SEL[0]
+[5:4] VM_SEL       : selecciona entrada VINM
+[3:2] FORCEVP, OPAINTOEN
+[1] OPAEN          : enable
+[0] (reservado)
+```
+
+Pasos típicos de inicialización para PGA con feedback externo:
+
+```c
+// 1. Habilitar clock al SYSCFG (en STM32G4, los OPAMPs están en SYSCFG bus)
+RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
+
+// 2. Configurar VP_SEL, VM_SEL, PGA_GAIN
+OPAMP1->CSR = (vp_sel << OPAMP_CSR_VPSEL_Pos)
+            | (vm_sel << OPAMP_CSR_VMSEL_Pos)
+            | (pga_gain << OPAMP_CSR_PGA_GAIN_Pos)
+            | OPAMP_CSR_OPAINTOEN;   // route output to ADC internally
+
+// 3. Calibrar offset (procedimiento RM0440 §25.3.7)
+// ... 128 ms
+
+// 4. Habilitar
+OPAMP1->CSR |= OPAMP_CSR_OPAEN;
+
+// 5. Esperar a que se estabilice (~2 μs típico)
+```
+
+### Por qué importa
+
+1. **Sin OPAMP, no hay control de corriente.** La señal del shunt (mV) no es medible por el ADC directamente. El OPAMP es estructural, no opcional.
+
+2. **La ganancia exacta del OPAMP define la escala del FCS-M2PC.** Si configuras gain x4 pero la placa esperaba x8, todas tus corrientes están a la mitad del valor real → el algoritmo "ve" la mitad de torque del que pide → respuestas dinámicas distorsionadas.
+
+3. **La calibración de offset es crítica al arranque.** Vale 128 ms de tiempo de boot a cambio de eliminar ~5 mV de error DC. Aceptable.
+
+4. **El mapeo silicon-fijo a canales ADC** restringe la distribución. No es decisión nuestra, es decisión de ST. Saberlo evita perder tiempo planeando distribuciones imposibles.
+
+5. **El bandwidth del OPAMP es suficiente pero ajustado.** Si en el futuro queremos PWM a 100 kHz (mucho más rápido), tendríamos que activar `OPAHSM = 1` para tener margen. Por ahora a 50 kHz no.
+
+---
+
+## N1.12 — El ADC del STM32G4: cómo se convierte voltaje en número
+
+### Panorama
+
+El ADC es el periférico más complejo de Semana 5. No por sus features básicas (todos los micros tienen ADCs), sino por sus **opciones de configuración** — modos, triggers, sequences, dual modes. Esta nota lo desarma en sus partes.
+
+El STM32G431 tiene **2 ADCs independientes** (ADC1 y ADC2). Cada uno:
+- Resolución 12 bits (4096 niveles).
+- Hasta 19 canales de entrada (mux interno).
+- Sample time configurable.
+- Trigger por hardware (ej. TIM1_TRGO) o software.
+- Modo **dual simultaneous**: ambos ADCs disparan al mismo tiempo, conversiones en paralelo.
+
+### Analogía
+
+Un ADC es como un cronista que va apuntando valores de un río: cada vez que alguien le da el "tic" (trigger), mira el nivel del agua, lo redondea al cm más cercano (en el caso del ADC: 0.806 mV), y lo apunta en su libreta (registro de salida).
+
+El cronista necesita dos cosas:
+1. **Tiempo para "ver" el nivel correctamente** (sample time): si miras muy rápido, ves un movimiento borroso.
+2. **Tiempo para "redondear" al cm más cercano** (conversion time): comparar el voltaje con sus referencias internas.
+
+### Anatomía interna: Sample-and-Hold + SAR
+
+El ADC del G4 es de tipo **Successive Approximation Register (SAR)**. Funciona en dos fases:
+
+**Fase 1: Sampling (acquisition)** — un capacitor interno (~5 pF) se carga al voltaje de entrada.
+
+```
+Pin de entrada → [Switch] ──[Cap interno]── GND
+                   │
+                   │ closed durante sample time
+                   │ open durante conversion
+                   ▼
+                comparador del SAR
+```
+
+El capacitor necesita tiempo para cargarse a través de la impedancia de la fuente. **Si tu fuente tiene alta impedancia** (señal de un sensor débil sin buffer), el sample time tiene que ser largo. Si tiene baja impedancia (salida de OPAMP), puede ser corto.
+
+**Fase 2: Conversion (SAR)** — el comparador interno hace 12 decisiones binarias secuenciales para determinar el voltaje:
+
+```
+Iteración 1: ¿V > 1.65V? (mitad de 3.3V) → bit 11
+Iteración 2: ¿V > 1.65V + 0.825V? → bit 10
+Iteración 3: ¿V > 1.65V + 0.4125V? → bit 9
+...
+Iteración 12: ¿V > ...? → bit 0
+```
+
+Después de 12 iteraciones tienes 12 bits = 4096 niveles posibles. Esto tarda **12.5 ciclos del ADC clock** (el 0.5 es overhead del SAR).
+
+### Tiempo total de conversión
+
+$$T_{conv} = T_{sample} + 12.5 \text{ ciclos del ADC clock}$$
+
+`T_sample` es programable por canal en `SMPR1` / `SMPR2`:
+
+| SMP | Sample time (ciclos) | Cuándo usarlo |
+|---|---|---|
+| 000 | 2.5 | Fuentes de baja impedancia (OPAMP interno) |
+| 001 | 6.5 | Estándar para señales rápidas |
+| 010 | 12.5 | Equilibrio precisión/velocidad |
+| 011 | 24.5 | Señales lentas o con impedancia media |
+| 100 | 47.5 | Sensor externo via PCB |
+| 101 | 92.5 | Termistor, sensor lento |
+| 110 | 247.5 | Vrefint, sensor temperatura interno |
+| 111 | 640.5 | El máximo, para ruido muy bajo |
+
+**Para nuestro caso** (señales de OPAMP interno, alta velocidad necesaria):
+
+A `ADC_clock = 60 MHz` (típico) y `SMP=001` (6.5 ciclos):
+- T_sample = 6.5 / 60 MHz = **108 ns**
+- T_conv = (6.5 + 12.5) / 60 MHz = 19 / 60 MHz = **316 ns**
+
+Con 5 canales secuenciales (i_a, i_b, i_c, Vbus, temp), tiempo total ~1.6 μs. Cabe holgadamente en los 20 μs del periodo PWM.
+
+### ADC clock y de dónde viene
+
+El reloj del ADC viene del **AHB1 clock** o de un clock dedicado, configurable en `RCC->CCIPR.ADC12SEL`:
+
+| ADC12SEL | Fuente | Implicación |
+|---|---|---|
+| 00 | No clock (ADC apagado) | Después de reset |
+| 01 | PLL "P" output | Independiente del HCLK |
+| 10 | sysclock | Síncrono con CPU |
+
+**Para nuestro caso**: usar el PLL output P (la salida adicional del PLL que se puede configurar a una frecuencia distinta de SYSCLK). Esto desacopla el reloj del ADC del CPU.
+
+Luego un divisor adicional en `ADC12_COMMON->CCR.CKMODE` o `CCR.PRESC`:
+
+| CKMODE | Significado |
+|---|---|
+| 00 | ADC clock asíncrono (desde RCC) |
+| 01 | HCLK/1 (síncrono) |
+| 10 | HCLK/2 |
+| 11 | HCLK/4 |
+
+A HCLK = 170 MHz, dividir por 4 da 42.5 MHz — debajo del máximo de 60 MHz. Es la opción más simple. O usar el modo asíncrono con el PLL P a 60 MHz exactos.
+
+### Regular vs Injected channels
+
+El ADC tiene **dos grupos de canales** completamente independientes:
+
+#### Regular channels (group)
+- Hasta 16 canales en una secuencia.
+- Configuras `SQR1`, `SQR2`, `SQR3`, `SQR4` con la secuencia.
+- Se ejecutan **en orden**, uno tras otro.
+- Trigger por `EXTSEL` + `EXTEN`.
+- Datos accesibles en `ADC_DR` (un registro). Si hay más de 1 canal en la secuencia, **necesitas DMA** o leer rápido el `DR` entre conversiones.
+- Flag EOC se setea después de cada canal, EOS al final de la secuencia.
+
+#### Injected channels (group)
+- Hasta 4 canales.
+- Configurados en `JSQR`.
+- Tienen **mayor prioridad** que regulares: si un trigger injected llega durante una conversión regular, ésta pausa y se ejecuta primero el injected.
+- Trigger por `JEXTSEL` + `JEXTEN`.
+- Datos accesibles en `JDR1, JDR2, JDR3, JDR4` (un registro por canal). **Sin necesidad de DMA**.
+- Útil para señales críticas en tiempo (corrientes del motor).
+
+**Para motor control**:
+- **Inyectados**: las 3 corrientes (i_a, i_b, i_c). Críticas para FCS-MPC.
+- **Regulares**: Vbus, temperatura. Diagnóstico, no críticos.
+
+Esto es el patrón estándar en STM32 motor control (lo usa MCSDK).
+
+### Dual ADC modes
+
+Dos ADCs pueden coordinarse en varios modos. Para motor control el relevante es:
+
+#### Regular simultaneous mode
+
+ADC1 (master) y ADC2 (slave) ejecutan sus secuencias **al mismo tiempo**. El trigger del master dispara también al slave. Cada uno tiene su propia secuencia (`SQR1` distinta), así que pueden muestrear canales **distintos** en paralelo.
+
+```
+trigger TIM1_TRGO  ──┬──→ ADC1 → muestrea SQR1 (i_a, Vbus, temp)
+                     └──→ ADC2 → muestrea SQR1 (i_b, i_c)
+                                 ↓                 ↓
+                              ADC1_DR           ADC2_DR
+                              (o combinado en ADC_CDR)
+```
+
+**Pero aquí está el truco**: con regular simultaneous, ambos ADCs usan la misma configuración de `CFGR` (el master). Significa que solo necesitas programar el master.
+
+#### Injected simultaneous mode
+
+Idéntico al anterior pero usando canales inyectados. **Lo que vamos a usar**.
+
+Para motor control la combinación canónica es:
+- **Injected simultaneous**: i_a en ADC1 inyectado, i_b en ADC2 inyectado. Trigger: TIM1_TRGO.
+- **Regular**: Vbus, temperatura en cualquier ADC. Triger: software o segundo TRGO.
+
+### Configuración de dual mode
+
+El bit field `DUAL[4:0]` vive en `ADC_CCR` (registro común de los dos ADCs):
+
+| DUAL | Modo |
+|---|---|
+| 00000 | Independent (default) |
+| 00001 | Combined regular + injected simultaneous |
+| 00010 | Combined regular + alternate trigger |
+| 00101 | **Injected simultaneous only** ← nuestro caso |
+| 00110 | Regular simultaneous only |
+| 00111 | Interleaved only |
+| 01001 | Alternate trigger only |
+
+**DUAL = 00101** (injected simultaneous) o **DUAL = 00110** (regular simultaneous) según decidamos arriba.
+
+### Trigger sources (EXTSEL / JEXTSEL)
+
+`EXTSEL[4:0]` en `ADC_CFGR` selecciona qué señal interna dispara las conversiones regulares. RM0440 Tabla 162 mapea los valores:
+
+| EXTSEL | Trigger source |
+|---|---|
+| 00000 | TIM1_CC1 |
+| 00001 | TIM1_CC2 |
+| 00010 | TIM1_CC3 |
+| 00011 | TIM1_CC4 |
+| **01001** | **TIM1_TRGO** ← lo que queremos |
+| 01010 | TIM1_TRGO2 |
+| ... | (muchos otros) |
+
+Para `JEXTSEL` (inyectado): tabla análoga, mismos valores conceptualmente.
+
+Y `EXTEN[1:0]` activa el trigger:
+
+| EXTEN | Significado |
+|---|---|
+| 00 | Trigger deshabilitado (modo software con ADSTART) |
+| 01 | Rising edge |
+| 10 | Falling edge |
+| 11 | Both edges |
+
+### Flags importantes
+
+| Flag | En registro | Set cuando |
+|---|---|---|
+| **ADRDY** | ISR | ADC listo después de habilitar (ADEN=1) |
+| **EOC** | ISR | Una conversión terminó. Limpiar leyendo DR. |
+| **EOS** | ISR | Secuencia completa terminó |
+| **JEOC** | ISR | Una conversión inyectada terminó |
+| **JEOS** | ISR | Secuencia inyectada completa terminó |
+| OVR | ISR | Overrun (no se leyó DR a tiempo) |
+
+Las interrupciones se habilitan con `EOCIE`, `JEOCIE` en `IER`. **Para nuestra ISR de FCS-MPC**, vamos a usar `JEOS` (interrupt cuando el sequence inyectado termina, indicando que i_a e i_b están listos).
+
+### Calibración del ADC
+
+Antes de habilitar el ADC, hay que **calibrarlo**. Es otra calibración distinta a la del OPAMP — esta es del ADC mismo. Cancela offsets internos del SAR comparator.
+
+Procedimiento (RM0440 §21.4.8):
+
+```c
+// 1. Salir de Deep Power Down + arrancar regulador interno
+ADC1->CR &= ~ADC_CR_DEEPPWD;
+ADC1->CR |= ADC_CR_ADVREGEN;
+delay_us(20);  // estabilización del regulador
+
+// 2. Asegurar que ADEN = 0
+// 3. Configurar ADCALDIF (0 = single-ended, 1 = differential). Usamos 0.
+ADC1->CR &= ~ADC_CR_ADCALDIF;
+
+// 4. Lanzar calibración
+ADC1->CR |= ADC_CR_ADCAL;
+
+// 5. Esperar a que termine (ADCAL = 0)
+while (ADC1->CR & ADC_CR_ADCAL);
+
+// 6. Los valores de calibración quedan en CALFACT, se aplican automáticamente
+```
+
+Tarda ~80 ciclos del ADC clock (~1.3 μs a 60 MHz). Una sola vez al arranque.
+
+### Orden de inicialización del ADC
+
+Pegado para referencia, el orden importa:
+
+1. Habilitar clock del ADC (RCC).
+2. Configurar clock source y prescaler (`CCIPR`, `CCR`).
+3. Salir de Deep Power Down + arrancar regulador (`CR.DEEPPWD = 0`, `CR.ADVREGEN = 1`).
+4. Calibrar (`CR.ADCAL = 1`, esperar).
+5. Configurar canales: secuencias regulares e inyectadas (`SQR1`, `JSQR`, `SMPR1/2`).
+6. Configurar trigger (`CFGR.EXTSEL`, `CFGR.EXTEN`, `JSQR.JEXTSEL`, `JSQR.JEXTEN`).
+7. Configurar dual mode (`ADC_CCR.DUAL`).
+8. Habilitar interrupts (`IER.JEOSIE`).
+9. Habilitar ADC (`CR.ADEN = 1`, esperar `ISR.ADRDY = 1`).
+10. **Recién entonces** habilitar el TIM1 (que dispara TRGO).
+
+### Decisiones para nuestra implementación
+
+| Parámetro | Valor decidido |
+|---|---|
+| ADC1 inyectados | i_a (canal OPAMP1 = IN13) |
+| ADC2 inyectados | i_b (OPAMP2 = IN16), i_c (OPAMP3 = IN18) |
+| ADC1 regulares | Vbus (PA0 = IN1), temperatura (PB14 = IN5) |
+| ADC clock source | PLL P, asíncrono al CPU, ~30 MHz |
+| Sample time | 6.5 ciclos (SMP=001) — fast, OPAMPs como fuente |
+| Resolución | 12 bits |
+| Dual mode | DUAL=00101 (injected simultaneous only) |
+| Trigger inyectado | JEXTSEL=01001 (TIM1_TRGO), JEXTEN=01 (rising) |
+| ISR | JEOS (end of injected sequence) → en cada periodo PWM |
+| DMA | No por ahora (más simple); evaluar si la ISR no entra en presupuesto |
+
+### Por qué importa
+
+1. **El ADC es la fuente de "verdad" del controlador.** Toda la matemática del FCS-M2PC depende de números que vienen de aquí. Si los muestreas mal (sample time corto, trigger desincronizado), TODO el control diverge.
+
+2. **Injected vs regular es decisión estructural.** Los canales críticos (corrientes) van en inyectados porque pueden interrumpir conversiones de menor prioridad. Si pusiéramos todo en regulares, una conversión de temperatura podría retrasar la corriente.
+
+3. **Dual simultaneous mode existe específicamente para motor control.** Sin él, muestrearías i_a, esperar 316 ns, muestrear i_b — y entre uno y otro la corriente del motor cambió. Con dual, los dos son captados en el mismo instante.
+
+4. **El timing total es ajustado pero cabe.** 5 canales × 316 ns + overhead ISR + transformación Clarke + algoritmo FCS-M2PC ≈ 5-15 μs. Cabe en 20 μs pero hay que vigilar.
+
+5. **La calibración del ADC es separada de la del OPAMP.** Son dos calibraciones distintas, ambas necesarias. Sin ellas: offset DC permanente en las lecturas.
+
+---
+
+## N1.13 — Bring-up del ADC: tres trampas que encontramos
+
+### Panorama
+
+El bring-up de la cadena OPAMP + ADC en Semana 5 tomó más tiempo del esperado. Tres bugs distintos aparecieron, **todos relacionados con asunciones que parecían razonables pero no estaban verificadas contra la fuente autoritativa**. Esta nota los documenta para futuro.
+
+### Trampa #1 — El clock "oculto" del SYSCFG
+
+**Síntoma**: después de configurar `OPAMP1->CSR = ...`, una lectura back devolvía `0x00000000`. Los OPAMPs aparentaban no estar habilitados.
+
+**Causa**: los registros de los OPAMPs viven en el bus APB2 a través del periférico SYSCFG. **Si el clock del SYSCFG no está habilitado, las escrituras a `OPAMPx_CSR` se ignoran silenciosamente** — sin error, sin warning, sin bus fault. Solo devuelven 0 al leer.
+
+**Fix**: agregar antes de configurar los OPAMPs:
+
+```c
+RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
+(void)RCC->APB2ENR;  // sync barrier
+```
+
+**Lección general**: cualquier periférico cuyas escrituras se ignoran silenciosamente probablemente le falta su clock. La regla heurística: **si lees back lo que escribiste y devuelve 0**, sospechar clock antes de cualquier otra cosa.
+
+### Trampa #2 — Las tablas duplicadas: EXTSEL ≠ JEXTSEL
+
+**Síntoma**: el TIM1_TRGO no estaba disparando las conversiones inyectadas del ADC, a pesar de que el counter del TIM1 corría y el TRGO estaba bien configurado en el TIM1 (MMS=010).
+
+**Causa**: RM0440 tiene **dos tablas** distintas para mapear los triggers:
+- **Tabla 162** — `EXTSEL[4:0]` para conversiones **regulares**: `01001 = TIM1_TRGO`.
+- **Tabla 167** — `JEXTSEL[4:0]` para conversiones **inyectadas**: `00000 = TIM1_TRGO`.
+
+Los valores son **completamente distintos**. El mismo TIM1_TRGO usa código `9` para regular y código `0` para inyectado.
+
+Mi código tenía `JEXTSEL = 9` asumiendo que la tabla EXTSEL aplicaba. Resultado: el ADC esperaba TIM8_TRGO (que sí es 9 en JEXTSEL) y nunca disparaba.
+
+**Fix**:
+
+```c
+ADC1->JSQR = ...
+           | (0x0U << ADC_JSQR_JEXTSEL_Pos)  // 00000 = TIM1_TRGO en Tabla 167
+           ...
+```
+
+**Lección general**: **siempre verifica la tabla específica del modo que estás usando**. Las tablas que mapean valores a fuentes no se reusan entre modos del mismo periférico — son matrices independientes que el silicio implementa con muxes separados. Mismo patrón que el bug AF de N1.9 (cada pin tiene su tabla AF).
+
+### Trampa #3 — Standalone mode requiere conocer la topología del PCB
+
+**Síntoma**: con OPAMPs en standalone mode (que es el modo "natural" cuando el PCB tiene R's de feedback discretas), las lecturas saturaban en el rail (~4093 raw = casi 3.3 V).
+
+**Causa**: en standalone mode, **el OPAMP es solo el amplificador — no hay feedback interno**. La ganancia y el comportamiento dependen 100% de las R's externas y de qué pines exactos son VINP y VINM. Si configuras VP_SEL/VM_SEL a pines que el PCB no tiene en su red de feedback, el OPAMP queda efectivamente open-loop → salta a rail al primer estímulo.
+
+La B-G431B-ESC1 tiene su red de R's diseñada para una asignación específica de VP_SEL/VM_SEL, pero ST no la documenta explícitamente en UM2516 — hay que leer el esquemático MB1419 con cuidado.
+
+**Fix temporal**: switch a **PGA mode** con feedback interno del silicio. Output del OPAMP = gain × VINP, independiente del PCB. Con gain x2 las lecturas bajan a ~318 raw (consistente con offset DC pequeño y ausencia de saturación).
+
+**Tradeoff aceptado**: PGA mode interno sin bias a Vrefint/2 → solo medimos corrientes **positivas** (output del OPAMP nunca baja de 0V). Para FCS-MPC con corrientes bipolares AC, eventualmente hay que:
+- Volver a standalone mode descifrando bien el PCB, o
+- Mantener PGA mode + restar offset DC en software (más simple).
+
+**Lección general**: cuando dependes de hardware externo (PCB), **standalone mode es frágil** — depende de info que puede no estar bien documentada. **PGA mode interno** es más robusto para bring-up. Una vez la cadena funciona en PGA, optimizar a standalone si se necesita más rango dinámico.
+
+### Meta-lección común a las tres trampas
+
+Los tres bugs comparten un patrón: **asumir uniformidad donde el silicio diseñó variabilidad**.
+
+- "Todos los clocks de periféricos se habilitan igual" → falso (SYSCFG es indirecto).
+- "Las tablas de trigger son simétricas entre regular e injected" → falso (matrices independientes).
+- "Standalone mode siempre funciona si pones VP_SEL/VM_SEL correctos" → falso (depende del PCB).
+
+El antídoto en metodología:
+1. **Para cada periférico nuevo**: ¿qué clocks necesita habilitar? Listar explícitamente, no asumir.
+2. **Para cada modo de un periférico**: ¿hay tablas/registros distintos por modo? Verificar en el manual antes de codear.
+3. **Para cada modo que depende de hardware externo**: ¿qué espera el PCB? Si no está claro, usar un modo "self-contained" primero.
+
+### Tabla maestra del ADC + OPAMP para B-G431B-ESC1
+
+Persistir para referencia:
+
+| Item | Valor |
+|---|---|
+| Clock SYSCFG (para OPAMPs) | `RCC->APB2ENR \|= RCC_APB2ENR_SYSCFGEN` |
+| Clock ADC | `RCC->AHB2ENR \|= RCC_AHB2ENR_ADC12EN` |
+| ADC clock prescaler | CKMODE = 11 (HCLK/4 = 42.5 MHz) |
+| JEXTSEL para TIM1_TRGO | **0x00** (Tabla 167, no 0x09) |
+| JEXTEN | 01 (rising edge) |
+| Dual mode | DUAL = 00101 (injected simultaneous only) |
+| OPAMP mode actual | PGA interno gain x2 (provisional) |
+| OPAMP1 routing | VINP0 = PA1, OPAMPINTEN → ADC1 IN13 |
+| OPAMP2 routing | VINP0 = PA7, OPAMPINTEN → ADC2 IN16 |
+| OPAMP3 routing | VINP0 = PB0 [VERIFY], OPAMPINTEN → ADC2 IN18 |
+| Sample time | SMP = 001 (6.5 ciclos) |
+| Resolución | 12 bits (default) |
+| Vbus channel | ADC1_IN1 (PA0) |
+| Temp channel | ADC1_IN5 (PB14) |
+
+### Para mañana / Semana 6
+
+Con la cadena funcional, lo que sigue:
+
+1. **ISR JEOS**: callback cuando la secuencia inyectada termina. Es donde el FCS-MPC vivirá.
+2. **Calibración de offset DC**: 1000 muestras motor off → promedio → restar a futuras lecturas. Esto convierte el 318 raw en "i_a = 0 sin corriente".
+3. **Ganancia "raw → amperios"**: inyectar corriente conocida (multímetro + alimentación externa) → calibrar.
+4. **OPAMP topology resolution**: decidir si volvemos a standalone con bias (mejor rango) o nos quedamos en PGA + offset SW (más simple).
+
+---
+
+## N1.14 — ISR JEOS: el latido del lazo de control
+
+### Panorama
+
+Hasta ahora todo el firmware corría en el `main()`: el while(1) imprime, hace polling al ADC, manda por VCP. El CPU está siempre "trabajando", pero **el trabajo es despacio y asíncrono respecto al PWM** — no hay garantía de que cuando leemos `JDR1` el dato corresponda a un ciclo PWM específico.
+
+Para el control de un motor a 50 kHz, eso no sirve. El FCS-M2PC necesita que **cada 20 μs**, exactamente sincronizado con el pico/valle del contador del TIM1, ocurra una secuencia rígida:
+
+```
+t = 0:        TRGO levanta
+t = 0-3 μs:   ADCs convierten i_a, i_b, i_c (paralelo)
+t = ~3 μs:    JEOS levanta → IRQ → handler entra
+t = 3-X μs:   handler lee corrientes, calcula control,
+              actualiza CCR1/CCR2/CCR3
+t = X-20 μs:  main() puede hacer otras cosas (UART, etc.)
+t = 20 μs:    siguiente TRGO → ciclo se repite
+```
+
+La pieza que dispara ese ritmo es la **ISR** (*Interrupt Service Routine*): una función especial que el CPU ejecuta cuando un periférico levanta su línea de interrupción. **No la llama el main loop** — la dispara el silicio directamente.
+
+Esta sesión solo construimos el esqueleto del handler. Sin lógica de control aún. El objetivo: confirmar que el lazo está vivo, late a 50 kHz exactos, y deja las corrientes accesibles en variables globales.
+
+### Analogía — el médico de guardia
+
+Imaginá un médico de guardia en un hospital:
+
+- **Modo polling** (lo que hacemos ahora): el médico camina hasta el cuarto del paciente cada cierto tiempo, mide la presión, anota, vuelve a la sala de descanso. Si pasa algo entre visitas, no se entera. Si tarda en volver, la medición queda desactualizada.
+
+- **Modo interrupción** (lo que vamos a hacer): el paciente tiene un botón rojo conectado al busca del médico. El médico está en la sala leyendo (haciendo otras cosas). Cuando el monitor del paciente termina de medir, **suena el busca**. El médico deja el libro, va al cuarto, lee el monitor, vuelve. Sabe **exactamente** cuándo medir y nunca pierde una medición.
+
+La ISR es ese busca: una señal de hardware que **interrumpe** al CPU sin importar qué esté haciendo, lo manda al handler, y al volver, retoma exactamente donde estaba.
+
+```
+Sin ISR (polling):
+main: ──read─work──work──read─work──work──read───
+ADC:  ─█──────────█──────────█────────────█──────  (datos perdidos entre reads)
+
+Con ISR:
+main: ──work──work──work──work──work──work───────
+ADC:  ─█──────█──────█──────█──────█──────█──────
+       ↓      ↓      ↓      ↓      ↓      ↓
+ISR:   ▌      ▌      ▌      ▌      ▌      ▌       (entra exacto a cada conv)
+```
+
+### Detalle 1 — Anatomía del flag JEOS
+
+El ADC del STM32G4 tiene **cuatro tipos de flag** que pueden disparar interrupciones (RM0440 §21.4.31, registro `ADC_ISR`):
+
+| Flag | Significado |
+|---|---|
+| `EOC` | End Of Conversion — terminó **un** canal individual |
+| `EOS` | End Of Sequence — terminó la secuencia **regular** |
+| `JEOC` | igual a EOC pero para inyectadas |
+| **`JEOS`** | igual a EOS pero para inyectadas |
+
+Para nuestro caso (las 3 corrientes vienen por la secuencia inyectada disparada por TIM1_TRGO), **JEOS** es el flag que importa: se levanta cuando ADC2 termina sus 2 conversiones (i_b → i_c). ADC1 ya terminó antes (1 sola conversión, i_a), pero el dato sigue ahí en `JDR1` esperando ser leído.
+
+Cada flag tiene su bit "interrupt enable" correspondiente en `ADC_IER`. Para JEOS: bit `JEOSIE`. Sin setear ese bit, el flag se levanta pero **no genera IRQ** — sirve solo para polling (que es lo que estábamos haciendo).
+
+### Detalle 2 — El NVIC y la línea compartida
+
+El **NVIC** (Nested Vectored Interrupt Controller) es la pieza del Cortex-M4 que **routea las señales de IRQ desde los periféricos al CPU** y maneja sus prioridades.
+
+Cada periférico tiene una "línea" asignada (un número de IRQ). El STM32G431 tiene 102 líneas (RM0440 §14.3, vector table). Cuando una línea se activa, el NVIC:
+
+1. Pausa el CPU.
+2. Guarda el contexto (registros R0-R3, R12, LR, PC, xPSR) en el stack.
+3. Salta al handler asociado a esa línea.
+4. Al return del handler, restaura el contexto y el CPU sigue como si nada.
+
+**Detalle crítico para el ADC**: ADC1 **y** ADC2 comparten **una sola línea NVIC** (IRQ 18 en STM32G431, llamada `ADC1_2_IRQn`). El handler también es uno solo: `ADC1_2_IRQHandler`. Si JEOSIE está habilitada en ambos ADCs, ambos pueden disparar el mismo handler. Dentro del handler hay que mirar `ADC1->ISR` y `ADC2->ISR` para saber quién disparó.
+
+Para nuestro caso, esto se simplifica: **solo habilitamos JEOSIE en ADC2** (el lento). ADC1 nunca dispara IRQ. El handler solo tiene que limpiar `ADC2->ISR`.
+
+```
+                          ┌──────────────┐
+ADC1.JEOS ────[JEOSIE=0]──│              │
+                          │  NVIC IRQ 18 │──→ CPU → ADC1_2_IRQHandler()
+ADC2.JEOS ────[JEOSIE=1]──│              │
+                          └──────────────┘
+```
+
+### Detalle 3 — Prioridades NVIC
+
+El NVIC soporta prioridades configurables (0 = más alta, 15 = más baja en Cortex-M4 con 4 bits de prioridad). Si dos IRQs ocurren simultáneamente, el de mayor prioridad gana. Si una IRQ está corriendo y llega otra de **mayor** prioridad, ésta **preempta** (interrumpe) la primera.
+
+Para el ADC1_2 vamos a usar **prioridad 1** (alta pero no la más alta). Reservamos prioridad 0 para faults catastróficos (HardFault, MemManage, etc., que ya están allí por default).
+
+```c
+NVIC_SetPriority(ADC1_2_IRQn, 1U);
+NVIC_EnableIRQ(ADC1_2_IRQn);
+```
+
+**Por qué no la máxima**: si alguna vez agregamos un break input del TIM1 o un watchdog que detecta sobrecorriente, ese **sí** debe poder preemptar al lazo de control. Dejarle margen es disciplina, no over-engineering.
+
+### Detalle 4 — Latencia y jitter
+
+Cuando JEOS se levanta hasta que el primer instrucción del handler se ejecuta, hay un **retraso** llamado **latencia de IRQ**. En Cortex-M4 con stacking automático y FPU desactivada, la latencia mínima es **12 ciclos** (~70 ns a 170 MHz). Si la IRQ llega durante una instrucción multi-ciclo (e.g., `LDM`/`STM` con muchos registros), puede subir a ~20 ciclos.
+
+El **jitter** es la variación de esa latencia entre disparos consecutivos. En general < 5 ciclos. Es despreciable para nuestro caso (50 kHz = 3400 ciclos por período → latencia < 1% del período).
+
+**Lo que sí importa**: el handler debe **terminar antes del próximo TRGO** (20 μs = 3400 ciclos). Sino, el siguiente JEOS llega mientras el handler aún corre → o se pierde, o (si está en modo "pending") se ejecuta inmediatamente tras el actual y se rompe el timing.
+
+Por eso instrumentamos con GPIO: **pulse width en PB8** = duración del handler. Si vemos que se acerca a 20 μs, ¡problema!
+
+### Detalle 5 — El handler mínimo
+
+Para esta sesión, el cuerpo del handler:
+
+```c
+void ADC1_2_IRQHandler(void) {
+    GPIOB->BSRR = (1U << 8);              // PB8 HIGH (inicio scope)
+
+    g_ia_raw = (uint16_t)ADC1->JDR1;       // i_a (1 canal de ADC1)
+    g_ib_raw = (uint16_t)ADC2->JDR1;       // i_b (canal 1 de ADC2)
+    g_ic_raw = (uint16_t)ADC2->JDR2;       // i_c (canal 2 de ADC2)
+
+    g_isr_count++;                         // contador para validar 50 kHz
+
+    ADC2->ISR = ADC_ISR_JEOS;              // limpia flag (write-1-to-clear)
+
+    GPIOB->BSRR = (1U << (8 + 16));        // PB8 LOW (fin scope)
+}
+```
+
+**Lo que NO hace** (intencionalmente):
+- No calcula nada (sin Clarke, sin Park, sin FCS-MPC).
+- No actualiza CCR1/CCR2/CCR3 (PWM duty queda 50% fijo).
+- No llama `printf` (printf en ISR = catastrófico — UART polling tarda ~9000 ciclos por línea = 5 períodos PWM, rompe el lazo).
+- No espera nada (no `while`, no `delay`).
+
+El target de duración: **< 200 ns** (~30 ciclos) para esta versión mínima. Esto deja 99% del período libre — margen enorme para cuando agreguemos el control.
+
+### Detalle 6 — `volatile` y `g_*_raw`
+
+Las variables `g_ia_raw` etc. son **compartidas entre el handler y main()**. Sin `volatile`:
+
+```c
+uint16_t g_ia_raw;   // ❌ NO volatile
+```
+
+el compilador puede optimizar `printf("%u", g_ia_raw)` cargando el valor **una sola vez** en un registro y reusarlo. Como la ISR modifica la memoria pero no el registro, el printf nunca vería los updates.
+
+Con `volatile`:
+
+```c
+volatile uint16_t g_ia_raw;   // ✓ cada lectura va a memoria
+```
+
+el compilador garantiza una lectura/escritura por cada acceso en el código C. **Mandatorio para cualquier variable compartida ISR ↔ main**.
+
+(Aparte: para uint16_t en Cortex-M4, una lectura/escritura es atómica. Para uint32_t también. Para uint64_t o estructuras, hay que ser más cuidadoso.)
+
+### Por qué importa
+
+1. **Sin ISR, no hay lazo de control determinista.** El FCS-MPC necesita que cada decisión se tome a un intervalo fijo conocido (20 μs) — si lo hace el main loop, el intervalo varía con lo que el main esté haciendo (UART, lecturas, etc.). El control inestable o degradado es indistinguible de un control mal sintonizado: te vas a volver loco buscando el bug en el control cuando el bug está en el timing.
+
+2. **El GPIO toggle no es decoración**. Es **el único medio** de verificar empíricamente la frecuencia y duración del handler. El scope te muestra inmediatamente:
+   - ¿La ISR está corriendo? (pulsos visibles)
+   - ¿A qué frecuencia? (período = 20 μs si todo bien)
+   - ¿Cuánto tarda? (ancho del pulso)
+   - ¿Hay jitter? (varianza del período)
+
+   Sin esta instrumentación, debugar un control que "no converge" es disparar a ciegas.
+
+3. **Decidir dónde habilitar JEOSIE (ADC1 vs ADC2) es la diferencia entre datos válidos y datos basura.** Habilitar JEOSIE en ADC1 hace que el handler entre antes de que ADC2 termine i_c → leemos `JDR2` con basura del ciclo anterior. El control con i_c desfasado un ciclo se vuelve un caos que tarda horas en identificar. Documentamos esto explícitamente para no pisarlo.
+
+4. **Reglas de oro para el handler**:
+   - **No printf, no UART, no delay, no while.**
+   - **Variables compartidas siempre `volatile`.**
+   - **Limpiar el flag al final** (sino se reentra inmediatamente).
+   - **Toggle GPIO al entrar y salir** para diagnóstico.
+   - **Duración objetivo < 50% del período PWM** (10 μs en nuestro caso). Si se acerca, simplificar la lógica o mover trabajo al main loop.
+
+### Tabla maestra de la ISR para esta sesión
+
+| Item | Valor |
+|---|---|
+| Trigger del lazo | TIM1_TRGO (update event, 50 kHz) |
+| Flag que dispara IRQ | `ADC2.JEOS` (no ADC1 — ADC2 termina último) |
+| Bit de habilitación | `ADC2.IER.JEOSIE = 1` |
+| Línea NVIC | `ADC1_2_IRQn` (= IRQ 18) |
+| Handler | `ADC1_2_IRQHandler` |
+| Prioridad | 1 (alta, no máxima) |
+| GPIO instrumentación | PB8 (Z+/H3 de J8, reservado en sesión 2) |
+| Variables compartidas | `g_ia_raw, g_ib_raw, g_ic_raw, g_isr_count` (todas `volatile`) |
+| Duración objetivo handler | < 200 ns (~30 ciclos @ 170 MHz) |
+| Validación | Scope PB8: período 20 μs ± 0.1 μs, pulso < 200 ns. VCP: `g_isr_count` crece ~50000/s |
+
+### Para sesión siguiente
+
+Si la ISR valida bien:
+- **Calibración de offset**: dentro del handler (o en función separada llamada desde main), promediar N=1000 muestras → guardar `i_offset_a/b/c`. Cada lectura posterior es `g_ia_raw - i_offset_a`.
+- **Calibración de ganancia**: inyectar corriente DC conocida con fuente bench → leer raw → calcular escala raw → A.
+
+Si la ISR muestra problemas (jitter alto, frecuencia distinta, pulsos perdidos), debug primero antes de avanzar.
+
+### Sospechas pendientes — lo que NO confirmamos con scope explícito
+
+En la sesión 10 (2026-05-22/23) el bring-up cerró con validación parcial:
+
+- **Lo confirmado**:
+  - `g_isr_count` crece a 50000/s exactos (descontando el delay del printf, 1007 ms efectivos entre prints).
+  - Multímetro DC en pad Z+/H3 del J8 marca **44 mV** durante operación normal — consistente con un pulso de ~270 ns cada 20 μs (3.3 V × 270/20000 = 44.6 mV).
+  - `ADC2.IER = 0x40` (JEOSIE encendido) post-init.
+  - Lecturas i_a/i_b/i_c estables y consistentes con la sesión 9.
+
+- **Lo NO confirmado** — sospechas latentes que pueden mordernos si el control no converge:
+
+  1. **No vimos el pulso de PB8 en el scope explícitamente.** La evidencia es DC promedio + análisis aritmético. Si más adelante el FCS-MPC no converge, hay timing weird, o el handler parece más lento de lo esperado:
+     - Reflashear y mirar con scope a **1 o 2 μs/div, trigger Edge/Rising, level 1.5 V, AUTO mode, probe x1, coupling DC**. Esos settings sí enganchan pulsos de 200-300 ns.
+     - Esperado: pulsos angostos cada 20 μs exactos, amplitud 3.3 V.
+     - Si el pulso es mucho más ancho que ~300 ns, el compilador no inlineó algo o hay código no obvio en el path — investigar con disassembly.
+
+  2. **No medimos jitter ciclo a ciclo.** El promedio de 50000 ISRs/s no descarta que algunos ciclos lleguen tarde por preemption de otra IRQ. Hoy no hay otras IRQs habilitadas, pero cuando agreguemos UART RX, I²C, etc., habrá que verificar con persistence del scope.
+
+  3. **No hicimos continuidad MCU pin 29 (PB8 físico) ↔ pad Z+/H3.** Asumimos la conexión basados en UM2516 Tabla 4 + esquemático MB1419 (página del J8 con R77 1.8k + pull-up). Los 44 mV son evidencia fuerte de que la conexión existe, pero si en algún punto los voltajes lateralmente cambian sin razón aparente, hacer continuidad con multímetro a placa apagada.
+
+  4. **Otros pads del J8 mostraron voltajes raros** durante la sesión:
+     - A+/H1 (PB6) = 2.0 V — esperado 3.3 V si solo está R71 pull-up de 10k a Vcc. Algo más en la red lo tira hacia abajo (¿AS5600 dormido?).
+     - B+/H2 (PB7) = 2.9 V — más cerca de 3.3 V pero no llega.
+     - **No nos afecta hoy** (I²C deshabilitado, AS5600 sin firmware todavía), pero **es una bandera para cuando arranquemos I²C en una sesión futura**. Si el bus I²C no arranca, recordar estos voltajes — el AS5600 puede tener un estado raro de power-up.
+
+  5. **No medimos la frecuencia con instrumento externo**. La frecuencia "50 kHz exactos" viene del cálculo `g_isr_count / uptime`, donde `uptime` se mide con SysTick que a su vez está clockeado por el mismo SYSCLK que el TIM1. Si el HSE de la placa tiene un error de calibración, **no podemos detectarlo internamente** — todos los timers se desviarían juntos manteniendo la "consistencia interna". Para descartar: medir un PWM (e.g. salida de TIM1 en PA8) con frecuencímetro externo y comparar con 50 kHz nominales. Hoy no hace falta.
+
+### Antídoto si algún día estos puntos importan
+
+Cuando arranquemos el FCS-MPC real y el control no converja, **no asumir que el lazo está bien**. Volver a esta lista, validar visualmente con scope, y descartar cada item ANTES de hurgar en el control.
+
+---
+
+## N1.15 — Race condition latente: regular vs injected en el mismo ADC
+
+### Panorama
+
+En sesión 11 vimos que `adc_get_vbus_raw()` devolvía **552 raw**, lo cual asumimos era "12V" sin pensarlo. En sesión 12, con un handler más lento (stats agregadas), la misma función devolvió **1443 raw**. El número 1443 coincide perfectamente con la física del divisor de Vbus (12 V × 0.0963 / 3.3 × 4096 = 1434).
+
+**El 552 era el bug. El 1443 es lo correcto.** La función no cambió — lo que cambió es el timing del handler que afecta la interacción entre las dos colas de conversión del ADC.
+
+### Detalle — qué pasa cuando regular e injected comparten ADC
+
+ADC1 está corriendo **dos secuencias simultáneamente**:
+
+1. **Inyectada** (i_a en JDR1) — disparada por TIM1_TRGO a 50 kHz. JEOS levanta IRQ a través del NVIC.
+2. **Regular** (Vbus en SQR1) — disparada por software desde `adc_get_vbus_raw()` cuando el main la llama.
+
+Las dos comparten el mismo silicio. Por RM0440 §21.4.16, **las inyectadas tienen mayor prioridad y pausan a la regular** si coinciden temporalmente. Cuando la inyectada termina, la regular continúa donde quedó.
+
+El problema sutil: el código de `adc_get_vbus_raw` hace polling de los flags `EOC` y `EOS` en `ADC1->ISR`, sin distinguir si el flag fue puesto por la **regular** que estamos esperando o por una **inyectada** que se intercaló:
+
+```c
+ADC1->ISR = ADC_ISR_EOS | ADC_ISR_EOC;   /* limpia ambos */
+ADC1->CR |= ADC_CR_ADSTART;               /* arranca regular */
+while ((ADC1->ISR & ADC_ISR_EOC) == 0U) { }   /* espera EOC */
+uint16_t vbus = ADC1->DR;                 /* ⚠ puede ser de injected */
+```
+
+Si una inyectada termina entre el `ADSTART` y el primer break del `while`, EOC se levanta por la inyectada (no por la regular), y leemos `ADC1->DR` que tiene el valor **inyectado** (el del shunt amplificado por OPAMP), NO el del Vbus_sense.
+
+### Por qué el bug se "auto-arregló" en sesión 12
+
+El handler de sesión 11 era mínimo (~30 ciclos). El de sesión 12 agregó stats (~25 ciclos) → handler ~55-60 ciclos. Esta dilación cambió el momento exacto en el que el JEOS suelta el control del ADC, dándole ventana a la regular para completarse limpia antes del próximo TRGO.
+
+El bug no está resuelto — está **escondido por timing accidental**. Si en una sesión futura el handler vuelve a ser corto (porque optimizamos algo), o la regular se llama desde otro hilo de ejecución, el síntoma vuelve.
+
+### Tres formas de resolverlo correctamente
+
+| Approach | Pro | Contra |
+|---|---|---|
+| **A. Mover Vbus a ADC3** (no usado hoy) | Aisla regular de injected | Habilitar otro ADC = más config + clock + canales |
+| **B. Agregar Vbus a la cola inyectada** | Llega cada 50 kHz sincronizado con corrientes | ADC1 ya tiene 1 canal inyectado, agregar uno cambia el JL y el timing relativo |
+| **C. DMA para la regular** | Independencia total entre cola regular e injected, sin polling | Más config, agrega complejidad |
+
+Mi recomendación: **A o B** dependiendo de qué otros canales queramos sumar después. La AS5600 vía I²C no necesita ADC, así que probablemente nos sobra ADC3 para Vbus + temp + monitoring.
+
+### Bandera de detección
+
+Si en VCP en algún momento aparece `Vbus=552` o cualquier número que **no corresponda al voltaje real medido con multímetro**, el race está activo. El multímetro DC en J5 (Vbus) es la verificación de ground truth.
+
+### Por qué importa
+
+1. **Vbus es entrada de seguridad**. Si la lectura está mal y el control depende de Vbus (e.g., para normalizar duties, o como entrada del FCS-M2PC para predicción), el control se rompe **silenciosamente** — sin error, solo con resultados malos.
+
+2. **Mismo patrón aplica a temperatura** (canal 5 en la regular). Hoy no lo usamos, pero cuando agreguemos protección térmica, el race afecta también la temp.
+
+3. **Cualquier código que poll flags compartidos entre cargas concurrentes del mismo periférico tiene este patrón de bug**. Aplica también a I²C (`ISR.RXNE` con DMA + polling), USART, etc. Antídoto general: **no usar polling de flags si hay otro mecanismo (DMA, IRQ específica) corriendo en paralelo**.
+
+---
+
+
 

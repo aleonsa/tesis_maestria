@@ -1,10 +1,12 @@
-# 02_pwm_adc — TIM1 PWM 3-fásico complementario @ 30 kHz + ADC sincronizado.
+# 02_pwm_adc — TIM1 PWM 3-fásico complementario @ 50 kHz + ADC sincronizado.
 # Fase 1 del bring-up del banco experimental FCS-M2PC.
 # Config compartida (toolchain, vendor, flags) viene del CMakeLists del padre.
 
 add_executable(pwm_adc.elf
     src/main.c
     src/pwm.c
+    src/adc.c
+    src/openloop.c
     ${STARTUP_SRC}
 )
 

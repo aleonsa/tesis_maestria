@@ -5,6 +5,148 @@
 
 ---
 
+## Sesión 10 — 2026-05-22/23 — ISR JEOS funcionando (Semana 6 abre)
+
+**Hito**: lazo de control a 50 kHz montado. ISR JEOS entra cada 20 μs, lee i_a/i_b/i_c en globals, toca PB8 para instrumentación. Cierre del primer paso del plan de Semana 6.
+
+### Implementado
+
+- `apps/02_pwm_adc/src/adc.h` — declara globals `g_ia_raw / g_ib_raw / g_ic_raw / g_isr_count` (volatile) y la API `adc_isr_init()`.
+- `apps/02_pwm_adc/src/adc.c` — `adc_isr_init()` habilita JEOSIE en ADC2, configura PB8 como output, registra el handler con prioridad 1 en NVIC. `ADC1_2_IRQHandler()` togglea PB8, lee los 3 JDR, incrementa counter, limpia flag.
+- `apps/02_pwm_adc/src/main.c` — llama `adc_isr_init()` entre `adc_init()` y `pwm_enable()`. El while reporta `isr_count` y Δ por segundo.
+- `FIELD_NOTES.md` N1.14 — nota pedagógica: panorama, analogía (médico de guardia con busca), detalle de JEOS, NVIC, latencia/jitter, reglas de oro para handlers, decisión "JEOSIE en ADC2 no ADC1" justificada.
+
+### Validación
+
+- VCP estable: `Δ=50350` ISRs entre prints separados por 1.007 s → **50000 Hz exactos**.
+- `ADC2.IER=0x40` (bit 6 JEOSIE) post-init ✓.
+- Lecturas raw consistentes con sesión 9: `i_a/i_b/i_c ≈ 317-319`, `Vbus ≈ 552`.
+- Multímetro DC en pad Z+/H3 del J8: **44 mV** → consistente con pulso de ~270 ns cada 20 μs (duty ~1.35%, coherente con un handler de ~45 ciclos del Cortex-M4 a 170 MHz). **Evidencia indirecta, no scope explícito**.
+- Calibración de offset implementada (state machine en handler, N=4096, división por shift right 12). Offsets resultantes: `i_a=317, i_b=317, i_c=319` (diferencia max 2 raw → OPAMPs bien trimmed de fábrica).
+- Lecturas compensadas (`cal`) estables en ±1 raw → dentro del ruido de cuantificación del ADC.
+- **Sanity check con motor conectado**: consumo Vbus estable en **80 mA** (baseline antes y después del motor conectado, idéntico). Motor quieto, sin vibración, lecturas `cal` siguen en ±1.
+- **Baseline de consumo Vbus a anotar** (post-fix del bug AF de sesión 8): **80 mA** con todo configurado (TIM1 corriendo + ADC + ISR + motor conectado, duty 50% balanceado). Cualquier desviación significativa en sesiones futuras es señal de problema.
+
+### Drama del scope: bug que no era
+
+Pasamos buena parte de la sesión persiguiendo "PB8 no se ve en scope". Razón real: pulso de 270 ns es demasiado angosto para los settings que probamos primero (5+ μs/div). El multímetro DC en 44 mV fue la pista que cerró el caso. Lección persistida en N1.14 sección "Sospechas pendientes" — si en algún momento futuro el control no converge, volver a validar visualmente con scope a 1-2 μs/div + auto trigger.
+
+### Limpieza de código
+
+Quitado el bloque temporal `[diag PB8]` del `main.c` (dump de GPIOB.MODER/OTYPER/AFR/PUPDR/ODR + blink lento). El código vuelve a su forma "limpia": init → enable → while loop con prints.
+
+### Para sesión 11 — Semana 6 sigue
+
+Plan original mantenido:
+
+1. **Calibración de offset DC** — 1000 muestras motor off, promediar, guardar `i_offset_a/b/c`. Esto convierte el ~318 raw en "i = 0 sin corriente". Lo más simple: hacer la calibración dentro del while al boot, antes de habilitar el control.
+2. **Calibración de ganancia raw → A** — inyectar corriente DC conocida con fuente bench → leer raw → escala.
+3. **Medir tiempo de ISR con GPIO toggle + scope**. Pendiente del scope explícito de PB8.
+4. **Decisión OPAMP topology** (PGA + offset SW vs standalone con bias del PCB) — la calibración da los datos para decidir.
+5. **Dead-time empírico** (pendiente de sesión 8).
+
+### Sesión 11 — 2026-05-23 — Ganancia teórica + PGA x16
+
+**Hito**: cadena `raw → mA` lista con K teórico. Listo para excitación open-loop / test de motor.
+
+**Decisiones**:
+
+- **R_shunt confirmado**: 0.003 Ω (R54, R55, R56 según esquemático MB1419 página "SHUNT RESISTOR", 3 W). Los JP1/2/3 son jumpers de bypass, dejados abiertos = shunts activos.
+- **PGA cambiado x2 → x16** en `adc.c` (PGGAIN=00011). Razón: con x2, sensibilidad era 7.45 raw/A — el sweep de 0-1 A daba apenas 7 raw, dominado por ruido. Con x16, 59.6 raw/A → 60 raw/A en 1 A, SNR razonable.
+- **No subimos a x32**: el offset DC del front-end (318 raw con x2, ≈ 256 mV en VINP_equiv) escala con la ganancia. x32 lo llevaría a ~5000 raw → SATURA el ADC. x16 lo deja en ~2540 raw, queda headroom +26 A.
+- **Constante K hardcoded en adc.h**: `ADC_FACTOR_RAW_TO_MA_Q12 = 68735` (= round(16.78 × 4096)). Inline `adc_raw_to_ma(int16_t) → int32_t` hace `(raw × FACTOR) >> 12`. 100% entero, ~3 ciclos por conversión.
+- **Sweep de calibración física DEJADO en main.c, activable cambiando `#define CAL_TARGET_PHASE`** entre -1 (off, normal), 0/1/2 (calibrar A/B/C). Default = -1.
+
+**Pendientes que registro explícitamente**:
+
+1. **Validar K teórico vs medido** — el cálculo tiene ~5-8% de error teórico (tolerancias de R_shunt, G_PGA, V_ref). Para tesis riguroso: hacer al menos un sweep físico con multímetro en serie en una fase y validar. Si difiere < 10%, confiar en teórico para las 3 fases. Si difiere más, calibrar cada una por separado.
+2. **Origen del offset DC alto (~256 mV con PGA x2)** — no esperado para input flotante / shunt sin corriente. Hipótesis: pin VINP del OPAMP conectado a un bias network del PCB no documentado en UM2516. Sin investigar todavía. Si el control no converge bien, esto puede ser un factor.
+3. **Limitación bipolar conocida** — el offset alto restringe rango negativo. Corriente max negativa ≈ -42 A (no problema para nosotros), positiva ≈ +26 A (tampoco). Pero la asimetría puede afectar zero-crossing de corrientes AC. Para FCS-M2PC eventualmente: investigar bias correcto del PCB, o switch a standalone mode con bias a Vref/2.
+
+### Para sesión 12 — qué sigue
+
+Con `raw → mA` listo, las opciones son:
+
+1. **Excitación open-loop básica** — generar 3 sinusoides desfasadas 120° en el handler, baja amplitud (5-10% duty), frecuencia eléctrica baja (e.g. 2 Hz). Confirmar que el motor gira. **Es el primer test que mueve el motor.**
+2. **Validación de K con sweep físico** (multímetro en serie) — ya quedó armado el `CAL_TARGET_PHASE`.
+3. **Medir tiempo de ISR con scope** (con settings agresivas, 1-2 μs/día).
+4. **Dead-time empírico**.
+
+El usuario quiere "conectar el motor" — opción 1 es el camino natural.
+
+### Sesión 12 — 2026-05-23 — Motor gira por primera vez + paradoja de medición
+
+**Hito**: el motor giró por primera vez 🎉. Datos confirman P=7 (no P=8 como decía CLAUDE.md). Pero quedó abierta una paradoja: las mediciones de corriente no parecen reflejar la corriente real del motor — siguiente sesión es debug.
+
+#### Implementado
+
+- **Módulo `openloop.{h,c}`**: excitación trifásica sinusoidal en open-loop. LUT Q15 de 256 entradas (generada offline con Python para no depender de libm). Theta Q32 con overflow natural = vuelta eléctrica. Desfase 120° por offset entero en índice (85, 170). Aritmética 100% entera.
+- **Hook en handler**: `openloop_step()` llamado desde `ADC1_2_IRQHandler` después de leer JDR. Coste extra ~80-100 ciclos cuando running, ~3 ciclos cuando no.
+- **Stats pico+RMS**: acumuladores `max(|i|)` y `Σi²` en uint64_t dentro del handler. Snapshot a globals cada N=50000 muestras (1 segundo). RMS calculado en main con `isqrt32` (entera, sin float). Coste extra del handler ~25 ciclos.
+- **`adc_isqrt32`**: sqrt entera digit-by-digit base 4, ~20 ciclos M4.
+
+#### Validaciones y descubrimientos
+
+1. **Motor gira** a f_e=2 Hz: 3.5 s/vuelta → confirma f_m = 0.286 Hz → **P=7 (14 polos, 7 pares)**, NO P=8 como decía CLAUDE.md. A f_e=10 Hz: 0.65 s/vuelta → f_m = 1.54 Hz (predicho 1.43 Hz, 7% error del cronómetro).
+2. **CLAUDE.md actualizado** con sección "Motores en el proyecto" — distinción Anaheim (paper, P=8, trap) vs 2804 (banco, P=14, sin). Memoria del banco también actualizada.
+3. **R_fase medida = 2.7 Ω** (R_línea_línea = 5.4 Ω, Y-connection). Confirmó interpretación del datasheet x-teamrc.
+4. **AS5600** confirmado por el usuario (datasheet x-teamrc menciona AS5048A pero el motor real tiene AS5600).
+5. **Bug latente en `adc_get_vbus_raw`**: race condition entre conversiones regular e inyectada del mismo ADC. Sesión 11 mostraba Vbus_raw=552 (no físico, 4.6V); sesión 12 muestra Vbus_raw=1443 (= 11.6V real con divider 0.0963). El handler más lento "movió" el timing accidentalmente. Documentado en FIELD_NOTES N1.15 + Task #13.
+
+#### Paradoja abierta — mediciones de corriente NO siguen al motor
+
+Con `amp=170` (10% PWM) y motor girando:
+- A 2 Hz: pico_raw=5-6, RMS_raw=1, consumo Vbus=127 mA.
+- A 10 Hz: pico_raw=5-6, RMS_raw=1, consumo Vbus=123 mA.
+
+**Mismas magnitudes a 2 y 10 Hz** — debería haber cambiado si midiéramos corriente real del motor. Si fuera sinusoide pura, Pico/RMS = √2; medimos Pico/RMS ≈ 5. **Lo que estamos midiendo NO refleja la corriente del motor.**
+
+Hipótesis a evaluar en sesión 13 (en orden de probabilidad):
+- **(A)** TRGO dispara en valle del PWM (high-side ON, shunts ven 0) en lugar del pico. RM0440 §29.4.5 no es 100% explícito sobre dónde cae el UEV con RCR=1 en center-aligned.
+- **(B)** OPAMP con PGA x16 + sample time 6.5 ciclos (153 ns) no se estabiliza (tau OPAMP ≈ 200 ns con BW 0.8 MHz). Solución: subir SMP a 47.5 ciclos.
+- **(C)** Ruido térmico/drift del front-end dominando sobre señal real (que es pequeña porque la corriente del motor no es tan grande).
+
+#### Test definitivo propuesto (no ejecutado, para sesión 13)
+
+Variar `OPENLOOP_AMP_TICKS` entre {0, 170, 510} y medir Pico/RMS de cada caso:
+- amp=0: si pico>0, hay un baseline de ruido/drift.
+- amp=170 (10%): pico esperado ~18 raw si medición OK.
+- amp=510 (30%): pico esperado ~53 raw si medición OK.
+
+Si las stats son **idénticas** entre los 3 casos → medición rota.
+Si escalan proporcionalmente → medición OK pero corriente real es baja (problema distinto).
+
+#### Estado del firmware al cierre
+
+- `apps/02_pwm_adc/src/main.c`: OPENLOOP_ENABLE=1, AMP=170, DELTA=10 Hz_e.
+- `apps/02_pwm_adc/src/openloop.{c,h}`: LUT + step + start/stop.
+- `apps/02_pwm_adc/src/adc.{c,h}`: ISR + cal offset + stats + isqrt32.
+- Sweep de ganancia armado pero desactivado (`CAL_TARGET_PHASE=-1`).
+
+#### Tasks abiertas al cierre de sesión 12
+
+- Task #8: validar K teórico con multímetro físico (no urgente).
+- Task #9: investigar origen del offset DC alto (256 mV con PGA x2 = anómalo).
+- Task #13: refactor adc_get_vbus_raw (race condition).
+- Nuevas implícitas para sesión 13:
+  - Test amp=0/170/510 para discriminar medición rota vs corriente real baja.
+  - Si medición rota: probar SMP=47.5 ciclos primero (cambio menor); si persiste, cambiar MMS para forzar TRGO al pico.
+
+### Para sesión 13 — punto de partida concreto
+
+**Primera acción al sentarse**: implementar el test de 3 amps (0, 170, 510) con prints separados por amp, idealmente en un mismo flash con cambio automático cada 30 s. Eso descarta o confirma la hipótesis de medición rota en ~2 minutos.
+
+Si medición rota:
+1. Subir SMP del ADC de 6.5 a 47.5 ciclos (cambio de 1 línea en `adc.c`, paso 7 del adc_init). Re-test.
+2. Si sigue mal: cambiar MMS a OC4REF con CCR4=ARR-1 para forzar TRGO explícitamente en el pico. Re-test.
+3. Si sigue mal: instrumentar con scope. Mirar OUT1 vs PB8 (toggle del ISR) para inferir cuándo se hace el sampling.
+
+Si medición OK pero corriente baja:
+1. Calcular potencia disipada — debe cuadrar con consumo Vbus.
+2. Considerar que la corriente real del motor outrunner pequeño con poca fricción es genuinamente baja.
+
+---
+
 ## Sesión 1 — 2026-05-16
 
 **Hito**: Definición del planning y descarga de bibliografía bloqueante.
@@ -554,11 +696,183 @@ Predicción teórica del primer `uptime`:
 
 ---
 
-## Próxima sesión — implementar `pwm_init()`
+## Revisión de f_PWM al cierre de Sesión 6 — 50 kHz en lugar de 30 kHz
+
+**Decisión revisada el 2026-05-20**, antes de implementar registros del TIM1. Análisis cuantitativo de 6 factores (rizado de corriente, constante eléctrica, presupuesto computacional, AS5600, switching losses, dead-time fraccionario) → 50 kHz balancea mejor que 30 kHz. **Detalle completo en FIELD_NOTES.md N1.8.**
+
+Resumen del veredicto:
+- A 30 kHz, rizado de corriente = 92% relativo (borderline insuficiente para una L=0.86 mH).
+- A 50 kHz, rizado baja a 56% y `ARR = 1700` cae exacto (vs 2833.33 → +82 ppm a 30 kHz).
+- Presupuesto computacional: 3400 ciclos de CPU disponibles por ISR @ 50 kHz — cabe según literatura para FCS-M2PC (~1500-2500 ciclos típicos), pero hay que vigilar en Semana 6.
+- Fallbacks si Semana 6 muestra que no cabe: bajar a 30 kHz, o cambiar AS5600 → AS5048A/AS5047P (SPI, ~6× ancho de banda).
+
+Cambios concretos:
+- `apps/02_pwm_adc/src/pwm.h`: `PWM_ARR` = 1700 (era 2833). Comentario explica el cálculo y referencia a N1.8.
+- `FIELD_NOTES.md` N1.3 actualizada con el nuevo cálculo de ARR.
+- `FIELD_NOTES.md` N1.8 nueva, dedicada al análisis cuantitativo de los 6 factores.
+
+---
+
+## Sesión 9 — 2026-05-20/21 — Bring-up ADC + OPAMP funcionando ✅ Cierre Semana 5
+
+**Hito**: cadena completa **shunt → OPAMP → ADC → memoria** funcionando con motor desconectado. 3 corrientes leen valores consistentes (~318 raw c/u), trigger TIM1_TRGO disparando, dual injected simultaneous operativo.
+
+### Lo que funciona
+
+- `apps/02_pwm_adc/src/adc.{c,h}` implementado con todas las funciones (opamp_init, adc_init, get_currents_raw, get_vbus_raw).
+- OPAMP1/2/3 en PGA mode interno gain x2, OPAMPINTEN=1 (salida directa a canales ADC internos 13/16/18).
+- ADC1+ADC2 en dual injected simultaneous (DUAL=00101).
+- Trigger inyectado: TIM1_TRGO en rising edge → conversiones a 50 kHz exactos.
+- Vbus en canal regular ADC1_IN1, lectura ~553 raw = ~12 V correcto.
+- Sample time 6.5 ciclos, resolución 12 bits.
+
+### 3 bugs encontrados y resueltos durante el bring-up
+
+Todos documentados en FIELD_NOTES.md N1.13:
+
+1. **SYSCFG clock no habilitado** → writes a OPAMP_CSR se ignoraban silenciosamente (devolvían 0 al leer). Fix: `RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN`.
+
+2. **JEXTSEL tiene tabla distinta a EXTSEL** (RM0440 Tabla 167 vs 162). Para TIM1_TRGO inyectado, JEXTSEL = 0x00, NO 0x09. Fix: cambiar valor en JSQR.
+
+3. **Standalone mode sin topología clara del PCB** → OPAMPs saturaban a rail. Switch a PGA mode interno gain x2 para tener feedback definido internamente, no depende del board layout.
+
+### Limitaciones aceptadas para esta iteración
+
+- **PGA gain x2 sin bias a Vrefint/2** → solo medimos corrientes **positivas**. Para AC bipolar de FCS-M2PC, eventualmente: volver a standalone con bias correcto del PCB, o mantener PGA + offset DC restado en software.
+- **Ganancia raw → amperios** no calibrada (pendiente Semana 6).
+- **Offset DC ~318 raw** no compensado (pendiente Semana 6).
+
+### Dead-time empíricamente NO verificado
+
+Quedó pendiente de sesión 8: medir el dead-time programado (500 ns, DTG=0x55) con scope en el flanco de OUT2. Validar empíricamente queda como TODO para Semana 6 también.
+
+### Para sesión 10 — Semana 6
+
+Plan:
+1. ISR JEOS (end of injected sequence) → callback a 50 kHz donde vivirá el FCS-M2PC.
+2. Calibración de offset: 1000 muestras motor off → promediar → guardar `i_offset_a/b/c`.
+3. Calibración de ganancia: inyectar corriente conocida (DC con fuente bench externa) → medir raw → calcular escala raw → A.
+4. Medir tiempo de ISR con GPIO toggle + scope. Target: < 15 μs de los 20 μs disponibles a 50 kHz.
+5. **Decisión final OPAMP topology**: PGA + offset SW vs standalone con bias del PCB.
+6. (Si tiempo) verificar dead-time empíricamente.
+
+---
+
+## Sesión 8 — 2026-05-20 — Bug AF resuelto ✅ las 3 fases conmutan
+
+**Hito**: el bug que dejó la sesión 7 abierta fue resuelto en ~30 minutos al inicio de la sesión 8. Las 3 fases del puente trifásico generan PWM 50 kHz, duty 50%, simétricas. **Cierre completo del bring-up del PWM.**
+
+### Root cause
+
+DS12589 Tabla 13 (Alternate Function table) es **por-pin**, no por periférico. Cada pin tiene su propio mapeo de qué función está en cada AF0–AF15. ST distribuye el TIM1 en distintos AFs según el pin:
+
+- En GPIOA: TIM1_CH1/2/3/CH2N en AF6 (PA8, PA9, PA10, PA12).
+- En GPIOB: TIM1_CH3N en **AF4** (PB15).
+- En GPIOC: TIM1_CH1N en **AF4** (PC13).
+
+Mi código en `pwm_init()` asumía AF6 universal. Resultado: PC13 quedó routeado a TIM8_CH4N (función no usada → output indefinido), y PB15 quedó en una AF sin función específica → ambos low-sides nunca recibían PWM → bootstrap caps de fase A y C nunca se cargaban → high-side tampoco conmutaba → output flotante en ~8V.
+
+### Fix
+
+Dos líneas modificadas en `apps/02_pwm_adc/src/pwm.c`:
+
+```c
+gpio_set_af(GPIOB, 15U, 4U);   // PB15 CH3N → AF4 (era 6)
+gpio_set_af(GPIOC, 13U, 4U);   // PC13 CH1N → AF4 (era 6)
+```
+
+### Validación
+
+- Build limpio, 0 warnings.
+- Dump por VCP confirma `PB15 AFR=4` y `PC13 AFR=4`.
+- Scope muestra las 3 OUTs (OUT1/OUT2/OUT3 en J7) con PWM idéntica: 50 kHz, duty 50%, amplitud 0–12V.
+- Consumo de la fuente: ~30–50 mA estable.
+
+### Lección persistida
+
+`FIELD_NOTES.md` N1.9 — "La trampa del Alternate Function". Incluye:
+- Tabla maestra de AFs para los 6 pines TIM1 de la placa.
+- Meta-lección: los dumps de validación esconden bugs si el "expected" viene del mismo modelo mental erróneo del código.
+- Recomendación: para pines futuros (I²C1 PB6/PB7 del AS5600), verificar AF directamente del datasheet pin por pin.
+
+### Tareas cerradas
+
+- Task #3 — Implementar TIM1 50 kHz center-aligned + 6 PWMs ✅
+- Task #4 — TIM1 TRGO en update-event ✅ (parte del mismo pwm_init, validado por dump CR2=0x20).
+
+### Próximo paso — Semana 5 del planning
+
+Avanzar a **OPAMP1/2/3 + ADC1/ADC2 dual simultaneous** (Task #5). Lectura previa requerida:
+- RM0440 Cap 21 (ADC) — JEXTSEL=TIM1_TRGO para sincronizar con pico/valle del PWM.
+- RM0440 Cap 25 (OPAMP) — configuración como PGA con feedback externo.
+- UM2516 — ruta de shunts → OPAMP → ADC en MB1419.
+
+Crear nota N1.10 en FIELD_NOTES (estructura ADC con sus secciones panorama → analogía → detalle → por qué importa) antes de tocar código.
+
+---
+
+## Sesión 7 — 2026-05-20 — `pwm_init()` implementado, bug abierto
+
+**Hito**: pwm_init() implementado y verificado por dump exhaustivo, pero **solo fase B (OUT2) conmuta**; OUT1 y OUT3 quedan flotantes en ~8V.
+
+### Verificación del firmware (positivo)
+
+Dump completo por VCP confirma:
+- 12 registros TIM1 con valores esperados (CR1=0xB1 con bit DIR variable, CR2=0x20, ARR=1700, RCR=1, PSC=0, CCMR1=0x6868, CCMR2=0x68, CCER=0x555, BDTR=0x8C55 post-enable, CCRx=850).
+- 6 pines GPIO con MODER=AF y AFR=6: PA8, PA9, PA10, PA12, PB15, PC13.
+- Clock gating: RCC->AHB2ENR=0x07 (GPIOA/B/C), RCC->APB2ENR=0x800 (TIM1).
+- CNT cambia entre prints → counter corriendo a 50 kHz.
+
+### Comportamiento del puente (negativo)
+
+- **OUT2** (CH2 = PA9 + PA12, ambos en GPIOA): PWM cuadrada limpia, 50 kHz, duty como configurado. ✅
+- **OUT1** (CH1 = PA8 + PC13): output flotante en ~8 V constante. ❌
+- **OUT3** (CH3 = PA10 + PB15): output flotante en ~8 V constante. ❌
+
+Patrón: la única fase que funciona tiene **high-side Y low-side ambos en GPIOA**. Las que fallan tienen el low-side en otro puerto (GPIOB o GPIOC).
+
+### Vbus operacional
+
+- Fuente buck-boost ZK-4KX configurada CV=12V CC=500mA.
+- Vbus medido en placa: 12 V estables.
+- Consumo: ~30 mA estable (placa + L6387 quiescente). No entra en CC.
+
+### Hipótesis priorizadas para sesión 8
+
+1. **DBP backup domain** (PC13): falta habilitar acceso al backup domain antes de configurar PC13.
+   ```c
+   RCC->APB1ENR1 |= RCC_APB1ENR1_PWREN;
+   PWR->CR1 |= PWR_CR1_DBP;
+   ```
+2. **RTC/TAMP**: leer `RTC->TAMPCR` y `RTC->CR` para descartar posesión de PC13.
+3. **SYSCFG**: leer registros de SYSCFG para detectar routing especial de PB15 (también puede ser USB_DP en AF12).
+4. **Reset state**: dumpear MODER/AFR ANTES de pwm_init() para ver estado de partida.
+5. **MCSDK reference**: descargar X-CUBE-MCSDK ejemplo para B-G431B-ESC1, comparar línea por línea.
+
+### Estado del firmware al cierre
+
+- `apps/02_pwm_adc/src/pwm.c`: duties extremos para diagnóstico (CCR1=0, CCR2=850, CCR3=1690).
+- `apps/02_pwm_adc/src/main.c`: dump diagnóstico GPIO + post-enable verification.
+- ⚠ El test de duties extremos NO se llegó a medir — usuario pausó para retomar con cabeza fresca.
+
+### Para arrancar sesión 8
+
+1. Revisar firmware actual (pwm.c + main.c) antes de modificar.
+2. Aplicar H1 (DBP) como primera prueba: agregar PWR_CR1_DBP en pwm.c antes de configurar PC13.
+3. Si no funciona, ir a H2/H3 (dumps de RTC/SYSCFG).
+4. Como último recurso, H5 (comparar con MCSDK).
+
+### Documentación pedagógica pendiente
+
+Cuando resolvamos el bug, escribir nota N1.9 en FIELD_NOTES.md: "Trampas de pines especiales en STM32G4 — PC13 y backup domain". Cualquier solución que encontremos vale la pena documentar.
+
+---
+
+## Próxima sesión — debug fase A/C del puente (continuación)
 
 ### Punto de partida
 
-`apps/02_pwm_adc/src/pwm.c` tiene el plan documentado como comentario (9 pasos). Cada paso corresponde a una sección del `FIELD_NOTES.md` N1.3–N1.6.
+`apps/02_pwm_adc/src/pwm.c` tiene el plan documentado como comentario (9 pasos). Cada paso corresponde a una sección del `FIELD_NOTES.md` N1.3–N1.6, con la frecuencia revisada en N1.8.
 
 ### Estrategia de verificación incremental
 

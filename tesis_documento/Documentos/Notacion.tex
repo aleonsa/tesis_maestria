@@ -32,33 +32,100 @@
 
 	\endlastfoot
 
-			$\mathbb{R}$ &-- &		Conjunto de números reales. \\
-			$\mathbb{R}^n$ &		$n$ es un número natural &Espacio real euclidiano de dimensión $n$. \\
+	% --- Conjuntos y álgebra ---
+	$\mathbb{R}$ & -- & Conjunto de números reales. \\
 
-			$\mathbb{R}^{n\times m}$ &
-			$n$ y $m$ son números naturales &
-			Espacio de matrices reales de $n$ renglones y $m$ columnas. \\
+	$\mathbb{R}^n$ & $n\in\mathbb{N}$ & Espacio real euclidiano de dimensión $n$. \\
 
-			$A^{\mathsf{T}}$ &
-			$A \in \mathbb{R}^{n\times m}$ &
-			Matriz transpuesta de $A$, \emph{i.e.}, una matriz en $\mathbb{R}^{m\times n}$. \\
+	$\mathbb{R}^{n\times m}$ & $n,m\in\mathbb{N}$ & Espacio de matrices reales de $n$ renglones y $m$ columnas. \\
 
+	$A^{\mathsf{T}}$ & $A \in \mathbb{R}^{n\times m}$ & Matriz transpuesta de $A$. \\
 
-			$\mathbb{I}_n$ &
-			- &
-			Matriz identidad de dimensión $n\times n$. \\
+	$A^{\dagger}$ & $A \in \mathbb{R}^{n\times m}$ & Pseudoinversa de Moore--Penrose de $A$. \\
 
-			$\det(A)$ &
-			$A \in \mathbb{R}^{n\times n}$ &
-			Determinante de $A$. \\
+	$\mathbb{I}_n$ & -- & Matriz identidad de dimensión $n\times n$. \\
 
-			$\lambda(A)$ &
-			$A \in \mathbb{R}^{n\times n}$ &
-			Conjunto de valores propios de $A$. \\
+	$\|\mathbf{v}\|$ & $\mathbf{v}\in\mathbb{R}^n$ & Norma euclidiana de $\mathbf{v}$. \\
 
-			$A>0$ ($A\geq 0$) &$A \in \mathbb{R}^{n\times n}$  & $A$ es una matriz simétrica positiva (semi-) definida.\\
+	$\lambda(A)$ & $A \in \mathbb{R}^{n\times n}$ & Conjunto de valores propios de $A$. \\
 
-			$A>B$ ($A\geq B$) &$A,B\in\mathbb{R}^{n\times n}$ &   $A-B$ es una matriz simétrica positiva (semi-) definida.\\
+	$A>0$ ($A\geq 0$) & $A \in \mathbb{R}^{n\times n}$ & $A$ es simétrica positiva (semi-)definida. \\
+
+	% --- Eléctricas del motor ---
+	$v_a, v_b, v_c$ & V & Voltajes de fase aplicados al estator. \\
+
+	$i_a, i_b, i_c$ & A & Corrientes de fase del estator. \\
+
+	$e_a, e_b, e_c$ & V & Fuerzas contraelectromotrices de fase (BEMF). \\
+
+	$u_\alpha, u_\beta$ & V & Voltajes en el marco estacionario de Clarke. \\
+
+	$i_\alpha, i_\beta$ & A & Corrientes en el marco estacionario de Clarke. \\
+
+	$e_\alpha, e_\beta$ & V & BEMF en el marco $\alpha\beta$. \\
+
+	$\mathbf{i}_{\alpha\beta}$ & $\in\mathbb{R}^2$ & Vector de corriente $[i_\alpha,\,i_\beta]^{\mathsf{T}}$. \\
+
+	$\mathbf{u}_{\alpha\beta}$ & $\in\mathbb{R}^2$ & Vector de voltaje $[u_\alpha,\,u_\beta]^{\mathsf{T}}$. \\
+
+	$\mathbf{e}_{\alpha\beta}$ & $\in\mathbb{R}^2$ & Vector de BEMF $[e_\alpha,\,e_\beta]^{\mathsf{T}}$. \\
+
+	$\mathbf{u}_j$ & $j=0,\ldots,7$ & Vectores de voltaje admisibles del inversor trifásico. \\
+
+	$R$ & $\Omega$ & Resistencia de fase del estator. \\
+
+	$L$ & H & Inductancia síncrona equivalente de fase. \\
+
+	$V_{DC}$ & V & Tensión del bus de corriente directa. \\
+
+	% --- Mecánicas y constantes ---
+	$\omega_m$ & rad/s & Velocidad mecánica del rotor. \\
+
+	$\omega_e$ & rad/s & Velocidad eléctrica del rotor, $\omega_e = p\,\omega_m$. \\
+
+	$\theta_m$ & rad & Posición mecánica del rotor. \\
+
+	$\theta_e$ & rad & Posición eléctrica del rotor, $\theta_e = p\,\theta_m$. \\
+
+	$p$ & -- & Número de pares de polos. \\
+
+	$K_e$ & V$\cdot$s/rad & Constante de fuerza contraelectromotriz. \\
+
+	$K_t$ & N$\cdot$m/A & Constante de par. \\
+
+	$J$ & kg$\cdot$m$^2$ & Momento de inercia del rotor. \\
+
+	$d$ & N$\cdot$m$\cdot$s & Coeficiente de fricción viscosa. \\
+
+	$T_e$ & N$\cdot$m & Par electromagnético desarrollado. \\
+
+	$T_L$ & N$\cdot$m & Par de carga. \\
+
+	$\mathbf{s}(\theta_e)$ & $\in\mathbb{R}^2$ & Función de forma normalizada de la BEMF en $\alpha\beta$. \\
+
+	% --- Control predictivo ---
+	$T_s$ & s & Periodo de muestreo del controlador. \\
+
+	$\rho$ & $\in\mathbb{N}$ & Número de sub-intervalos en que se divide $T_s$ en FCS-M2PC. \\
+
+	$t_1, t_2, t_0$ & s & Tiempos de aplicación de los vectores activos y nulo. \\
+
+	$\mathbf{i}^*(k)$ & A & Referencia de corriente en el instante $k$. \\
+
+	$g$ & -- & Función de costo del controlador predictivo. \\
+
+	% --- ADALINE ---
+	$\mathbf{x}(\theta)$ & $\in\mathbb{R}^{2H}$ & Vector de regresores de Fourier truncados a $H$ armónicos. \\
+
+	$\mathbf{w}$ & $\in\mathbb{R}^{2H}$ & Vector de pesos del ADALINE. \\
+
+	$H$ & $\in\mathbb{N}$ & Número de armónicos retenidos en la expansión de Fourier. \\
+
+	$\mu$ & -- & Paso de adaptación del algoritmo LMS. \\
+
+	$\epsilon(k)$ & -- & Error de estimación $s_{\mathrm{obs}}(k) - \hat{s}(k)$ en el paso $k$. \\
+
+	$\hat{(\cdot)}$ & -- & Estimación de la cantidad indicada. \\
 
 	% ---- caption AL FINAL ---
 	\caption[Not]{Notación}

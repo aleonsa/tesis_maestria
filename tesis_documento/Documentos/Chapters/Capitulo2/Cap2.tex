@@ -4,15 +4,167 @@
 
 \begin{document}
 
-	\chapter{Preliminares}
+\chapter{Preliminares}
+\label{cap:preliminares}
 
-	\section{[Sección 1]}
-	\lipsum[1-2]
+Este capítulo reúne el material que se usará a lo largo de la tesis. La intención no es ser exhaustivo, sino fijar la notación y enunciar los resultados que más adelante se aplican sin volver a explicarlos. Se cubre el modelo del motor BLDC, las transformaciones de marco de referencia que usaremos, el inversor trifásico, la familia de controladores predictivos que da pie al FCS-M2PC, y finalmente el ADALINE con base de Fourier, que será la herramienta de estimación adaptable de BEMF.
 
-	\section{[Sección 2]}
-	\lipsum[3-4]
+% =================================================================
+\section{El motor BLDC y el origen del rizo de par}
+\label{sec:bldc-rizo}
 
-		\subsection{[Subsección]}
-		\lipsum[5]
+El motor BLDC (\textit{brushless direct current}) tiene un rotor de imanes permanentes y tres devanados en el estator conectados en estrella. La conmutación, que en un motor de corriente directa convencional se realiza mecánicamente con escobillas, aquí se hace electrónicamente a través de un inversor. Esta diferencia le da al BLDC una eficiencia más alta, menor mantenimiento y mejor relación par-velocidad, razones por las que ha desplazado a los motores de corriente directa con escobillas en aplicaciones como vehículos eléctricos y robótica \citep{coronado2025, krishnan2009pmbldc}.
+
+Bajo la hipótesis de fases balanceadas y campo magnético uniformemente distribuido en el entrehierro, la fuerza contraelectromotriz (BEMF) inducida en cada devanado adopta una forma trapezoidal. Esta es la idealización que sostiene el control por conmutación de seis pasos y, en general, todo análisis introductorio del BLDC \citep{krause2013analysis}. Sin embargo, ningún motor real tiene un campo perfectamente uniforme. Las ranuras del estator, las tolerancias de fabricación de los imanes y la geometría del rotor introducen armónicos en la BEMF: principalmente el quinto, séptimo y onceavo, múltiplos impares no triples de la frecuencia eléctrica fundamental. La consecuencia es que la BEMF deja de ser trapezoidal pura y la forma de onda real cae en algún lugar entre el trapecio y la senoide, dependiendo del motor en cuestión \citep{shao2003direct}.
+
+A esta desviación se suman dos efectos adicionales. El primero es el par de detención o \textit{cogging torque}, una componente del par que depende únicamente de la posición del rotor y aparece por la interacción entre los imanes y los dientes del estator. El segundo es el \textit{dead-time} del inversor, un retardo introducido en el disparo de los transistores para evitar cortocircuitos, que distorsiona el voltaje efectivamente aplicado al motor. Ambos efectos son periódicos en la posición eléctrica $\theta_e$ y, junto con los armónicos de BEMF, son las fuentes principales del rizo de par.
+
+El rizo de par, definido como la oscilación periódica del par electromagnético en torno a su valor medio, es indeseable porque genera vibraciones, ruido acústico y pérdida de precisión en aplicaciones de seguimiento. En sistemas de tracción eléctrica también se traduce en pérdida de eficiencia y desgaste prematuro de la transmisión. Reducirlo es el problema que motiva esta tesis y se planteará formalmente en el capítulo \ref{cap:modelo}.
+
+% =================================================================
+\section{Modelo eléctrico-mecánico en el marco abc}
+\label{sec:modelo-abc}
+
+Asumiendo fases balanceadas y despreciando las pérdidas en el hierro y los efectos de saturación magnética, el motor BLDC se modela en el marco $abc$ como \citep{coronado2023, krause2013analysis}
+\begin{subequations}
+\label{eq:modelo-abc}
+\begin{align}
+    L \frac{d\mathbf{i}_{abc}}{dt} &= \mathbf{u}_{abc} - R\,\mathbf{i}_{abc} - \mathbf{e}_{abc}(\theta_e), \label{eq:modelo-abc-elec}\\
+    J \frac{d\omega_m}{dt} &= T_e - d\,\omega_m - T_L, \label{eq:modelo-abc-mec}\\
+    \frac{d\theta_m}{dt} &= \omega_m, \label{eq:modelo-abc-cin}
+\end{align}
+\end{subequations}
+donde $\mathbf{i}_{abc} = [i_a,\,i_b,\,i_c]^{\mathsf T}$ son las corrientes de fase, $\mathbf{u}_{abc}$ los voltajes aplicados, $\mathbf{e}_{abc}(\theta_e)$ las BEMFs, $R$ y $L$ son la resistencia y la inductancia síncrona de fase, $J$ es el momento de inercia, $d$ el coeficiente de fricción viscosa, $T_L$ el par de carga y $\omega_m,\theta_m$ la velocidad y posición mecánicas del rotor.
+
+Las BEMFs se escriben como el producto de la constante $K_e$, la velocidad mecánica y una función de forma normalizada que depende de la posición eléctrica:
+\begin{equation}
+    \mathbf{e}_{abc}(\theta_e) = K_e\,\omega_m\,\mathbf{s}_{abc}(\theta_e),
+    \label{eq:bemf-abc}
+\end{equation}
+con $\mathbf{s}_{abc} = [s_a(\theta_e), s_b(\theta_e - 2\pi/3), s_c(\theta_e + 2\pi/3)]^{\mathsf T}$. La función $s_a$ codifica la forma de onda del motor (trapezoidal, senoidal o algo intermedio) y las otras dos son sus versiones desfasadas $\pm 2\pi/3$. El par electromagnético se obtiene del balance de potencia,
+\begin{equation}
+    T_e = K_t\,\mathbf{s}_{abc}^{\mathsf T}(\theta_e)\,\mathbf{i}_{abc},
+    \label{eq:torque-abc}
+\end{equation}
+donde $K_t$ es la constante de par. En unidades SI consistentes $K_t = K_e$, aunque por convención se mantiene la distinción.
+
+La relación entre la posición eléctrica y la mecánica es $\theta_e = p\,\theta_m$, con $p$ el número de pares de polos del motor, y análogamente $\omega_e = p\,\omega_m$. La hipótesis de fases balanceadas implica $i_a + i_b + i_c = 0$, lo que reduce el sistema eléctrico a dos grados de libertad y motiva pasar a un marco de referencia bifásico.
+
+% =================================================================
+\section{Transformada de Clarke}
+\label{sec:clarke}
+
+La transformada de Clarke proyecta las tres corrientes de fase sobre un sistema cartesiano ortogonal $\alpha\beta$ fijo al estator:
+\begin{equation}
+    \begin{bmatrix} i_\alpha \\ i_\beta \end{bmatrix}
+    = \frac{2}{3}
+    \begin{bmatrix}
+        1 & -\frac{1}{2} & -\frac{1}{2} \\[2pt]
+        0 & \frac{\sqrt{3}}{2} & -\frac{\sqrt{3}}{2}
+    \end{bmatrix}
+    \begin{bmatrix} i_a \\ i_b \\ i_c \end{bmatrix}.
+    \label{eq:clarke}
+\end{equation}
+La misma transformación se aplica a los voltajes y a las BEMFs. El factor $2/3$ preserva la amplitud de las señales de fase; existe la convención alterna $\sqrt{2/3}$, que preserva potencia, pero a lo largo de la tesis se usará la primera.
+
+Bajo \eqref{eq:clarke}, el modelo eléctrico del motor queda
+\begin{equation}
+    L \frac{d}{dt}\begin{bmatrix} i_\alpha \\ i_\beta \end{bmatrix}
+    = \begin{bmatrix} u_\alpha \\ u_\beta \end{bmatrix}
+    - R \begin{bmatrix} i_\alpha \\ i_\beta \end{bmatrix}
+    - \begin{bmatrix} e_\alpha(\theta_e) \\ e_\beta(\theta_e) \end{bmatrix},
+    \label{eq:modelo-ab}
+\end{equation}
+y la BEMF en este marco se expresa como $\mathbf{e}_{\alpha\beta}(\theta_e) = K_e\,\omega_m\,\mathbf{s}(\theta_e)$, con $\mathbf{s}(\theta_e) \in \mathbb{R}^2$ la función de forma en $\alpha\beta$. Para un motor senoidal ideal $\mathbf{s}(\theta_e) = [\sin\theta_e, -\cos\theta_e]^{\mathsf T}$; para un motor real con armónicos, $\mathbf{s}(\theta_e)$ se desvía de esta expresión.
+
+En el contexto de máquinas senoidales (PMSM) es habitual ir un paso más allá y aplicar la transformada de Park, que pasa de $\alpha\beta$ a un marco $dq$ síncrono con el rotor. La ventaja de Park es que las cantidades en régimen permanente quedan constantes, lo que facilita el diseño de controladores lineales. La desventaja, y la razón por la que en esta tesis se trabajará en $\alpha\beta$, es que Park supone implícitamente una BEMF senoidal pura: si el motor contiene armónicos, estos no desaparecen en $dq$, sino que aparecen como rizos a múltiplos de la frecuencia eléctrica. Para un BLDC con forma de onda no senoidal, el marco $\alpha\beta$ es más natural porque no impone esa hipótesis y deja la información armónica intacta en $\mathbf{s}(\theta_e)$ \citep{rodriguez2012predictive}.
+
+% =================================================================
+\section{El inversor trifásico y sus vectores admisibles}
+\label{sec:vsi}
+
+El motor se alimenta a través de un inversor fuente de voltaje (VSI) de dos niveles, compuesto por tres ramas con dos transistores cada una. Cada rama tiene dos estados útiles ---superior cerrado o inferior cerrado---, por lo que el inversor presenta $2^3 = 8$ combinaciones admisibles de conmutación. Etiquetando el estado de cada rama como $S_a, S_b, S_c \in \{0,1\}$, los ocho vectores resultantes se denotan $\mathbf{u}_0, \mathbf{u}_1, \dots, \mathbf{u}_7$ y se listan en el cuadro \ref{tab:vsi-vectores}.
+
+\begin{table}[h]
+\centering
+\small
+\caption{Vectores de voltaje admisibles del VSI de dos niveles en el marco $\alpha\beta$. $V_{DC}$ es la tensión del bus.}
+\label{tab:vsi-vectores}
+\begin{tabular}{ccccc}
+\toprule
+$\mathbf{u}_j$ & $S_a$ & $S_b$ & $S_c$ & $(u_\alpha,\,u_\beta)$ \\
+\midrule
+$\mathbf{u}_0$ & 0 & 0 & 0 & $(0,\,0)$ \\
+$\mathbf{u}_1$ & 1 & 0 & 0 & $\bigl(\tfrac{2}{3}V_{DC},\,0\bigr)$ \\
+$\mathbf{u}_2$ & 1 & 1 & 0 & $\bigl(\tfrac{1}{3}V_{DC},\,\tfrac{\sqrt{3}}{3}V_{DC}\bigr)$ \\
+$\mathbf{u}_3$ & 0 & 1 & 0 & $\bigl(-\tfrac{1}{3}V_{DC},\,\tfrac{\sqrt{3}}{3}V_{DC}\bigr)$ \\
+$\mathbf{u}_4$ & 0 & 1 & 1 & $\bigl(-\tfrac{2}{3}V_{DC},\,0\bigr)$ \\
+$\mathbf{u}_5$ & 0 & 0 & 1 & $\bigl(-\tfrac{1}{3}V_{DC},\,-\tfrac{\sqrt{3}}{3}V_{DC}\bigr)$ \\
+$\mathbf{u}_6$ & 1 & 0 & 1 & $\bigl(\tfrac{1}{3}V_{DC},\,-\tfrac{\sqrt{3}}{3}V_{DC}\bigr)$ \\
+$\mathbf{u}_7$ & 1 & 1 & 1 & $(0,\,0)$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Seis de los vectores son activos ($\mathbf{u}_1$ a $\mathbf{u}_6$) y forman un hexágono regular de radio $\tfrac{2}{3}V_{DC}$ en el plano $\alpha\beta$. Los dos restantes, $\mathbf{u}_0$ y $\mathbf{u}_7$, son nulos y corresponden a tener todos los transistores superiores o todos los inferiores cerrados; ambos aplican voltaje cero al motor. Cualquier estrategia de control que se ejecute sobre un VSI ---PWM senoidal, modulación vectorial, FCS-MPC--- es, en última instancia, una regla que decide en cada instante cuál de estos ocho vectores aplicar y por cuánto tiempo.
+
+% =================================================================
+\section{Control predictivo basado en modelo}
+\label{sec:mpc}
+
+El control predictivo basado en modelo (MPC) usa un modelo dinámico del sistema para predecir su comportamiento futuro y elegir la acción que minimiza una función de costo predefinida \citep{rodriguez2012predictive, kouro2009mpc}. En su versión continua y clásica, MPC resuelve en cada paso un problema de optimización sobre una trayectoria continua de la entrada y entrega al actuador la señal óptima a través de un modulador (PWM, modulación vectorial, etc.). Esta arquitectura es la que se usa, por ejemplo, en plantas químicas o robots, donde la entrada puede tomar cualquier valor real dentro de un rango.
+
+Cuando el actuador es un convertidor de potencia, este planteamiento se simplifica de manera radical. El inversor solo puede tomar un número finito de configuraciones, y en lugar de optimizar sobre un continuo y luego modular, conviene optimizar directamente sobre el conjunto discreto de vectores admisibles. Esta es la idea del \textit{Finite Control Set Model Predictive Control} (FCS-MPC), introducido en su forma moderna por \citet{kouro2009mpc}. En cada periodo de muestreo $T_s$, FCS-MPC predice la corriente que produciría cada uno de los ocho vectores del cuadro \ref{tab:vsi-vectores} si se aplicara durante todo el periodo, evalúa una función de costo $g$ ---típicamente el error cuadrático respecto a la referencia--- y aplica el vector que minimiza $g$. No hay modulador.
+
+La simplicidad de FCS-MPC tiene un costo: aplicar un único vector durante todo $T_s$ produce un rizo de corriente notable a menos que $T_s$ sea muy pequeño, lo que exige hardware de muy alta velocidad y motores con inductancia suficiente para integrar el escalón \citep{coronado2025}. Para mantener la simplicidad del FCS pero reducir el rizo, \citet{coronado2025} proponen el FCS-M2PC, que divide $T_s$ en $\rho$ sub-intervalos y aplica combinaciones de dos vectores activos adyacentes más un vector nulo, escogiendo no solo qué vectores aplicar sino qué fracción de $T_s$ asignarle a cada uno. La derivación completa se difiere al capítulo \ref{cap:desarrollo}; aquí basta con la intuición: el M2PC combina lo mejor del FCS-MPC (conjunto finito de estados, sin modulador) con lo mejor de la modulación clásica (suavizado dentro del periodo de muestreo). El resultado reportado por los autores es una reducción del 75 al 80 por ciento en el RMSE del seguimiento de corriente respecto al FCS-MPC clásico, bajo el mismo $T_s$.
+
+% =================================================================
+\section{ADALINE y el algoritmo LMS}
+\label{sec:adaline}
+
+El \textit{Adaptive Linear Neuron} (ADALINE) es la estructura de aprendizaje supervisado más simple posible. Introducido por \citet{widrow1960adaline}, consiste en un único combinador lineal: dada una entrada $\mathbf{x}(k) \in \mathbb{R}^n$ y un vector de pesos $\mathbf{w}(k) \in \mathbb{R}^n$, su salida es
+\begin{equation}
+    \hat{y}(k) = \mathbf{w}^{\mathsf T}(k)\,\mathbf{x}(k).
+    \label{eq:adaline-salida}
+\end{equation}
+No hay capas ocultas, no hay funciones de activación; el ADALINE es, formalmente, una regresión lineal con actualización en línea. Lo que lo hace interesante es la regla con la que se ajustan sus pesos.
+
+Dado un valor deseado $y(k)$, se define el error de estimación $\epsilon(k) = y(k) - \hat{y}(k)$ y se actualizan los pesos mediante el algoritmo \textit{Least Mean Squares} (LMS):
+\begin{equation}
+    \mathbf{w}(k+1) = \mathbf{w}(k) + \mu\,\epsilon(k)\,\mathbf{x}(k),
+    \label{eq:lms}
+\end{equation}
+donde $\mu > 0$ es el paso de adaptación. La ecuación \eqref{eq:lms} es la versión estocástica de un descenso por gradiente sobre el error cuadrático instantáneo: en cada paso, los pesos se mueven en la dirección que más rápido reduce $\epsilon^2(k)$.
+
+Las propiedades del LMS están bien documentadas en la literatura de procesamiento adaptable de señales \citep{widrow1985adaptive, haykin2014adaptive} y se enuncian aquí sin demostración. El algoritmo converge en media a la solución de mínimos cuadrados $\mathbf{w}^* = \mathbf{R}^{-1}\mathbf{p}$ ---con $\mathbf{R} = \mathbb{E}[\mathbf{x}\mathbf{x}^{\mathsf T}]$ y $\mathbf{p} = \mathbb{E}[y\,\mathbf{x}]$--- siempre que $0 < \mu < 2/\lambda_{\max}(\mathbf{R})$. La velocidad de convergencia está controlada por la dispersión de los valores propios de $\mathbf{R}$: si el cociente $\lambda_{\max}/\lambda_{\min}$ es grande, los modos lentos dominan y la convergencia se prolonga. En régimen permanente, el LMS no converge a un valor fijo sino a una vecindad de $\mathbf{w}^*$ cuyo tamaño es proporcional a $\mu$, fenómeno conocido como \textit{misadjustment}. Esto impone el compromiso clásico entre velocidad y precisión: $\mu$ grande converge rápido pero deja más residuo; $\mu$ pequeño es preciso pero lento.
+
+El costo computacional del LMS es lineal en la dimensión del vector de pesos: una actualización requiere $\mathcal{O}(n)$ multiplicaciones y sumas. Esta ligereza es la razón por la que el LMS y sus variantes siguen siendo los algoritmos de filtrado adaptable más utilizados en aplicaciones de tiempo real.
+
+% =================================================================
+\section{Series de Fourier truncadas como base para señales periódicas}
+\label{sec:fourier}
+
+Una función real $f(\theta)$ definida en $[0, 2\pi)$ y periódica de periodo $2\pi$ admite la representación en serie de Fourier
+\begin{equation}
+    f(\theta) = \frac{a_0}{2} + \sum_{n=1}^{\infty}\bigl[a_n \cos(n\theta) + b_n \sin(n\theta)\bigr],
+    \label{eq:fourier-completa}
+\end{equation}
+donde $a_n$ y $b_n$ son los coeficientes de Fourier. Las funciones $\{\cos(n\theta), \sin(n\theta)\}_{n \ge 1}$ forman una base ortogonal de $L^2([0,2\pi))$, lo que garantiza que la serie converge en norma cuadrática a $f$ siempre que $f$ sea de cuadrado integrable.
+
+En la práctica, las señales de interés tienen energía espectral concentrada en los primeros armónicos. Una BEMF de motor real, por ejemplo, está dominada por el primer armónico y contiene contribuciones decrecientes del tercero, quinto, séptimo y onceavo. Truncar \eqref{eq:fourier-completa} a un orden $H$ finito,
+\begin{equation}
+    f_H(\theta) = \frac{a_0}{2} + \sum_{n=1}^{H}\bigl[a_n \cos(n\theta) + b_n \sin(n\theta)\bigr],
+    \label{eq:fourier-truncada}
+\end{equation}
+introduce un error de aproximación cuya norma cuadrática es exactamente la energía contenida en los armónicos superiores a $H$. Si esa energía es despreciable, la aproximación es prácticamente exacta.
+
+La estructura de \eqref{eq:fourier-truncada} se presta naturalmente a ser implementada como un ADALINE. Definiendo el regresor
+\begin{equation}
+    \mathbf{x}(\theta) = \bigl[\cos\theta,\,\sin\theta,\,\cos 2\theta,\,\sin 2\theta,\,\ldots,\,\cos H\theta,\,\sin H\theta\bigr]^{\mathsf T} \in \mathbb{R}^{2H}
+    \label{eq:regresor-fourier}
+\end{equation}
+y el vector de pesos $\mathbf{w} = [a_1,\,b_1,\,a_2,\,b_2,\,\ldots,\,a_H,\,b_H]^{\mathsf T}$, la salida del ADALINE $\mathbf{w}^{\mathsf T}\mathbf{x}(\theta)$ reproduce \eqref{eq:fourier-truncada} sin la componente de continua, que para la BEMF es nula por la simetría del motor. Esta correspondencia tiene dos consecuencias que se explotarán en el capítulo \ref{cap:desarrollo}.
+
+La primera es la interpretabilidad: cada peso del ADALINE coincide con un coeficiente de Fourier de la BEMF, así que su magnitud indica directamente la amplitud del armónico correspondiente. La segunda es el buen condicionamiento del LMS: bajo la base $\{\cos n\theta, \sin n\theta\}$, la matriz de autocorrelación $\mathbf{R} = \mathbb{E}[\mathbf{x}\mathbf{x}^{\mathsf T}]$ es múltiplo de la identidad cuando $\theta$ se distribuye uniformemente, lo que elimina la dispersión de valores propios y permite que todos los modos converjan al mismo ritmo \citep{haykin2014adaptive}.
 
 \end{document}

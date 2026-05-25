@@ -4,11 +4,15 @@
  * Configuración fija de la app:
  *   - 3 fases complementarias (6 salidas físicas)
  *   - center-aligned mode 1 (CMS = 01)
- *   - f_PWM = 30.0025 kHz (ARR = 2833 @ HCLK 170 MHz)
+ *   - f_PWM = 50.000 kHz (ARR = 1700 @ HCLK 170 MHz, exacto sin redondeo)
  *   - dead-time = 500 ns (DTG = 0x55 @ CKD = 00)
  *   - TRGO = update event (MMS = 010), RCR = 1 → 1 trigger por periodo PWM
  *
- * Referencias: ver FIELD_NOTES.md N1.3–N1.6.
+ * Decisión de f_PWM: ver FIELD_NOTES.md N1.8 (análisis de los 6 tradeoffs).
+ * Resumen: con L=0.86 mH del motor 2804, 30 kHz daba 92% ripple relativo;
+ * 50 kHz lo baja a 56% y conserva margen computacional (20 μs ISR).
+ *
+ * Referencias: ver FIELD_NOTES.md N1.3–N1.6 (TIM1) y N1.8 (f_PWM).
  */
 
 #ifndef PWM_H
@@ -16,8 +20,9 @@
 
 #include <stdint.h>
 
-/* ARR para 30 kHz con HCLK = 170 MHz en center-aligned (2*ARR ciclos por periodo). */
-#define PWM_ARR        (2833U)
+/* ARR para 50 kHz con HCLK = 170 MHz en center-aligned (2*ARR ciclos por periodo).
+ * Cálculo: 170e6 / (2 * 50e3) = 1700 exacto. */
+#define PWM_ARR        (1700U)
 
 /* Encoding del DTG para 500 ns con CKD = 00 (t_DTS = 5.88 ns).
  * 500 / 5.88 ≈ 85 = 0x55. Bit 7 = 0 → primer rango lineal (DT = DTG * t_DTS). */
