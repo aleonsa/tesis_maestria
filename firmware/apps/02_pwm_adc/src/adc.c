@@ -171,12 +171,25 @@ void adc_init(void) {
     ADC12_COMMON->CCR |=  (0x5U << ADC_CCR_DUAL_Pos);
 
     /* ---- Paso 7: sample times ----
-     * SMP=001 (6.5 ciclos) para todos los canales que usamos.
+     * SMP=100 (47.5 ciclos) para todos los canales que usamos.
      * SMPR1 cubre canales 0-9, SMPR2 cubre 10-18.
      *
      * Canales relevantes en ADC1: 1 (Vbus), 5 (Temp), 13 (OPAMP1).
-     * Canales relevantes en ADC2: 16 (OPAMP2), 18 (OPAMP3). */
-    const uint32_t SMP_FAST = 0x1U;  /* 6.5 ciclos */
+     * Canales relevantes en ADC2: 16 (OPAMP2), 18 (OPAMP3).
+     *
+     * Sesión 13 — subido de 6.5 a 47.5 ciclos para diagnosticar la paradoja
+     * de medición (sesión 12): pico/RMS no escalan con amp, pero Vbus droopa
+     * con amp=510 → hay corriente real que no estamos viendo.
+     * Hipótesis: OPAMP con PGA x16 (BW≈0.8 MHz, τ≈200 ns) no estabiliza con
+     * track-hold de ~153 ns (6.5 ciclos / 42.5 MHz). 47.5 ciclos = ~1.12 μs,
+     * sobrado para τ del OPAMP. Tiempo total de conversión: ~1.26 μs, ínfimo
+     * frente a los 20 μs por ciclo PWM (50 kHz).
+     *
+     * Si tras este cambio amp=170 → pico_raw ≈ 18 y amp=510 → pico_raw ≈ 53,
+     * confirma hipótesis B (sample time corto). Si las stats siguen planas,
+     * pasamos a hipótesis A (TRGO en valle): cambiar MMS=010 → OC4REF
+     * con CCR4=ARR-1. */
+    const uint32_t SMP_FAST = 0x4U;  /* 47.5 ciclos */
 
     /* ADC1->SMPR1: canales 1 y 5 (bits 3*1=3 y 3*5=15) */
     ADC1->SMPR1 |= (SMP_FAST << (3U * 1U)) | (SMP_FAST << (3U * 5U));

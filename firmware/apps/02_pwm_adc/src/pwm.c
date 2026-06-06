@@ -203,9 +203,20 @@ void pwm_init(void) {
                 | (0x6U << TIM_CCMR1_OC2M_Pos)  /* PWM mode 1 */
                 | TIM_CCMR1_OC2PE;               /* preload CCR2 */
 
-    /* CCMR2: channel 3 (los bits 0–7) y channel 4 (bits 8–15, no usado). */
+    /* CCMR2: channel 3 (bits 0–7) y channel 4 (bits 8–15).
+     *
+     * Channel 4 SE USA — pero no como salida física, sino como SOURCE del
+     * TRGO. OC4M=110 (PWM mode 1) + CCR4=ARR-1 + MMS=0111 (en CR2) hace que
+     * TRGO suba al pico del contador (cerca de ARR), justo donde el low-side
+     * está conduciendo y los shunts ven la corriente real. Es la fix de la
+     * paradoja de sesión 12/13: con MMS=010 (UEV en center-aligned) el TRGO
+     * caía en el VALLE, donde el low-side está OFF y los shunts miden cero.
+     * OC4PE no es estrictamente necesario porque nunca cambiamos CCR4, pero
+     * lo dejamos por simetría con OC1/2/3. */
     TIM1->CCMR2 = (0x6U << TIM_CCMR2_OC3M_Pos)  /* PWM mode 1 */
-                | TIM_CCMR2_OC3PE;               /* preload CCR3 */
+                | TIM_CCMR2_OC3PE                /* preload CCR3 */
+                | (0x6U << TIM_CCMR2_OC4M_Pos)  /* PWM mode 1 (solo para REF interno) */
+                | TIM_CCMR2_OC4PE;               /* preload CCR4 */
 
     /* CCER: enable salidas + polaridad.
      *
@@ -227,6 +238,14 @@ void pwm_init(void) {
     TIM1->CCR1 = PWM_ARR / 2U;
     TIM1->CCR2 = PWM_ARR / 2U;
     TIM1->CCR3 = PWM_ARR / 2U;
+
+    /* CCR4 = ARR-1 → OC4REF tiene su flanco de subida en counter=ARR-2
+     * (durante el down-count, justo después del pico). Con JEXTEN=01 (rising
+     * edge) en el ADC, esto dispara el TRGO en el pico, dentro del intervalo
+     * en que el low-side está ON (ventana ≈ 3.5 μs para amp=510 con DTG=500ns
+     * → margen amplio). El conversion time del ADC (47.5+12.5 = 60 ciclos
+     * @ 42.5 MHz ≈ 1.4 μs) cae enteramente dentro de esa ventana. */
+    TIM1->CCR4 = PWM_ARR - 1U;
 
 
     /* ------------------ Paso 5: Dead-time + safety en BDTR ------------------ */
@@ -254,13 +273,19 @@ void pwm_init(void) {
     /* ------------------ Paso 6: TRGO + Output Idle States (CR2) ------------------ */
 
     /* CR2 config:
-     *   - MMS[2:0]  bits 6:4   = 010  (update event como TRGO → al ADC)
+     *   - MMS[2:0]  bits 6:4   = 111  (OC4REF como TRGO → al ADC)
      *   - OISx, OISxN bits 8–13 = 0   (todas las salidas LOW cuando MOE=0)
      *   - TI1S, CCDS, CCUS, CCPC bits = 0 (defaults; no aplican aquí)
      *
      * Escribimos el valor completo del registro (no &= ni |=) porque queremos
-     * estado conocido en TODOS los bits, no parchear el reset value. */
-    TIM1->CR2 = (0x2U << TIM_CR2_MMS_Pos);
+     * estado conocido en TODOS los bits, no parchear el reset value.
+     *
+     * Sesión 13 — cambio MMS=010 (UEV) → MMS=111 (OC4REF). En center-aligned
+     * mode 1 + RCR=1 la UEV caía en el underflow (counter=0 = valle del PWM
+     * = high-side ON = shunts en cero), por eso las stats de corriente no
+     * escalaban con la amplitud. OC4REF + CCR4=ARR-1 fuerza el trigger al
+     * pico (counter≈ARR = low-side ON = shunts con corriente real). */
+    TIM1->CR2 = (0x7U << TIM_CR2_MMS_Pos);
 
 
     /* ------------------ Paso 7: Cargar shadow registers ------------------ */

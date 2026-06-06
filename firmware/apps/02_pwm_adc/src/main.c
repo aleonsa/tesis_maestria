@@ -47,6 +47,34 @@
  * -------------------------------------------------------------------------- */
 #define CAL_TARGET_PHASE   -1   /* -1 = operación normal (sin sweep) */
 
+/* --------------------------------------------------------------------------
+ * Sesión 13 — diagnóstico de medición de corriente (Task #14).
+ *
+ * Barre 3 amplitudes con f_e fija y reporta Pico/RMS. La intención es
+ * discriminar entre:
+ *   (A) Medición rota — TRGO en valle, OPAMP no estabiliza, etc. Síntoma:
+ *       stats idénticas para los 3 amps.
+ *   (B) Corriente real baja — stats escalan ~lineal con amp.
+ *
+ * Predicción si la cadena raw→mA está sana (sinusoide pura, K=59.6 raw/A):
+ *   amp=  0 → pico_raw ≈ 0,  rms_raw ≈ 0   (solo ruido baseline)
+ *   amp=170 → pico_raw ≈ 18, rms_raw ≈ 13  (170/PWM_ARR × K_phase_inv …)
+ *   amp=510 → pico_raw ≈ 53, rms_raw ≈ 37
+ *
+ * El primer frame tras cada switch va marcado [transient]: cubre el
+ * transitorio eléctrico (τ_e≈L/R≈320 μs) + cualquier reacción mecánica
+ * antes de que entre el régimen permanente.
+ *
+ * Desactivar (volver al print de stats simple) cambiando a 0.
+ * -------------------------------------------------------------------------- */
+#define DIAG_AMP_SWEEP_ENABLE   1
+#define DIAG_SECS_PER_AMP       30U
+
+#if (DIAG_AMP_SWEEP_ENABLE == 1)
+static const uint16_t DIAG_AMPS[] = { 0U, 170U, 510U };
+#define DIAG_N_AMPS  (sizeof(DIAG_AMPS) / sizeof(DIAG_AMPS[0]))
+#endif
+
 #if (CAL_TARGET_PHASE >= 0)
 /* Sweep: duties (en %, después convertidos a ticks de ARR=1700).
  * El punto i=0 (50%) es referencia: corriente debe ser ~0 A. */
@@ -78,10 +106,14 @@ static void systick_init(uint32_t ticks_per_irq) {
                   | SysTick_CTRL_ENABLE_Msk;
 }
 
+#if (CAL_TARGET_PHASE >= 0)
+/* Solo se usa dentro del bloque de calibración de ganancia. Wrapped para
+ * evitar warning -Wunused-function cuando CAL_TARGET_PHASE = -1. */
 static void delay_ms(uint32_t ms) {
     uint32_t start = g_ticks;
     while ((g_ticks - start) < ms) { }
 }
+#endif
 
 /*
  * Imprime los registros clave del TIM1 con sus valores esperados al lado.
@@ -91,7 +123,7 @@ static void delay_ms(uint32_t ms) {
 static void pwm_dump_regs(const char *label) {
     printf("\r\n=== TIM1 registers (%s) ===\r\n", label);
     printf("CR1   = 0x%08lX\r\n", (unsigned long)TIM1->CR1);
-    printf("CR2   = 0x%08lX  (MMS=010 = TRGO update event)\r\n",
+    printf("CR2   = 0x%08lX  (MMS=111 = TRGO OC4REF → al pico del PWM)\r\n",
            (unsigned long)TIM1->CR2);
     printf("ARR   = %lu  (50 kHz @ 170 MHz)\r\n", (unsigned long)TIM1->ARR);
     printf("RCR   = %lu  (1 UEV per PWM period)\r\n", (unsigned long)TIM1->RCR);
@@ -99,9 +131,10 @@ static void pwm_dump_regs(const char *label) {
            (unsigned long)TIM1->CCMR1, (unsigned long)TIM1->CCMR2);
     printf("CCER  = 0x%08lX  (CCxE+CCxNE for x=1,2,3)\r\n",
            (unsigned long)TIM1->CCER);
-    printf("CCR1=%lu  CCR2=%lu  CCR3=%lu\r\n",
+    printf("CCR1=%lu  CCR2=%lu  CCR3=%lu  CCR4=%lu  (CCR4 debe ser ARR-1=%u)\r\n",
            (unsigned long)TIM1->CCR1, (unsigned long)TIM1->CCR2,
-           (unsigned long)TIM1->CCR3);
+           (unsigned long)TIM1->CCR3, (unsigned long)TIM1->CCR4,
+           (unsigned)(PWM_ARR - 1U));
     printf("BDTR  = 0x%08lX  (DTG=0x55 500ns, OSSI/OSSR=1, MOE=bit15)\r\n",
            (unsigned long)TIM1->BDTR);
     printf("===========================\r\n");
@@ -242,6 +275,19 @@ int main(void) {
 #endif
 
     uint32_t tick = 0;
+
+#if (DIAG_AMP_SWEEP_ENABLE == 1)
+    /* Override del amp inicial (OPENLOOP_AMP_TICKS de arriba) para arrancar
+     * el sweep desde DIAG_AMPS[0]=0. Esto puede generar un "switch" inicial
+     * silencioso vs lo que se imprimió arriba: el banner aquí lo aclara. */
+    uint32_t amp_idx       = 0U;
+    uint32_t frame_in_amp  = 0U;
+    openloop_set_amplitude(DIAG_AMPS[0]);
+    printf("\r\n[diag] === SWEEP arranca: amp=%u por %lus (predicción "
+           "pico_raw≈0 si OK) ===\r\n",
+           (unsigned)DIAG_AMPS[0], (unsigned long)DIAG_SECS_PER_AMP);
+#endif
+
     while (1) {
         /* Espera frame de stats listo (1 por segundo). Mientras tanto el
          * main no consume CPU — la ISR sigue corriendo en background. */
@@ -275,6 +321,34 @@ int main(void) {
         /* Lectura instantánea de Vbus (regular, por software trigger). */
         uint16_t vbus_raw = adc_get_vbus_raw();
 
+#if (DIAG_AMP_SWEEP_ENABLE == 1)
+        /* Frame 1/30 del amp actual cubre el transitorio L/R + reacción
+         * mecánica al cambio de amplitud. Frames 2..30 son régimen permanente. */
+        const char *tag = (frame_in_amp == 0U) ? " [transient]" : "";
+        printf("[s=%lu amp=%u f=%lu/%lu]%s PICO raw: %4u/%4u/%4u  mA: %5ld/%5ld/%5ld\r\n",
+               (unsigned long)tick,
+               (unsigned)DIAG_AMPS[amp_idx],
+               (unsigned long)(frame_in_amp + 1U),
+               (unsigned long)DIAG_SECS_PER_AMP,
+               tag,
+               max_a_raw, max_b_raw, max_c_raw,
+               (long)max_a_ma, (long)max_b_ma, (long)max_c_ma);
+        printf("                       RMS  raw: %4lu/%4lu/%4lu  mA: %5ld/%5ld/%5ld  | Vbus=%4u\r\n",
+               (unsigned long)rms_a_raw, (unsigned long)rms_b_raw, (unsigned long)rms_c_raw,
+               (long)rms_a_ma, (long)rms_b_ma, (long)rms_c_ma,
+               vbus_raw);
+
+        frame_in_amp++;
+        if (frame_in_amp >= DIAG_SECS_PER_AMP) {
+            frame_in_amp = 0U;
+            amp_idx = (amp_idx + 1U) % DIAG_N_AMPS;
+            openloop_set_amplitude(DIAG_AMPS[amp_idx]);
+            printf("\r\n[diag] === SWITCH amp=%u (%lus, siguiente frame "
+                   "marcado [transient]) ===\r\n",
+                   (unsigned)DIAG_AMPS[amp_idx],
+                   (unsigned long)DIAG_SECS_PER_AMP);
+        }
+#else
         printf("[s=%lu] PICO  raw: %4u/%4u/%4u  mA: %5ld/%5ld/%5ld\r\n",
                (unsigned long)tick,
                max_a_raw, max_b_raw, max_c_raw,
@@ -283,6 +357,7 @@ int main(void) {
                (unsigned long)rms_a_raw, (unsigned long)rms_b_raw, (unsigned long)rms_c_raw,
                (long)rms_a_ma, (long)rms_b_ma, (long)rms_c_ma,
                vbus_raw);
+#endif
         tick++;
     }
 }

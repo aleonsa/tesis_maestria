@@ -151,29 +151,33 @@ uint32_t adc_isqrt32(uint32_t x);
 /* --------------------------------------------------------------------------
  * Conversión raw → miliamperios (fixed-point, sin floats).
  *
- * K = R_shunt × G_PGA × 4096 / V_ref
- *   = 0.003 × 16 × 4096 / 3.3
- *   = 59.59 raw / A
- *
- * 1/K = 0.01678 A/raw = 16.781 mA/raw.
- *
- * En Q12: FACTOR = round(16.781 × 4096) = 68735.
- *
  *   I [mA] = ((int32_t)raw_cal × ADC_FACTOR_RAW_TO_MA_Q12) >> 12
  *
  * Coste: 1 multiplicación 32-bit + 1 shift ≈ 3 ciclos M4.
  *
- * ⚠ Este K es TEÓRICO. Tolerancias acumuladas:
- *   - R_shunt: ±1% (resistor SMD típico 3W)
- *   - G_PGA:   ±5% (DS12589 §5.3.36 op-amp parameters)
- *   - V_ref:   ±0.5% si REFINT, ~±2% si solo LDO.
- *   → error total esperado ~5-8%.
+ * --- K TEÓRICO (superado, conservado para referencia) ---
+ *   K = R_shunt × G_PGA × 4096 / V_ref = 0.003 × 16 × 4096 / 3.3 = 59.59 raw/A
+ *   1/K = 16.781 mA/raw → Q12 = 68735.
+ *   Tolerancias esperadas: R_shunt ±1%, G_PGA ±5%, V_ref ±0.5-2% → ~5-8%.
  *
- * Validación pendiente con multímetro en serie (sweep de duties). Cuando
- * se haga, refinar ADC_FACTOR_RAW_TO_MA_Q12 por fase si hay mismatch
- * entre los 3 OPAMPs.
+ * --- K EMPÍRICO (2026-06-06, en uso) ---
+ *   Sweep open-loop amp={170,510} con cross-check DMM true-RMS en serie con
+ *   una fase. Dos puntos (raw_rms, I_dmm): (8, 200 mA) y (24, 580 mA).
+ *   El firmware con K=59.6 leía ~1.46× BAJO de forma consistente en ambas
+ *   amplitudes → error puro de ganancia (no de offset). Probable causa:
+ *   shunt real ~2 mΩ (variante de placa), no 3 mΩ.
+ *
+ *   Ajuste por el origen (pondera el punto de mejor SNR, amp=510):
+ *     1/K = Σ(raw·I)/Σ(raw²) = 15520/640 = 24.25 mA/raw  →  K ≈ 41.3 raw/A
+ *   Adoptado: 24.2 mA/raw → Q12 = round(24.2 × 4096) = 99123.
+ *   Verificación: raw 8 → 194 mA (DMM 200), raw 24 → 581 mA (DMM 580). ✓
+ *
+ * ⚠ Calibración global (un solo factor para las 3 fases). La fase C mostró
+ *   picos ~30% altos vs A/B aunque su RMS estaba balanceado (sospecha de
+ *   spikes de un sample atrapados por el max, no mismatch de ganancia). Si
+ *   reaparece asimetría en RMS, refinar ADC_FACTOR_RAW_TO_MA_Q12 por fase.
  * -------------------------------------------------------------------------- */
-#define ADC_FACTOR_RAW_TO_MA_Q12   68735
+#define ADC_FACTOR_RAW_TO_MA_Q12   99123
 
 static inline int32_t adc_raw_to_ma(int16_t raw_cal) {
     return ((int32_t)raw_cal * ADC_FACTOR_RAW_TO_MA_Q12) >> 12;
