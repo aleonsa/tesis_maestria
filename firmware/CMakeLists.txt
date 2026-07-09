@@ -61,3 +61,4 @@ add_subdirectory(lib)
 # ============================================================================
 add_subdirectory(apps/01_blink)
 add_subdirectory(apps/02_pwm_adc)
+add_subdirectory(apps/03_as5600)
