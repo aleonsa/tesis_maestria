@@ -35,7 +35,14 @@
 \usepackage{amsthm}
 \usepackage{dsfont}
 \usepackage{mathrsfs}
-\usepackage{color}   
+\usepackage{algorithm}       %entorno flotante para algoritmos
+\usepackage{algpseudocode}   %pseudocodigo (algorithmicx)
+\floatname{algorithm}{Algoritmo}
+\renewcommand{\algorithmicrequire}{\textbf{Entradas:}}
+\renewcommand{\algorithmicreturn}{\textbf{devolver}}
+\usepackage{color}
+\usepackage{tikz}            %diagramas vectoriales
+\usetikzlibrary{positioning,arrows.meta,calc,shapes.geometric,shapes.misc,fit,backgrounds,decorations.pathreplacing}
 \setcounter{MaxMatrixCols}{20}
 \usepackage{siunitx}
 % Interlineado 

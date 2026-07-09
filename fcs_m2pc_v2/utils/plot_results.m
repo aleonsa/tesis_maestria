@@ -18,7 +18,7 @@ Total_Steps = length(t_ms);
 t_final_ms  = t_ms(end);
 
 % ── Figure 1: Full run overview ─────────────────────────────────────────
-figure('Color', 'w', 'Position', [50, 50, 1400, 900]);
+figure('Color', 'w', 'Position', [50, 50, 1400, 900], 'Tag', 'fig_overview');
 
 subplot(4, 1, 1);
 for idx = 1:n_methods
@@ -76,7 +76,7 @@ sgtitle('Comparación Completa: 6 Modelos de BEMF con FCS-M2PC', ...
         'FontSize', 14, 'FontWeight', 'bold');
 
 % ── Figure 2: Steady-state zoom + bar charts ────────────────────────────
-figure('Color', 'w', 'Position', [100, 100, 1400, 700]);
+figure('Color', 'w', 'Position', [100, 100, 1400, 700], 'Tag', 'fig_steadystate');
 
 w_final      = abs(results.(methods{1}).w_m(end));
 if w_final < 1, w_final = p.w_ref; end
@@ -152,7 +152,7 @@ if ~isfield(results.ADALINE_ON_T, 'W_error')
     return;
 end
 
-figure('Color', 'w', 'Position', [150, 150, 1200, 400]);
+figure('Color', 'w', 'Position', [150, 150, 1200, 400], 'Tag', 'fig_convergence');
 
 subplot(1, 2, 1);
 plot(t_ms, results.ADALINE_ON_T.W_error * 100, ...
@@ -196,7 +196,7 @@ samples_win = min(round(0.10 / p.Ts), Total_Steps - 1);
 s0          = max(1, Total_Steps - samples_win);
 t_win       = t_ms(s0:end);
 
-figure('Color', 'w', 'Position', [200, 50, 700, 140*n_methods]);
+figure('Color', 'w', 'Position', [200, 50, 700, 140*n_methods], 'Tag', 'fig_tracking');
 
 for idx = 1:n_methods
     m  = methods{idx};

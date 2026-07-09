@@ -19,7 +19,14 @@ addpath(genpath('.'));
 %% ── Configuración ────────────────────────────────────────────────────────
 
 USE_OBSERVER  = true;    % false = Fase 1 | true = Fase 2
-USE_REAL_BEMF = true;   % false = sintético | true = experimental (dSPACE)
+USE_REAL_BEMF = false;   % false = sintético | true = experimental (dSPACE)
+
+% NOTA (figuras Cap. 5 — comparación sintética del motor del paper):
+%   Poner USE_REAL_BEMF = false.  La LUT experimental (real) sigue marcada
+%   como pendiente de corrección P y se reserva para el capítulo de hardware.
+%   Runs sugeridos:  (false,false) → fase1_sintetica   (tabla de referencia)
+%                    (true ,false) → fase2_sintetica   (observador, realista)
+EXPORT_THESIS = true;    % al terminar, guarda figuras + tabla a data/figures_thesis/
 
 %% ── Parámetros ───────────────────────────────────────────────────────────
 
@@ -153,3 +160,11 @@ fprintf('    → Online convergió al nivel del offline: %s\n', ...
 
 fprintf('\n  Mejora global (ADALINE online desde TRAP vs TRAP fijo):\n');
 fprintf('    Reducción de ripple: %.1f%%\n\n', 100*(r_trap - r_on_t)/r_trap);
+
+%% ── Exportación para tesis (Cap. 5) ──────────────────────────────────────
+
+if EXPORT_THESIS
+    tag = sprintf('fase%d_%s', 1 + USE_OBSERVER, ...
+                  ternary(USE_REAL_BEMF, 'real', 'sintetica'));
+    export_thesis_results(results, methods, p, t_ms, tag);
+end

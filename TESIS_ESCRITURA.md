@@ -2,9 +2,9 @@
 
 > Este archivo trackea el progreso de redacción del documento de tesis en `tesis_documento/`. Se actualiza al cierre de cada bloque para no perder hilo entre sesiones.
 
-**Última actualización:** 2026-05-23 (cerrado Bloque D)
+**Última actualización:** 2026-07-08 (cerrado Bloque F)
 **Archivo LaTeX raíz:** `tesis_documento/Tesis_JALS_Maestria.tex`
-**PDF generado actual:** 34 páginas (frontmatter + Cap. 2 + Cap. 3 + placeholders restantes)
+**PDF generado actual:** 53 páginas (frontmatter + Cap. 2 + Cap. 3 + Cap. 4 + Cap. 5 + placeholders restantes)
 
 ---
 
@@ -92,22 +92,50 @@ Secciones escritas (chapter etiquetado `\label{cap:modelo}`):
 
 **Compila limpio** (34 páginas, sin warnings de bibtex).
 
-### Bloque E — Cap. 4 Desarrollo ⏳ PENDIENTE (siguiente)
-Recordar usar `\label{cap:desarrollo}` en el `\chapter{}`.
-- 4.1 FCS-M2PC: derivación completa (sub-intervalos, predicción, costo)
-- 4.2 ADALINE+Fourier: estructura
-- 4.3 Entrenamiento offline (pseudoinversa)
-- 4.4 Aprendizaje online (LMS): convergencia, misadjustment, costo
-- 4.5 Justificación: por qué ADALINE y no NN profunda (3 razones estructurales)
-- 4.6 Observador de BEMF en lazo cerrado
-- 4.7 Arquitectura integrada (diagrama de bloques)
+### Bloque E — Cap. 4 Desarrollo ✅ HECHO (2026-06-06)
+Título tentativo: "Control FCS-M2PC con estimación adaptable de la BEMF". `\label{cap:desarrollo}` puesto.
+- 4.1 FCS-M2PC: derivación completa (sectores eq, predicción eq 6 del paper, combinaciones C^R, costo, Algoritmo) ✅
+- 4.2 ADALINE+Fourier: estructura (W ∈ R^{2H×2}, dos ADALINE compartiendo regresor) ✅
+- 4.3 Entrenamiento offline (pseudoinversa, ortogonalidad → coef. Fourier) ✅
+- 4.4 Aprendizaje online (LMS): R = ½I, convergencia uniforme, misadjustment, costo O(H) ✅
+- 4.5 Justificación ADALINE vs NN profunda (convergencia / parsimonia / interpretabilidad) ✅
+- 4.6 Observador de BEMF en lazo cerrado (observador de corriente eq, s_med = ê/(Ke ωm)) ✅
+- 4.7 Arquitectura integrada ✅
 
-### Bloque F — Cap. 5 Validación numérica ⏳ PENDIENTE
-- 5.1 Configuración (motor BLY-344S, parámetros, escenarios)
-- 5.2 Estudio comparativo (TRAP / SIN / NN / ADALINE off / ADALINE on TRAP / ADALINE on SIN)
-- 5.3 Convergencia del LMS online
-- 5.4 Rizo residual y caracterización a baja velocidad
-- 5.5 Discusión
+**Cambios de infraestructura:** agregados `algorithm` + `algpseudocode` al preámbulo del main (con `\floatname` → "Algoritmo" y Entradas/devolver en español). Compila limpio, 42 págs, sin refs/citas pendientes.
+
+**Figuras (5 de 5 hechas en TikZ, 2026-06-16):**
+- ✅ `fig:sectores-ab` (4.1) — hexágono + 6 sectores + set reducido. TikZ, geometría fiel a `eq:sectores` (vectores en bordes de sector, u_k a −90°+(k−1)60°).
+- ✅ `fig:operacion-m2pc` (4.1) — escalera de corriente M2PC (3 tramos u_a/u_b/u_0) vs recta FCS, referencia punteada, llaves Ta/Tb/T0. TikZ.
+- ✅ `fig:adaline` (4.2) — red de una capa: θe → regresor de Fourier (boxes cos/sin) → 2 combinadores Σ → ŝ_α, ŝ_β; pesos w_α/w_β; "sin no linealidad". TikZ.
+- ✅ `fig:observador` (4.6) — diagrama de bloques: observador + L_o sobre error i−î + normalización 1/(Ke ωm) → s_med. TikZ.
+- ✅ `fig:arquitectura` (4.7) — diagrama completo: cadena directa + realim. ωm (vía superior) + bus de mediciones (vía inferior) + lazo adaptable; **doble inyección de ŝ resaltada en naranja**. TikZ con `\resizebox{\linewidth}` para encajar al ancho de texto.
+
+**Infra TikZ agregada al main:** `\usepackage{tikz}` + librerías (`positioning,arrows.meta,calc,shapes.geometric,shapes.misc,fit,backgrounds,decorations.pathreplacing`). **Truco babel:** cada `tikzpicture` lleva `\shorthandoff{<>}` porque babel-spanish hace `<`/`>` activos (atajos de guillemets) y rompen la sintaxis `->`/`>=` de TikZ.
+
+Nota: Cap. 2 y Cap. 3 quedaron SIN figuras (revisar después; el autor lo señaló).
+
+### Bloque F — Cap. 5 Validación numérica ✅ HECHO (2026-07-08)
+`\label{cap:validacion}`. Secciones escritas (estructura final, ajustada a los datos disponibles):
+- 5.1 Configuración del caso de estudio (`sec:config`) — tabla de parámetros (`tab:params-sim`), escenario (80 rad/s, escalón de carga 0.5→1.5 Nm en 150 ms, 300 ms, Ts=30µs, ρ=10 → 66 combinaciones), los 6 métodos, métricas (ventana último 15%), dos escenarios de aprendizaje (supervisión ideal / observador)
+- 5.2 Comparación con supervisión ideal (`sec:comparativo`) — fig overview + steadystate + `tab:metricas-ideal`. Hallazgo destacado: **SIN da MÁS rizo que TRAP (6.43 vs 6.06%) pese a mejor RMSE de corriente** → firma de las dos vías de propagación (sec:rizo-mismatch); el rizo no es monótono en el error de seguimiento
+- 5.3 Convergencia del aprendizaje en línea (`sec:convergencia-lms`) — <5% en 25–35 ms ideal, monótona (R=½I, sin modos lentos); pico en 150 ms = escalón de carga, no pérdida de convergencia
+- 5.4 Aprendizaje con observador (`sec:validacion-observador`) — `tab:metricas-observador`, rizo online sube a 2.36/2.48% (misadjustment), convergencia 50 ms (SIN-init) / 120 ms (TRAP-init) con transitorio errático por baja velocidad inicial; fig tracking αβ
+- 5.5 Discusión (`sec:discusion`) — hipótesis sostenida (69% ideal / 61% con observador), piso de 1.9% = límite del M2PC (ρ, Ts), no del modelo BEMF; limitaciones: baja velocidad (LMS off bajo 5 rad/s, híbrido encoder-observador), sensibilidad a R/L no caracterizada
+
+**Números finales (corridas 2026-07-07, P=8, LUT sintética):**
+| Método | Ideal [%] | Observador [%] |
+|---|---|---|
+| TRAP | 6.06 | 6.06 |
+| SIN | 6.43 | 6.43 |
+| LEARNED | 1.89 | 1.89 |
+| ADALINE_OFF | 1.90 | 1.90 |
+| ADALINE_ON_T | 1.88 | 2.36 |
+| ADALINE_ON_S | 1.87 | 2.48 |
+
+**Figuras (5, PNG 300dpi en `Capitulo5/FigureC5/`):** `f1_overview`, `f1_steadystate`, `f1_convergence` (de `fase1_sintetica`), `f2_convergence`, `f2_tracking` (de `fase2_sintetica`). Nota: los PNG traen títulos MATLAB embebidos (informales, en español); si se quiere pulir, regenerar con títulos limpios y re-exportar — los captions LaTeX ya llevan la descripción formal. El run fase1 no generó `tracking.png` (warning del export); el de fase2 sirve porque los 4 métodos fijos son idénticos entre fases.
+
+**Compila limpio** (53 págs, sin refs indefinidas; 3 cuadros + 5 figuras colocados).
 
 ### Bloque B — Cap. 1 Introducción ⏳ AL FINAL
 - 1.1 Motivación

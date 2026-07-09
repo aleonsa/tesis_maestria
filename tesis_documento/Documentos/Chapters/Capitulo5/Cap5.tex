@@ -4,12 +4,169 @@
 
 \begin{document}
 
-	\chapter{Caso de estudio y validación numérica}
+\chapter{Caso de estudio y validación numérica}
+\label{cap:validacion}
 
-	\section{[Sección 1]}
-	\lipsum[1-2]
+El capítulo anterior dejó la arquitectura completa: un FCS-M2PC cuya referencia y cuya predicción consumen la estimación de BEMF que un ADALINE actualiza en línea, alimentado por un observador. Este capítulo la pone a prueba en simulación. Primero se describe el caso de estudio y los seis modelos de BEMF que se comparan. Después se presenta el estudio comparativo en el escenario de supervisión ideal, donde el LMS aprende de la forma de onda verdadera de la planta, y se examina la convergencia del aprendizaje. Luego se repite el experimento en el escenario realista, con el observador de BEMF cerrando el lazo de aprendizaje sobre mediciones ruidosas y cuantizadas. La discusión final contrasta los resultados con la hipótesis de la sección \ref{sec:hipotesis}.
 
-	\section{[Sección 2]}
-	\lipsum[3-4]
+% =================================================================
+\section{Configuración del caso de estudio}
+\label{sec:config}
+
+El motor simulado es el Anaheim BLY-344S-240V-3000, el mismo caso de estudio de \citet{coronado2025}, lo que permite ubicar los resultados en continuidad con ese trabajo. El cuadro \ref{tab:params-sim} resume los parámetros del motor y del esquema de control. La planta se integra con el modelo discreto \eqref{eq:modelo-discreto} a un periodo de muestreo $T_s = 30\,\mu$s, el mismo que usa el controlador. La función de forma verdadera $\mathbf{s}(\theta_e)$ de la planta es una tabla de búsqueda de alta resolución con perfil cuasi-trapezoidal y transiciones suaves, representativa de la BEMF de un BLDC real; el controlador nunca accede a esa tabla, salvo a través del modelo $\hat{\mathbf{s}}$ que cada método define.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Parámetros del motor y del esquema de control usados en la validación numérica.}
+    \label{tab:params-sim}
+    \begin{tabular}{llll}
+        \toprule
+        \multicolumn{2}{l}{Motor (Anaheim BLY-344S)} & \multicolumn{2}{l}{Control} \\
+        \midrule
+        $R$   & $1.2\;\Omega$                & $T_s$        & $30\;\mu$s \\
+        $L$   & $2.05$ mH                    & $\rho$       & $10$ sub-intervalos \\
+        $K_e$ & $0.40355$ V$\cdot$s/rad      & $K_p$, $K_i$ (PI vel.) & $0.5$, $50$ \\
+        $K_t$ & $0.65997$ N$\cdot$m/A        & Saturación PI & $\pm 5$ N$\cdot$m \\
+        $p$   & $4$ pares de polos           & $H$          & $10$ armónicos \\
+        $J$   & $2.7948\times 10^{-4}$ kg$\cdot$m$^2$ & $\mu$ (LMS) & $5\times 10^{-3}$ \\
+        $d$   & $6.738\times 10^{-4}$ N$\cdot$m$\cdot$s/rad & $\sigma$ ruido de corriente & $50$ mA \\
+        $V_{dc}$ & $240$ V                   & ADC          & $12$ bits, $\pm 10$ A \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+Con $\rho = 10$ sub-intervalos, la fórmula \eqref{eq:combinaciones} da $C^R(3,10) = 66$ combinaciones que el M2PC evalúa por periodo. El ADALINE trunca la serie de Fourier en $H = 10$ armónicos, de modo que $\mathbf{W} \in \mathbb{R}^{20\times 2}$: cuarenta pesos en total. La actualización LMS se habilita solo cuando $|\omega_m| > 5$ rad/s, para no dividir por amplitudes de BEMF cercanas a cero durante el arranque.
+
+El escenario de prueba es el mismo para todos los métodos. El motor parte del reposo hacia una referencia de velocidad $\omega^* = 80$ rad/s sostenida por el PI externo, con una carga inicial $T_L = 0.5$ N$\cdot$m. En $t = 150$ ms la carga escalona a $1.5$ N$\cdot$m. La simulación cubre $300$ ms, es decir, $10^4$ periodos de muestreo. A $80$ rad/s con cuatro pares de polos, la frecuencia eléctrica es de unos $51$ Hz y el periodo eléctrico de $19.6$ ms.
+
+Los seis modelos de BEMF que se comparan son:
+\begin{description}
+    \item[TRAP] forma trapezoidal ideal fija, la hipótesis clásica para BLDC.
+    \item[SIN] fundamental puro, la hipótesis del PMSM.
+    \item[LEARNED] tabla aprendida offline por una red neuronal profunda de unos veinticinco mil parámetros, entrenada sobre datos de la forma verdadera.
+    \item[ADALINE-OFF] ADALINE con pesos óptimos calculados offline por \eqref{eq:pseudoinversa} y congelados.
+    \item[ADALINE-ON-T] ADALINE en línea, inicializado con el ajuste de Fourier del trapezoide ideal.
+    \item[ADALINE-ON-S] ADALINE en línea, inicializado solo con el fundamental.
+\end{description}
+Los primeros cuatro usan modelos fijos durante toda la simulación; los dos últimos ejecutan la actualización LMS \eqref{eq:lms-online} en cada periodo. LEARNED y ADALINE-OFF conocen la forma verdadera a través de su entrenamiento offline, así que actúan como cotas de referencia: indican el rizo alcanzable cuando la caracterización previa es perfecta.
+
+Las métricas se calculan sobre el último $15\%$ de la simulación ($t \ge 255$ ms), en régimen permanente y con la carga escalonada ya asentada. El rizo de par se reporta como $100\,\sigma(T_e)/\bar{T}_e$; se acompaña del valor pico a pico $T_e$ P-P, que corresponde directamente al $\Delta T_e$ del problema \ref{prob:principal}, del rizo de velocidad pico a pico y del RMSE de seguimiento de corriente en el eje $\alpha$.
+
+El aprendizaje en línea se evalúa en dos escenarios. En el primero, de \emph{supervisión ideal}, la muestra $\mathbf{s}_\mathrm{med}(k)$ que consume el LMS es la forma verdadera de la planta; este escenario aísla las propiedades del ADALINE de las imperfecciones de su señal de aprendizaje. En el segundo, \emph{con observador}, la muestra proviene del observador de la sección \ref{sec:observador} operando sobre corrientes contaminadas con ruido gaussiano de $\sigma = 50$ mA y cuantizadas por un ADC de 12 bits a fondo de escala de $\pm 10$ A, y llega con un periodo de retardo. Los cuatro métodos fijos no dependen de la señal de aprendizaje, así que sus resultados son idénticos en ambos escenarios.
+
+% =================================================================
+\section{Comparación con supervisión ideal}
+\label{sec:comparativo}
+
+La figura \ref{fig:f1-overview} muestra la corrida completa. Los seis métodos alcanzan la referencia de velocidad en menos de $15$ ms y absorben el escalón de carga con una caída breve que el PI recupera en unos $20$ ms; en las variables lentas el comportamiento es indistinguible. Las diferencias viven en la escala fina del par, y ahí es donde las métricas de régimen permanente separan a los métodos.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{f1_overview.png}
+    \caption{Corrida completa de los seis métodos con supervisión ideal: velocidad, salida del PI, par electromagnético y magnitud de corriente. El escalón de carga de $0.5$ a $1.5$ N$\cdot$m entra en $t=150$ ms. En las variables lentas los métodos son indistinguibles; las diferencias aparecen en la escala fina del par y de la salida del PI, donde TRAP y SIN oscilan visiblemente.}
+    \label{fig:f1-overview}
+\end{figure}
+
+El cuadro \ref{tab:metricas-ideal} concentra los resultados y la figura \ref{fig:f1-steadystate} los detalla sobre dos revoluciones eléctricas. Los cuatro métodos que conocen la forma de onda ---LEARNED, ADALINE-OFF y los dos ADALINE en línea ya convergidos--- terminan en un rizo de $1.87$ a $1.90\%$, empatados entre sí. Los dos modelos fijos idealizados quedan lejos: $6.06\%$ para TRAP y $6.43\%$ para SIN, con pulsaciones de par cuya frecuencia dominante ronda el sexto armónico de la frecuencia eléctrica y que se transfieren a la velocidad como una oscilación de casi $0.5$ rad/s pico a pico, un orden de magnitud por encima de la de los métodos adaptables.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Métricas de régimen permanente con supervisión ideal ($t \ge 255$ ms, carga de $1.5$ N$\cdot$m).}
+    \label{tab:metricas-ideal}
+    \begin{tabular}{lrrrr}
+        \toprule
+        Método & Rizo [\%] & $T_e$ P-P [N$\cdot$m] & $\omega$ P-P [rad/s] & RMSE $i_\alpha$ [A] \\
+        \midrule
+        TRAP         & 6.06 & 0.3758 & 0.4960 & 0.1743 \\
+        SIN          & 6.43 & 0.3860 & 0.5401 & 0.1181 \\
+        LEARNED      & 1.89 & 0.1355 & 0.0495 & 0.0609 \\
+        ADALINE-OFF  & 1.90 & 0.1318 & 0.0656 & 0.0601 \\
+        ADALINE-ON-T & 1.88 & 0.1283 & 0.0587 & 0.0604 \\
+        ADALINE-ON-S & 1.87 & 0.1418 & 0.0528 & 0.0609 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{f1_steadystate.png}
+    \caption{Régimen permanente con supervisión ideal. Arriba: par y velocidad sobre dos revoluciones eléctricas; TRAP y SIN exhiben la pulsación periódica que los métodos con forma de onda aprendida no tienen. Abajo: rizo de par y rizo de velocidad pico a pico por método.}
+    \label{fig:f1-steadystate}
+\end{figure}
+
+Tres lecturas salen de esta tabla. La primera es la magnitud de la mejora: el ADALINE en línea reduce el rizo de $6.06$ a $1.88\%$ respecto al modelo trapezoidal, una reducción del $69\%$, y el rizo de velocidad cae en proporción similar. La segunda es que el ADALINE de cuarenta pesos empata a la red profunda de veinticinco mil parámetros ---$1.88$ contra $1.89\%$---, que es el argumento de parsimonia de la sección \ref{sec:justificacion} verificado en lazo cerrado. La tercera es que las versiones en línea empatan también a la offline, es decir, el LMS alcanzó en operación el mismo punto que la pseudoinversa calcula con todos los datos por adelantado, sin caracterización previa del motor.
+
+Hay un resultado que merece atención aparte: SIN produce \emph{más} rizo que TRAP ($6.43$ contra $6.06\%$) a pesar de seguir mejor su referencia de corriente ($0.118$ contra $0.174$ A de RMSE). No es una contradicción, es la firma de las dos vías de propagación de la sección \ref{sec:rizo-mismatch}. La referencia senoidal es fácil de seguir ---es suave y el predictor senoidal comete poco error de seguimiento---, pero es la corriente equivocada: por \eqref{eq:torque-incorrecto}, el par que produce hereda toda la variación del cociente $\mathbf{s}^{\mathsf T}\hat{\mathbf{s}}/\|\hat{\mathbf{s}}\|^2$. El modelo trapezoidal, con peor seguimiento, está más cerca de la forma verdadera y genera una referencia más correcta. El rizo de par no es una función monótona del error de seguimiento de corriente; depende de qué corriente se persigue. Por eso reducir el RMSE de corriente no basta como objetivo de diseño, y por eso la corrección debe actuar sobre $\hat{\mathbf{s}}$, no solo sobre el lazo de corriente.
+
+% =================================================================
+\section{Convergencia del aprendizaje en línea}
+\label{sec:convergencia-lms}
+
+La figura \ref{fig:f1-convergence} sigue la trayectoria de los pesos de los dos ADALINE en línea hacia el óptimo offline $\mathbf{W}^\star$, medida como error relativo en norma de Frobenius. La inicialización trapezoidal parte de un error del $60\%$ y la senoidal del $33\%$; ambas cruzan el umbral del $5\%$ entre los $25$ y los $35$ ms de simulación ---del orden de un periodo eléctrico y medio--- y quedan por debajo del $1\%$ antes de los $80$ ms. Las dos trayectorias descienden de forma monótona y sin estancamientos, que es lo que anticipaba el análisis de la sección \ref{sec:online}: con $\mathbf{R} = \tfrac{1}{2}\mathbf{I}$, todos los modos del LMS convergen al mismo ritmo y no hay direcciones lentas en las que el error se rezague.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{f1_convergence.png}
+    \caption{Convergencia del ADALINE en línea con supervisión ideal. Izquierda: error relativo de pesos $\|\mathbf{W}-\mathbf{W}^\star\|_F/\|\mathbf{W}^\star\|_F$ para las dos inicializaciones; ambas cruzan el $5\%$ en $25$--$35$ ms. Derecha: rizo de par instantáneo (ventana móvil de una revolución eléctrica); tras la convergencia, los métodos en línea se asientan en el nivel de los métodos con caracterización previa. El pico en $t=150$ ms lo produce el escalón de carga en todos los métodos por igual.}
+    \label{fig:f1-convergence}
+\end{figure}
+
+El panel derecho de la figura muestra el rizo instantáneo, calculado con una ventana móvil de una revolución eléctrica. Tras el transitorio de arranque, los métodos en línea descienden al nivel de los que conocen la forma de onda y ahí permanecen. El pico alrededor de $t = 150$ ms no es una pérdida de convergencia: es el escalón de carga atravesando la ventana de cálculo, y afecta a los seis métodos por igual. Los pesos ya convergidos no se ven perturbados por el escalón, lo que confirma que el ADALINE estima una propiedad del motor ---su forma de onda--- y no un artefacto del punto de operación.
+
+% =================================================================
+\section{Aprendizaje con observador en lazo cerrado}
+\label{sec:validacion-observador}
+
+El escenario anterior supone que el LMS recibe la forma de onda verdadera, cosa que ningún sistema real puede ofrecer. Aquí se sustituye esa señal por la muestra $\mathbf{s}_\mathrm{med}$ que el observador de la sección \ref{sec:observador} reconstruye según \eqref{eq:smed}, a partir de corrientes con ruido de $50$ mA y cuantización de 12 bits, y con un periodo de retardo. El cuadro \ref{tab:metricas-observador} repite el estudio comparativo en estas condiciones.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Métricas de régimen permanente con el observador cerrando el lazo de aprendizaje. Los cuatro métodos fijos no consumen la señal del observador y repiten sus valores del cuadro \ref{tab:metricas-ideal}.}
+    \label{tab:metricas-observador}
+    \begin{tabular}{lrrrr}
+        \toprule
+        Método & Rizo [\%] & $T_e$ P-P [N$\cdot$m] & $\omega$ P-P [rad/s] & RMSE $i_\alpha$ [A] \\
+        \midrule
+        TRAP         & 6.06 & 0.3758 & 0.4960 & 0.1743 \\
+        SIN          & 6.43 & 0.3860 & 0.5401 & 0.1181 \\
+        LEARNED      & 1.89 & 0.1355 & 0.0495 & 0.0609 \\
+        ADALINE-OFF  & 1.90 & 0.1318 & 0.0656 & 0.0601 \\
+        ADALINE-ON-T & 2.36 & 0.2340 & 0.1222 & 0.0732 \\
+        ADALINE-ON-S & 2.48 & 0.2538 & 0.1022 & 0.0748 \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+El costo de aprender de una señal reconstruida es visible pero moderado: el rizo de los métodos en línea sube de $1.88$ a $2.36\%$ (inicialización trapezoidal) y de $1.87$ a $2.48\%$ (senoidal). El ruido y la cuantización que atraviesan el observador se convierten en fluctuación permanente de los pesos ---el \emph{misadjustment} del LMS--- y ese residuo separa al método en línea de su cota offline. Aun así, el resultado queda en $61\%$ de reducción de rizo respecto a TRAP y conserva intacto el orden de magnitud de mejora en el rizo de velocidad.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{f2_convergence.png}
+    \caption{Convergencia del ADALINE en línea con observador. La señal de aprendizaje ruidosa vuelve el transitorio errático y más lento que en la figura \ref{fig:f1-convergence}: la inicialización senoidal cruza el $5\%$ hacia los $50$ ms y la trapezoidal hacia los $120$ ms. En régimen permanente ambas fluctúan por debajo del $5\%$ sin divergir.}
+    \label{fig:f2-convergence}
+\end{figure}
+
+La convergencia, en cambio, sí paga un precio mayor (figura \ref{fig:f2-convergence}). El transitorio deja de ser monótono: durante el arranque la velocidad es baja, la BEMF es pequeña frente al ruido y la normalización por $K_e\,\omega_m$ en \eqref{eq:smed} amplifica el error del observador, así que las primeras muestras que recibe el LMS son de mala calidad y los pesos se agitan antes de encontrar la dirección correcta. La inicialización senoidal cruza el $5\%$ hacia los $50$ ms; la trapezoidal, que arranca más lejos del óptimo y con más energía en los armónicos altos donde la señal reconstruida es menos confiable, tarda unos $120$ ms. En ambos casos el error se asienta por debajo del $5\%$ y no diverge: el lazo de aprendizaje es robusto al ruido, solo es más lento a través de él.
+
+La figura \ref{fig:f2-tracking} cierra el estudio con el seguimiento de corriente en $\alpha\beta$ durante los últimos $100$ ms. Las referencias de TRAP y SIN son fáciles de seguir pero incorrectas, como se discutió en la sección \ref{sec:comparativo}. Las de los métodos con forma aprendida son visiblemente no senoidales ---llevan impresos los armónicos de la forma verdadera, tal como exige \eqref{eq:iref-optima}--- y el controlador las sigue con un RMSE de $0.06$ a $0.08$ A. Es la imagen del mecanismo completo funcionando: el ADALINE aprende la forma, la referencia adopta esa forma, y el M2PC la ejecuta.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.92\linewidth]{f2_tracking.png}
+    \caption{Seguimiento de corriente en $\alpha\beta$ durante los últimos $100$ ms del escenario con observador (referencia en línea discontinua). Las referencias de los métodos con forma de onda aprendida son no senoidales: contienen los armónicos que \eqref{eq:iref-optima} exige para sostener un par constante con la BEMF real del motor.}
+    \label{fig:f2-tracking}
+\end{figure}
+
+% =================================================================
+\section{Discusión}
+\label{sec:discusion}
+
+Los resultados sostienen la hipótesis de la sección \ref{sec:hipotesis} en sus tres partes. El ADALINE con base de Fourier, actualizado por LMS e inyectado a la vez en la referencia y en la predicción, redujo el rizo de par un $69\%$ respecto al modelo trapezoidal en condiciones ideales y un $61\%$ cuando la señal de aprendizaje proviene de un observador sobre mediciones ruidosas y cuantizadas, sin datos previos del motor. La carga computacional añadida es marginal: las $\mathcal{O}(H)$ operaciones del LMS son decenas de multiplicaciones por periodo, frente al barrido de $66$ combinaciones que el M2PC ya ejecuta.
+
+Vale la pena precisar qué parte del rizo queda fuera del alcance del esquema. Los cuatro métodos que conocen la forma de onda comparten un piso de $1.9\%$ que el modelo de BEMF ya no explica: es el rizo propio del conjunto finito de acciones del M2PC, con su reparto de tiempos cuantizado en décimas de $T_s$, operando a una frecuencia de muestreo dada. Ese piso se ataca con más resolución en $\rho$ o con $T_s$ menor, no con un mejor modelo de BEMF. En el escenario con observador se suma el residuo de \emph{misadjustment}, gobernado por el compromiso clásico del LMS: un $\mu$ menor lo reduce a costa de una convergencia más lenta. Y quedan fuera del modelo de simulación las perturbaciones periódicas que no entran por la BEMF ---el par de \emph{cogging} y el efecto del tiempo muerto del inversor---, que en un banco real se superpondrían al resultado y demandan un mecanismo de compensación propio.
+
+Dos limitaciones del estudio delimitan el alcance de las conclusiones. La primera es la zona de baja velocidad: la normalización por $K_e\,\omega_m$ degrada la muestra del observador cuando la BEMF es pequeña, y de hecho el LMS se inhabilita por debajo de $5$ rad/s. El esquema aprende bien donde la BEMF es observable; cerca del reposo debe congelar los pesos y operar con lo aprendido, que es coherente con el planteamiento híbrido encoder-observador de esta tesis y no con un esquema \emph{sensorless} puro. La segunda es que el observador operó con los parámetros eléctricos exactos de la planta; la sensibilidad del lazo de aprendizaje a errores en $R$ y $L$ no se caracterizó aquí y pertenece a la validación experimental.
+
+Con la validación numérica cerrada, la arquitectura queda lista para el siguiente paso natural: su implementación en un microcontrolador y la contrastación en un banco físico, donde el costo computacional acotado y la interpretabilidad de los pesos ---argumentadas en la sección \ref{sec:justificacion}--- dejan de ser ventajas teóricas y se vuelven condiciones de trabajo.
 
 \end{document}

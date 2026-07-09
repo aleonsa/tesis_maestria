@@ -4,12 +4,435 @@
 
 \begin{document}
 
-	\chapter{[Título del capítulo de desarrollo]}
+% Placeholder visual para figuras pendientes. Compila como una caja con
+% borde y una nota en cursiva; se reemplaza por \includegraphics cuando la
+% figura exista. Va dentro de document para que subfiles lo lea al compilar
+% desde el main (el preámbulo del subfile se ignora en ese modo).
+\providecommand{\figpend}[1]{%
+    \fbox{\begin{minipage}[c][4.2cm][c]{0.85\linewidth}\centering
+        \itshape\small [FIGURA PENDIENTE]\\[4pt] #1
+    \end{minipage}}%
+}
 
-	\section{[Sección 1]}
-	\lipsum[1-2]
+\chapter{Control FCS-M2PC con estimación adaptable de la BEMF}
+\label{cap:desarrollo}
 
-	\section{[Sección 2]}
-	\lipsum[3-4]
+El capítulo anterior dejó planteado el problema: el rizo de par nace del error entre la forma de onda real de la BEMF $\mathbf{s}(\theta_e)$ y el modelo $\hat{\mathbf{s}}(\theta_e)$ que el controlador usa, error que se propaga al par por dos vías a la vez. Toca ahora construir la solución. Primero se deriva el FCS-M2PC en la forma que admite una BEMF estimada como parámetro de su modelo interno. Después se diseña el ADALINE con base de Fourier que produce esa estimación, su entrenamiento offline y su versión adaptable en línea. Se argumenta por qué este modelo lineal es preferible a una red neuronal profunda. Finalmente se construye el observador que alimenta al ADALINE en lazo cerrado y se integran las piezas en una sola arquitectura.
+
+% =================================================================
+\section{Derivación del FCS-M2PC}
+\label{sec:m2pc}
+
+El FCS-MPC clásico, descrito en la sección \ref{sec:mpc}, aplica un único vector de voltaje durante todo el periodo de muestreo $T_s$. Esa decisión binaria ---un vector, todo el periodo--- es la que produce el rizo de corriente que se busca evitar. El FCS-M2PC de \citet{coronado2025} parte de la misma estructura de conjunto finito, pero reparte $T_s$ entre dos vectores activos adyacentes y un vector nulo, decidiendo además qué fracción del periodo asignar a cada uno. El resultado conserva la ausencia de modulador externo del FCS y, a la vez, suaviza la trayectoria de corriente dentro del periodo.
+
+\subsection{Conjunto reducido de vectores admisibles}
+\label{sec:m2pc-sectores}
+
+En lugar de evaluar los ocho vectores del cuadro \ref{tab:vsi-vectores} en cada periodo, el M2PC restringe la búsqueda a los dos vectores activos adyacentes al sector donde se encuentra el rotor más el vector nulo. El plano $\alpha\beta$ se divide en seis sectores de $\pi/3$ centrados en los vectores activos, y la posición eléctrica $\theta_e$ determina cuál de ellos está vigente:
+\begin{equation}
+    \mathcal{U}(\theta_e) =
+    \begin{cases}
+        \{\mathbf{u}_0,\mathbf{u}_2,\mathbf{u}_3\} & -\tfrac{\pi}{6} \le \theta_e < \tfrac{\pi}{6},\\[2pt]
+        \{\mathbf{u}_0,\mathbf{u}_3,\mathbf{u}_4\} & \tfrac{\pi}{6} \le \theta_e < \tfrac{3\pi}{6},\\[2pt]
+        \{\mathbf{u}_0,\mathbf{u}_4,\mathbf{u}_5\} & \tfrac{3\pi}{6} \le \theta_e < \tfrac{5\pi}{6},\\[2pt]
+        \{\mathbf{u}_0,\mathbf{u}_5,\mathbf{u}_6\} & \tfrac{5\pi}{6} \le \theta_e < \tfrac{7\pi}{6},\\[2pt]
+        \{\mathbf{u}_0,\mathbf{u}_6,\mathbf{u}_1\} & \tfrac{7\pi}{6} \le \theta_e < \tfrac{9\pi}{6},\\[2pt]
+        \{\mathbf{u}_0,\mathbf{u}_1,\mathbf{u}_2\} & \tfrac{9\pi}{6} \le \theta_e < \tfrac{11\pi}{6}.
+    \end{cases}
+    \label{eq:sectores}
+\end{equation}
+La elección de los dos vectores adyacentes sigue el mismo criterio que la modulación vectorial: son los que mejor sintetizan la tensión deseada en ese sector. Reducir el conjunto a tres elementos baja el número de conmutaciones y, sobre todo, el número de veces que el algoritmo se ejecuta por periodo, lo que es determinante para que el cálculo quepa dentro de $T_s$ en hardware real.
+
+\begin{figure}[htbp]
+    \centering
+    \shorthandoff{<>}% babel-es vuelve < > activos; TikZ los necesita literales
+    \begin{tikzpicture}[>=Latex,scale=1.0]
+        \def\R{3}
+        % --- sector activo resaltado (centrado en 0, entre u2 y u3) ---
+        \fill[blue!9] (0,0) -- (-30:\R) arc (-30:30:\R) -- cycle;
+        % --- ejes alpha-beta ---
+        \draw[->,gray!70] (-\R-0.7,0) -- (\R+0.9,0) node[right]{$\alpha$};
+        \draw[->,gray!70] (0,-\R-0.7) -- (0,\R+0.9) node[above]{$\beta$};
+        % --- fronteras de sector (direcciones de los vectores) ---
+        \foreach \a in {-90,-30,30,90,150,210} {
+            \draw[densely dashed,gray!55] (0,0) -- (\a:\R);
+        }
+        % --- contorno hexagonal ---
+        \draw[gray!45] (-90:\R) -- (-30:\R) -- (30:\R) -- (90:\R)
+                        -- (150:\R) -- (210:\R) -- cycle;
+        % --- vectores activos (los no resaltados) ---
+        \foreach \a in {-90,90,150,210} {
+            \draw[->,thick,gray!60] (0,0) -- (\a:\R);
+        }
+        \node[below]      at (-90:\R)  {$\mathbf{u}_1$};
+        \node[above]      at (90:\R)   {$\mathbf{u}_4$};
+        \node[above left] at (150:\R)  {$\mathbf{u}_5$};
+        \node[below left] at (210:\R)  {$\mathbf{u}_6$};
+        % --- los dos vectores adyacentes al sector vigente, resaltados ---
+        \draw[->,very thick,blue!55!black] (0,0) -- (-30:\R)
+            node[below right]{$\mathbf{u}_2$};
+        \draw[->,very thick,blue!55!black] (0,0) -- (30:\R)
+            node[above right]{$\mathbf{u}_3$};
+        % --- vector nulo en el origen ---
+        \node[circle,fill=blue!55!black,inner sep=1.7pt] (nulo) at (0,0) {};
+        \node[blue!55!black,below left=1pt] at (0,0) {$\mathbf{u}_0$};
+        % --- angulo electrico de muestra dentro del sector ---
+        \draw[->,red!65!black] (0.9,0) arc (0:14:0.9);
+        \node[red!65!black] at (16:1.25) {$\theta_e$};
+        % --- etiqueta del conjunto admisible (leyenda, esquina inf. izq.) ---
+        \node[blue!50!black,align=left,anchor=south west] at (-\R-0.7,-\R-0.6)
+            {$\mathcal{U}(\theta_e)=$\\$\{\mathbf{u}_0,\mathbf{u}_2,\mathbf{u}_3\}$};
+    \end{tikzpicture}
+    \caption{Sectores del plano $\alpha\beta$ y conjunto reducido de vectores admisibles por sector. El sector vigente (sombreado) determina los dos vectores activos adyacentes que, junto con el nulo, forman $\mathcal{U}(\theta_e)$.}
+    \label{fig:sectores-ab}
+\end{figure}
+
+\subsection{Reparto del periodo y modelo de predicción}
+\label{sec:m2pc-prediccion}
+
+Denótese por $\mathbf{u}_a$ y $\mathbf{u}_b$ los dos vectores activos del sector vigente, y sean $T_a$, $T_b$ y $T_0$ los tiempos durante los cuales se aplican $\mathbf{u}_a$, $\mathbf{u}_b$ y el vector nulo, respectivamente. Por construcción
+\begin{equation}
+    T_a + T_b + T_0 = T_s.
+    \label{eq:reparto-tiempos}
+\end{equation}
+Integrando la dinámica discreta \eqref{eq:modelo-discreto} sobre el periodo, con cada vector aplicado durante su fracción de tiempo, la corriente predicha al final de $T_s$ resulta
+\begin{subequations}
+\label{eq:pred-m2pc}
+\begin{align}
+    i_\alpha(k+1) &= i_\alpha(k) + \frac{1}{L}\bigl(T_a\,u_{a\alpha}(k) + T_b\,u_{b\alpha}(k)\bigr) - \frac{T_s}{L}\bigl(e_\alpha(k) + R\,i_\alpha(k)\bigr),\\
+    i_\beta(k+1)  &= i_\beta(k)  + \frac{1}{L}\bigl(T_a\,u_{a\beta}(k)  + T_b\,u_{b\beta}(k)\bigr)  - \frac{T_s}{L}\bigl(e_\beta(k)  + R\,i_\beta(k)\bigr).
+\end{align}
+\end{subequations}
+El vector nulo no aparece en \eqref{eq:pred-m2pc} porque aplica tensión cero; su único efecto es completar el periodo según \eqref{eq:reparto-tiempos} y dejar tiempo para medir las corrientes. La BEMF entra a través de $\mathbf{e}_{\alpha\beta}(k) = K_e\,\omega_m\,\mathbf{s}(\theta_e(k))$, y es precisamente aquí donde el modelo de forma $\hat{\mathbf{s}}$ se inserta en la predicción: cualquier error en $\hat{\mathbf{s}}$ sesga $i_{\alpha\beta}(k+1)$ y, con ello, la decisión del controlador.
+
+La figura \ref{fig:operacion-m2pc} ilustra la idea sobre una trayectoria de corriente: dentro de un mismo periodo, la combinación de dos vectores activos y el nulo permite acercarse a la referencia con un escalón mucho menor que el del FCS clásico.
+
+\begin{figure}[htbp]
+    \centering
+    \shorthandoff{<>}%
+    \begin{tikzpicture}[>=Latex,scale=1.0]
+        % --- ejes ---
+        \draw[->,gray!70] (-0.3,0) -- (8.4,0) node[right]{tiempo};
+        \draw[->,gray!70] (0,-0.3) -- (0,4.4) node[above]{$i_{\alpha\beta}$};
+        % --- limites de los sub-intervalos ---
+        \def\Ta{3.0}\def\Tb{5.6}\def\Ts{7.2}
+        \foreach \x in {\Ta,\Tb,\Ts} {
+            \draw[densely dotted,gray!55] (\x,0) -- (\x,4.2);
+        }
+        % --- referencia i*(k+1): nivel objetivo ---
+        \draw[dashed,red!65!black] (0,3.0) -- (8.0,3.0)
+            node[below right,red!65!black]{$i^{*}_{\alpha\beta}(k+1)$};
+        % --- trayectoria FCS clasico (un solo vector todo Ts): sobrepasa ---
+        \draw[very thick,gray!55] (0,1.0) -- (\Ts,4.1);
+        \node[gray!55,rotate=26] at (4.6,3.35) {\small FCS};
+        % --- trayectoria M2PC: tres tramos ---
+        \draw[very thick,blue!55!black]
+            (0,1.0) -- (\Ta,2.55)          % bajo u_a
+            -- (\Tb,3.02)                   % bajo u_b
+            -- (\Ts,2.96);                  % bajo u_0 (casi plano)
+        % puntos de quiebre
+        \foreach \p in {(0,1.0),(\Ta,2.55),(\Tb,3.02),(\Ts,2.96)} {
+            \fill[blue!55!black] \p circle (1.6pt);
+        }
+        \node[blue!55!black,rotate=27] at (1.4,2.05) {\small $\mathbf{u}_a$};
+        \node[blue!55!black,rotate=10] at (4.3,2.58) {\small $\mathbf{u}_b$};
+        \node[blue!55!black] at (6.4,2.72) {\small $\mathbf{u}_0$};
+        % --- etiquetas i(k) e i(k+1) ---
+        \node[below left] at (0,1.0) {$i_{\alpha\beta}(k)$};
+        \node[blue!55!black,above=4pt] at (\Ts,2.96) {$i_{\alpha\beta}(k\!+\!1)$};
+        % --- marcas de eje k y k+1 ---
+        \node[below] at (0,-0.05) {$k$};
+        \node[below] at (\Ts,-0.05) {$k\!+\!1$};
+        % --- llaves de Ta, Tb, T0 ---
+        \draw[decorate,decoration={brace,amplitude=5pt,mirror},gray!70]
+            (0,-0.55) -- (\Ta,-0.55) node[midway,below=4pt]{$T_a$};
+        \draw[decorate,decoration={brace,amplitude=5pt,mirror},gray!70]
+            (\Ta,-0.55) -- (\Tb,-0.55) node[midway,below=4pt]{$T_b$};
+        \draw[decorate,decoration={brace,amplitude=5pt,mirror},gray!70]
+            (\Tb,-0.55) -- (\Ts,-0.55) node[midway,below=4pt]{$T_0$};
+    \end{tikzpicture}
+    \caption{Operación del FCS-M2PC: el reparto de $T_s$ entre dos vectores activos ($\mathbf{u}_a$, $\mathbf{u}_b$) y el nulo ($\mathbf{u}_0$) acerca la corriente a la referencia con un escalón mucho menor que el del FCS clásico, que aplica un solo vector durante todo el periodo.}
+    \label{fig:operacion-m2pc}
+\end{figure}
+
+\subsection{Combinaciones, función de costo y selección}
+\label{sec:m2pc-costo}
+
+El M2PC no resuelve los tiempos $T_a$, $T_b$, $T_0$ por optimización continua. En su lugar, divide $T_s$ en $\rho$ sub-intervalos iguales de duración $T_s/\rho$ y prueba todas las maneras de repartir esos $\rho$ trozos entre los tres vectores admisibles. El número de repartos es el de combinaciones con repetición de $n=3$ elementos en $\rho$ ranuras,
+\begin{equation}
+    C^R(n,\rho) = \frac{(n+\rho-1)!}{\rho!\,(n-1)!},
+    \label{eq:combinaciones}
+\end{equation}
+que para $n=3$ y $\rho=4$ da quince combinaciones. Cada combinación fija una terna $(T_a,T_b,T_0)$ múltiplo de $T_s/\rho$, y por tanto una corriente predicha distinta según \eqref{eq:pred-m2pc}.
+
+Para cada una de las $C^R(n,\rho)$ combinaciones se evalúa la misma función de costo del FCS-MPC: el error cuadrático entre la referencia y la corriente predicha,
+\begin{equation}
+    g = \bigl(i_\alpha^*(k+1) - i_\alpha(k+1)\bigr)^2 + \bigl(i_\beta^*(k+1) - i_\beta(k+1)\bigr)^2,
+    \label{eq:costo-m2pc}
+\end{equation}
+donde $\mathbf{i}_{\alpha\beta}^*(k+1)$ es la referencia de corriente generada según \eqref{eq:iref-optima}. La combinación que minimiza $g$ se modula y se aplica al inversor en el siguiente periodo. El procedimiento completo se resume en el algoritmo \ref{alg:m2pc}.
+
+\begin{algorithm}[htbp]
+\caption{FCS-M2PC para un periodo de muestreo}
+\label{alg:m2pc}
+\begin{algorithmic}[1]
+\Require $\mathbf{i}(k)$, $\theta_e(k)$, $\omega_m$, $\hat{\mathbf{s}}(\theta_e)$, $T_\mathrm{ref}$
+\State Determinar el sector y el conjunto $\mathcal{U}(\theta_e)$ según \eqref{eq:sectores}
+\State Calcular la referencia $\mathbf{i}_{\alpha\beta}^*(k+1)$ con \eqref{eq:iref-optima} usando $\hat{\mathbf{s}}$
+\State $g_\mathrm{op} \gets \infty$
+\For{$j \gets 1$ a $C^R(3,\rho)$}
+    \State Tomar la terna $(T_a,T_b,T_0)_j$ de la combinación $j$
+    \State Predecir $\mathbf{i}_{\alpha\beta}(k+1)$ con \eqref{eq:pred-m2pc} usando $\hat{\mathbf{e}} = K_e\,\omega_m\,\hat{\mathbf{s}}$
+    \State Evaluar $g_j$ con \eqref{eq:costo-m2pc}
+    \If{$g_j < g_\mathrm{op}$}
+        \State $g_\mathrm{op} \gets g_j$;\quad $j_\mathrm{op} \gets j$
+    \EndIf
+\EndFor
+\State \Return modular la combinación $j_\mathrm{op}$ sobre el inversor
+\end{algorithmic}
+\end{algorithm}
+
+Dos parámetros gobiernan el compromiso del M2PC. El número de sub-intervalos $\rho$ mejora el seguimiento al permitir repartos más finos, pero \eqref{eq:combinaciones} crece con $\rho$ y con ello el tiempo de cómputo por periodo; existe un $\rho$ máximo que el hardware sostiene antes de que el cálculo desborde $T_s$. El propio modelo de BEMF $\hat{\mathbf{s}}$ aparece en dos lugares del algoritmo ---en la línea 2, al generar la referencia, y en la línea 6, al predecir---, lo que confirma lo anticipado en la sección \ref{sec:rizo-mismatch}: corregir $\hat{\mathbf{s}}$ ataca las dos vías de propagación del rizo con un mismo mecanismo.
+
+% =================================================================
+\section{ADALINE con base de Fourier para la BEMF}
+\label{sec:adaline-bemf}
+
+El bloque que falta es el que produce $\hat{\mathbf{s}}(\theta_e)$. La sección \ref{sec:fourier} mostró que una función periódica de espectro concentrado se representa con pocos armónicos, y que esa representación coincide con la salida de un ADALINE alimentado por un regresor de Fourier. Esa correspondencia es la que se explota aquí.
+
+Cada componente de la función de forma $\mathbf{s}(\theta_e) = [s_\alpha(\theta_e),\,s_\beta(\theta_e)]^{\mathsf T}$ se modela como una serie de Fourier truncada a $H$ armónicos. Con el regresor definido en \eqref{eq:regresor-fourier},
+\[
+    \mathbf{x}(\theta_e) = \bigl[\cos\theta_e,\,\sin\theta_e,\,\ldots,\,\cos H\theta_e,\,\sin H\theta_e\bigr]^{\mathsf T} \in \mathbb{R}^{2H},
+\]
+la forma estimada se escribe como un producto matriz-vector,
+\begin{equation}
+    \hat{\mathbf{s}}(\theta_e) = \mathbf{W}^{\mathsf T}\mathbf{x}(\theta_e),
+    \qquad \mathbf{W} = [\mathbf{w}_\alpha\;\;\mathbf{w}_\beta] \in \mathbb{R}^{2H\times 2},
+    \label{eq:adaline-bemf}
+\end{equation}
+donde cada columna de $\mathbf{W}$ recoge los coeficientes de Fourier de una componente de $\mathbf{s}$. La estructura es la de dos ADALINE que comparten el mismo regresor: uno estima $s_\alpha$ y otro $s_\beta$. La componente de continua se omite porque la simetría del motor la anula.
+
+\begin{figure}[htbp]
+    \centering
+    \shorthandoff{<>}%
+    \begin{tikzpicture}[>=Latex]
+        \tikzset{
+            xnode/.style={draw,thick,rounded corners=2pt,fill=gray!8,
+                          minimum width=1.7cm,minimum height=0.7cm},
+            onode/.style={draw,thick,circle,fill=blue!8,minimum size=9mm,inner sep=0pt}
+        }
+        % --- entrada ---
+        \node (th) at (-2.6,0) {$\theta_e$};
+        % --- nodos del regresor de Fourier ---
+        \node[xnode] (x1) at (0, 2.4) {$\cos\theta_e$};
+        \node[xnode] (x2) at (0, 1.2) {$\sin\theta_e$};
+        \node          (xd) at (0, 0.05) {$\vdots$};
+        \node[xnode] (x3) at (0,-1.2) {$\cos H\theta_e$};
+        \node[xnode] (x4) at (0,-2.4) {$\sin H\theta_e$};
+        % --- neuronas de salida (combinadores lineales) ---
+        \node[onode] (sa) at (4.4, 1.3) {$\textstyle\sum$};
+        \node[onode] (sb) at (4.4,-1.3) {$\textstyle\sum$};
+        % --- theta_e genera el regresor ---
+        \foreach \n in {x1,x2,x3,x4} { \draw[->] (th) -- (\n.west); }
+        % --- conexiones regresor -> salidas (pesos) ---
+        \foreach \n in {x1,x2,x3,x4} {
+            \draw[->,gray!55] (\n.east) -- (sa);
+            \draw[->,gray!55] (\n.east) -- (sb);
+        }
+        % --- salidas ---
+        \draw[->,thick,blue!55!black] (sa) -- ++(1.9,0) node[right,black]{$\hat{s}_\alpha$};
+        \draw[->,thick,blue!55!black] (sb) -- ++(1.9,0) node[right,black]{$\hat{s}_\beta$};
+        % --- etiquetas de pesos ---
+        \node[blue!55!black] at (2.35, 2.25) {$\mathbf{w}_\alpha$};
+        \node[blue!55!black] at (2.55,-1.7) {$\mathbf{w}_\beta$};
+        % --- rotulos descriptivos ---
+        \node[align=center,gray!55!black] at (0, 3.45)
+            {regresor $\mathbf{x}(\theta_e)\in\mathbb{R}^{2H}$};
+        \node[align=center,gray!55!black] at (4.4,-2.7)
+            {combinadores lineales\\ \scriptsize(sin no linealidad)};
+    \end{tikzpicture}
+    \caption{Estructura del ADALINE con regresor de Fourier para la estimación de $\mathbf{s}(\theta_e)$. La posición $\theta_e$ genera el regresor $\mathbf{x}(\theta_e)$; dos combinadores lineales con pesos $\mathbf{w}_\alpha$, $\mathbf{w}_\beta$ producen $\hat{s}_\alpha$, $\hat{s}_\beta$. No hay capas ocultas ni funciones de activación: la salida es lineal en los pesos.}
+    \label{fig:adaline}
+\end{figure}
+
+Conviene distinguir desde ya dos modos de operar este estimador. En el modo \emph{offline} los pesos se calculan una sola vez a partir de un conjunto de datos y luego quedan fijos; sirve de referencia y de inicialización. En el modo \emph{online} los pesos se actualizan en cada periodo con la información que entrega el motor en operación; es el modo que da a la tesis su carácter adaptable. Las dos subsecciones siguientes tratan cada caso.
+
+% =================================================================
+\section{Entrenamiento offline por mínimos cuadrados}
+\label{sec:offline}
+
+Supóngase que se dispone de un conjunto de $N$ muestras $\{(\theta_i,\,\mathbf{s}_i)\}_{i=1}^N$ de la forma de onda, obtenidas de un ensayo de caracterización o de un modelo previo del motor. Apilando los regresores por filas en la matriz $\boldsymbol{\Phi} \in \mathbb{R}^{N\times 2H}$, con $\boldsymbol{\Phi}_{i,:} = \mathbf{x}^{\mathsf T}(\theta_i)$, y las muestras en $\mathbf{S} \in \mathbb{R}^{N\times 2}$, el ajuste de los pesos es un problema de mínimos cuadrados lineal:
+\begin{equation}
+    \mathbf{W}^\star = \arg\min_{\mathbf{W}} \;\bigl\|\boldsymbol{\Phi}\mathbf{W} - \mathbf{S}\bigr\|_F^2,
+    \label{eq:ls-offline}
+\end{equation}
+cuya solución es la pseudoinversa
+\begin{equation}
+    \mathbf{W}^\star = \bigl(\boldsymbol{\Phi}^{\mathsf T}\boldsymbol{\Phi}\bigr)^{-1}\boldsymbol{\Phi}^{\mathsf T}\mathbf{S}.
+    \label{eq:pseudoinversa}
+\end{equation}
+La estructura de la base de Fourier vuelve este cálculo particularmente benigno. Si las muestras están equiespaciadas en $[0,2\pi)$, la ortogonalidad de $\{\cos n\theta,\sin n\theta\}$ hace que $\boldsymbol{\Phi}^{\mathsf T}\boldsymbol{\Phi}$ sea un múltiplo de la identidad, y \eqref{eq:pseudoinversa} se reduce a evaluar las integrales de Fourier de forma discreta. No hay mal condicionamiento que invertir ni regularización que ajustar: los pesos óptimos son, literalmente, los coeficientes de Fourier de la forma de onda muestreada.
+
+El entrenamiento offline cumple dos funciones en esta tesis. Da una cota inferior del rizo alcanzable cuando se conoce la BEMF con precisión, contra la cual se mide el modo online. Y proporciona una inicialización razonable de $\mathbf{W}$ para el arranque del LMS, de modo que la adaptación parta de una forma de onda plausible y no de cero.
+
+% =================================================================
+\section{Aprendizaje en línea con LMS}
+\label{sec:online}
+
+El modo online prescinde de la caracterización previa. Los pesos se ajustan en cada periodo con el error entre la forma de onda que el motor revela en operación y la que el ADALINE predice. Sea $\mathbf{s}_\mathrm{med}(k)$ la muestra de forma de onda disponible en el instante $k$ ---su origen se detalla en la sección \ref{sec:observador}, ya que en operación no se mide $\mathbf{s}$ directamente sino que se reconstruye---. El error de estimación es
+\begin{equation}
+    \boldsymbol{\epsilon}(k) = \mathbf{s}_\mathrm{med}(k) - \mathbf{W}^{\mathsf T}(k)\,\mathbf{x}(\theta_e(k)) \in \mathbb{R}^2,
+    \label{eq:error-online}
+\end{equation}
+y la actualización LMS, aplicada columna a columna como en \eqref{eq:lms}, es
+\begin{equation}
+    \mathbf{W}(k+1) = \mathbf{W}(k) + \mu\,\mathbf{x}(\theta_e(k))\,\boldsymbol{\epsilon}^{\mathsf T}(k).
+    \label{eq:lms-online}
+\end{equation}
+Cada paso mueve los pesos en la dirección que más rápido reduce $\|\boldsymbol{\epsilon}\|^2$, sin más que un producto externo entre el regresor y el error.
+
+La sección \ref{sec:adaline} enunció las propiedades del LMS en general; sobre la base de Fourier esas propiedades toman su mejor forma. La matriz de autocorrelación del regresor, bajo posición eléctrica uniformemente distribuida ---hipótesis que se cumple en régimen permanente, donde el rotor barre todos los ángulos por igual---, es
+\begin{equation}
+    \mathbf{R} = \mathbb{E}\bigl[\mathbf{x}(\theta_e)\,\mathbf{x}^{\mathsf T}(\theta_e)\bigr] = \tfrac{1}{2}\,\mathbf{I}_{2H}.
+    \label{eq:autocorrelacion}
+\end{equation}
+Que $\mathbf{R}$ sea múltiplo de la identidad tiene una consecuencia fuerte: todos sus valores propios son iguales, la dispersión $\lambda_{\max}/\lambda_{\min}$ vale uno, y los $2H$ modos del LMS convergen exactamente al mismo ritmo. No hay modos lentos que retrasen la adaptación. La condición de estabilidad $0 < \mu < 2/\lambda_{\max}(\mathbf{R}) = 4$ se satisface con holgura para los pasos pequeños de interés. En régimen permanente los pesos no se detienen en $\mathbf{W}^\star$, sino que fluctúan en una vecindad de tamaño proporcional a $\mu$ (el \emph{misadjustment} de la sección \ref{sec:adaline}); esto fija el compromiso de diseño: $\mu$ grande para converger rápido tras un cambio, $\mu$ pequeño para dejar poco residuo una vez convergido.
+
+El costo computacional es el del LMS: $\mathcal{O}(H)$ multiplicaciones y sumas por periodo para cada componente. Con $H$ del orden de diez, son unas decenas de operaciones por periodo, despreciables frente al barrido de las $C^R(3,\rho)$ combinaciones del M2PC. La adaptación de la BEMF no es lo que limita la frecuencia de muestreo.
+
+% =================================================================
+\section{Por qué un ADALINE y no una red neuronal profunda}
+\label{sec:justificacion}
+
+La estimación de la BEMF podría plantearse con una red neuronal profunda, y de hecho la literatura reciente lo hace \citep{ali2024ann}. Esta tesis se decide por el ADALINE de forma deliberada, por tres razones estructurales que una red profunda no comparte.
+
+La primera es la \textbf{convergencia garantizada}. El ADALINE es lineal en sus parámetros, así que el error cuadrático es una función convexa de los pesos con un único mínimo global. El LMS desciende sobre esa superficie sin riesgo de quedar atrapado en mínimos locales, y su convergencia en lazo cerrado se puede analizar con las herramientas estándar de filtrado adaptable. Una red profunda tiene una superficie de error no convexa, sin garantía de convergencia online y con un riesgo real de comprometer la estabilidad del lazo de control cuando se entrena en tiempo real.
+
+La segunda es la \textbf{parsimonia}. La base de Fourier truncada representa cualquier BEMF de motor real con $2H$ parámetros ---del orden de veinte a cuarenta---. En la fase de caracterización offline de este trabajo, un ADALINE de cuarenta pesos igualó el error de reconstrucción de una red profunda de unos veinticinco mil parámetros. El costo por actualización es lineal en el número de pesos, lo que lo hace compatible con la aritmética de un microcontrolador de gama media; una red profunda no cabe en ese presupuesto de cómputo dentro de un periodo de muestreo.
+
+La tercera es la \textbf{interpretabilidad física}. Cada peso del ADALINE es un coeficiente de Fourier de la BEMF, así que su magnitud indica directamente la amplitud del armónico correspondiente. El vector de pesos es, en sí mismo, el espectro de la forma de onda del motor. Esto permite vigilar el estado del estimador, diagnosticar el contenido armónico del motor y, de cara al trabajo futuro con control repetitivo, diseñar el filtro a partir de los armónicos que el propio ADALINE revela. Una red profunda es una caja negra de la que no se extrae esa información.
+
+% =================================================================
+\section{Observador de BEMF en lazo cerrado}
+\label{sec:observador}
+
+La actualización LMS \eqref{eq:lms-online} necesita la muestra $\mathbf{s}_\mathrm{med}(k)$, pero en un motor en operación la forma de onda no se mide: no hay un sensor que entregue $\mathbf{s}(\theta_e)$. Lo que sí se mide son la posición eléctrica $\theta_e$, las corrientes $\mathbf{i}_{\alpha\beta}$ y se conoce el voltaje aplicado $\mathbf{u}_{\alpha\beta}$. El observador reconstruye la BEMF a partir de esas señales y de ahí deriva la muestra que alimenta al ADALINE.
+
+Despejar la BEMF directamente del modelo \eqref{eq:modelo-ab} exigiría derivar la corriente medida, operación que amplifica el ruido. En su lugar se usa un observador de corriente que estima la BEMF como una entrada desconocida. Sobre la dinámica discreta, el observador propaga una corriente estimada $\hat{\mathbf{i}}_{\alpha\beta}$ y corrige con el error de medición:
+\begin{equation}
+    \hat{\mathbf{i}}_{\alpha\beta}(k+1) = \hat{\mathbf{i}}_{\alpha\beta}(k) + \frac{T_s}{L}\bigl[\mathbf{u}_{\alpha\beta}(k) - R\,\hat{\mathbf{i}}_{\alpha\beta}(k) - \hat{\mathbf{e}}_{\alpha\beta}(k)\bigr] + \mathbf{L}_o\bigl(\mathbf{i}_{\alpha\beta}(k) - \hat{\mathbf{i}}_{\alpha\beta}(k)\bigr),
+    \label{eq:observador-corriente}
+\end{equation}
+con $\mathbf{L}_o$ la ganancia del observador. La BEMF estimada $\hat{\mathbf{e}}_{\alpha\beta}$ se obtiene integrando el error de corriente, de modo que el observador la trata como la perturbación que explica la discrepancia entre la corriente medida y la predicha por el modelo eléctrico. Una vez disponible $\hat{\mathbf{e}}_{\alpha\beta}(k)$, la muestra de forma de onda se recupera normalizando por la amplitud:
+\begin{equation}
+    \mathbf{s}_\mathrm{med}(k) = \frac{\hat{\mathbf{e}}_{\alpha\beta}(k)}{K_e\,\omega_m(k)},
+    \label{eq:smed}
+\end{equation}
+que es justamente la señal que entra en \eqref{eq:error-online}. La división por $\omega_m$ advierte de una limitación que se discutirá en el capítulo de validación: a velocidad muy baja la BEMF se hace pequeña frente al ruido y la muestra pierde calidad, lo que justifica el esquema híbrido encoder-observador que esta tesis adopta en lugar de un sensorless puro.
+
+\begin{figure}[htbp]
+    \centering
+    \shorthandoff{<>}%
+    \begin{tikzpicture}[>=Latex]
+        \tikzset{
+            blk/.style={draw,thick,rounded corners=2pt,align=center,inner sep=4pt},
+            sumc/.style={draw,thick,circle,minimum size=6mm,inner sep=0pt}
+        }
+        % --- bloque observador (OB: x[1.2,3.8], y[-0.9,0.9]) ---
+        \node[blk,minimum width=2.6cm,minimum height=1.8cm] (OB) at (2.5,0)
+            {Observador de\\ corriente\\ \eqref{eq:observador-corriente}};
+        % --- bloque normalizacion ---
+        \node[blk,minimum width=1.6cm,minimum height=1.0cm] (N) at (6.1,0.45)
+            {$\dfrac{1}{K_e\,\omega_m}$};
+        % --- nodo suma del error ---
+        \node[sumc] (S) at (5.0,-1.9) {$\Sigma$};
+        % --- bloque de ganancia del observador ---
+        \node[blk,minimum width=1.0cm,minimum height=0.8cm] (Lo) at (2.6,-1.9)
+            {$\mathbf{L}_o$};
+        % --- entrada u ---
+        \draw[->] (-0.2,0.45) node[left]{$\mathbf{u}_{\alpha\beta}$} -- (1.2,0.45);
+        % --- salida BEMF estimada -> normalizacion ---
+        \draw[->] (3.8,0.45) -- (N.west) node[midway,above]{$\hat{\mathbf{e}}_{\alpha\beta}$};
+        % --- salida corriente estimada -> suma ---
+        \draw[->] (3.8,-0.45) -- (5.0,-0.45) node[midway,above]{$\hat{\mathbf{i}}_{\alpha\beta}$}
+            -- (S.north);
+        \node at (4.74,-1.52) {\scriptsize$-$};
+        % --- entrada corriente medida -> suma ---
+        \draw[->] (6.7,-1.9) node[right]{$\mathbf{i}_{\alpha\beta}$} -- (S.east);
+        \node at (5.45,-1.6) {\scriptsize$+$};
+        % --- normalizacion: omega_m y salida s_med ---
+        \draw[->] (6.1,1.7) node[above]{$\omega_m$} -- (N.north);
+        \draw[->] (N.east) -- (7.7,0.45) node[right]{$\mathbf{s}_{\mathrm{med}}$};
+        % --- realimentacion: error -> Lo -> OB ---
+        \draw[->] (S.west) -- (Lo.east) node[midway,above]{\small$\mathbf{i}-\hat{\mathbf{i}}$};
+        \draw[->] (Lo.west) -- (0.6,-1.9) -- (0.6,-0.45) -- (1.2,-0.45);
+    \end{tikzpicture}
+    \caption{Observador discreto de BEMF que provee la señal de aprendizaje al ADALINE. La ganancia $\mathbf{L}_o$ corrige el modelo con el error de corriente $\mathbf{i}-\hat{\mathbf{i}}$; la BEMF estimada $\hat{\mathbf{e}}_{\alpha\beta}$ se normaliza por $K_e\omega_m$ para recuperar la muestra de forma de onda $\mathbf{s}_\mathrm{med}$.}
+    \label{fig:observador}
+\end{figure}
+
+% =================================================================
+\section{Arquitectura integrada}
+\label{sec:arquitectura}
+
+Las piezas anteriores se ensamblan en un solo lazo. Un controlador externo PI de velocidad genera la referencia de par $T_\mathrm{ref}$ a partir del error de velocidad. Con la BEMF estimada $\hat{\mathbf{s}}$ del ADALINE, el bloque de referencia produce $\mathbf{i}_{\alpha\beta}^*$ según \eqref{eq:iref-optima}. El FCS-M2PC toma esa referencia y, usando otra vez $\hat{\mathbf{s}}$ en su predicción \eqref{eq:pred-m2pc}, elige y modula la combinación de vectores que aplica al inversor. El motor responde; se miden corriente y posición; el observador reconstruye $\hat{\mathbf{e}}_{\alpha\beta}$ y de ahí $\mathbf{s}_\mathrm{med}$; el LMS actualiza $\mathbf{W}$ y devuelve un $\hat{\mathbf{s}}$ mejorado a los dos bloques que lo consumen. El lazo se cierra sobre sí mismo: cuanto mejor estima el ADALINE la forma de onda, mejor es la referencia y mejor la predicción, y a su vez una mejor operación entrega mejores muestras al ADALINE.
+
+\begin{figure}[htbp]
+    \centering
+    \shorthandoff{<>}%
+    \resizebox{\linewidth}{!}{%
+    \begin{tikzpicture}[>=Latex,font=\small]
+        \tikzset{
+            blk/.style={draw,thick,rounded corners=2pt,align=center,
+                        inner sep=3pt,minimum height=1.0cm},
+            sumc/.style={draw,thick,circle,minimum size=6mm,inner sep=0pt},
+            sig/.style={->,thick},
+            inj/.style={->,very thick,orange!85!black}
+        }
+        % --- cadena directa (y=0) ---
+        \node[sumc]                     (sw)  at (0,0)    {};
+        \node[blk,minimum width=1.3cm]  (pi)  at (1.7,0)  {PI\\ vel.};
+        \node[blk,minimum width=2.1cm]  (ref) at (4.2,0)  {Generaci\'on\\ de ref.};
+        \node[blk,minimum width=1.7cm]  (m2)  at (7.1,0)  {FCS-\\M2PC};
+        \node[blk,minimum width=1.0cm]  (vsi) at (9.1,0)  {VSI};
+        \node[blk,minimum width=1.7cm]  (mot) at (11.2,0) {Motor\\ BLDC};
+        % --- bloques del lazo adaptable (y=-3.3) ---
+        \node[blk,minimum width=1.8cm]  (ada) at (5.0,-3.3) {ADALINE\\ + LMS};
+        \node[blk,minimum width=2.1cm]  (obs) at (8.5,-3.3) {Observador\\ de BEMF};
+        % --- flechas de la cadena ---
+        \draw[sig] (-1.4,0) node[left]{$\omega^*$} -- (sw.west);
+        \node at ($(sw.center)+(-0.45,0.13)$) {\scriptsize$+$};
+        \draw[sig] (sw.east) -- (pi.west);
+        \draw[sig] (pi) -- (ref) node[midway,above]{$T_{\mathrm{ref}}$};
+        \draw[sig] (ref) -- (m2)  node[midway,above]{$\mathbf{i}^*_{\alpha\beta}$};
+        \draw[sig] (m2) -- (vsi);
+        \draw[sig] (vsi) -- (mot) node[midway,above]{$\mathbf{u}_{\alpha\beta}$};
+        % --- realimentacion de velocidad (via superior) ---
+        \draw[sig] (mot.north) -- (11.2,1.7) -- (0,1.7) -- (sw.north)
+            node[pos=0.62,above]{$\omega_m$};
+        \node at ($(sw.center)+(-0.16,0.45)$) {\scriptsize$-$};
+        % --- bus de mediciones (via inferior y=-1.6) ---
+        \draw[thick] (mot.south) -- (11.2,-1.6) -- (6.9,-1.6);
+        \draw[sig] (6.9,-1.6) -- ($(m2.south)+(-0.35,0)$);
+        \node at (9.0,-1.35) {$\mathbf{i}_{\alpha\beta},\,\theta_e,\,\omega_m$};
+        \fill (8.5,-1.6) circle (1.6pt);
+        \draw[sig] (8.5,-1.6) -- (obs.north);
+        % --- tension aplicada hacia el observador ---
+        \fill (10.0,0) circle (1.6pt);
+        \draw[sig] (10.0,0) -- (10.0,-3.3) -- (obs.east);
+        % --- s_med: observador -> ADALINE ---
+        \draw[sig] (obs.west) -- (ada.east) node[midway,above]{$\mathbf{s}_{\mathrm{med}}$};
+        % --- DOBLE INYECCION de s-hat (idea central) ---
+        \draw[inj] (ada.north) -- (5.0,-2.3);
+        \node[orange!85!black,right] at (5.05,-2.55) {$\hat{\mathbf{s}}$};
+        \draw[inj] (5.0,-2.3) -| (ref.south);
+        \draw[inj] (5.0,-2.3) -| ($(m2.south)+(0.35,0)$);
+    \end{tikzpicture}%
+    }
+    \caption{Arquitectura integrada del FCS-M2PC con estimación adaptable de BEMF. La estimación $\hat{\mathbf{s}}$ del ADALINE (en naranja) se inyecta a la vez en la generación de la referencia y en la predicción del FCS-M2PC: los dos puntos donde el error de modelo de BEMF se convertía en rizo de par.}
+    \label{fig:arquitectura}
+\end{figure}
+
+La figura \ref{fig:arquitectura} resume el aporte de este trabajo. La estimación de la BEMF no es un añadido lateral, sino que se inyecta en los dos puntos exactos donde el error de modelo se convertía en rizo de par, identificados en la sección \ref{sec:rizo-mismatch}. El capítulo siguiente pone a prueba esta arquitectura en simulación y la compara contra esquemas que usan modelos fijos de BEMF.
 
 \end{document}
