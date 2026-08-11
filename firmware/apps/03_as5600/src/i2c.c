@@ -15,12 +15,20 @@
  *     produce un código de error, no un cuelgue.
  *
  * ⚠ PINOUT — SCL va en PB8, no en PB6 (sesión 2026-08-10):
- *   AF4 en PB6 NO es I2C1_SCL en el STM32G431. Con PB6 en AF4 el pin queda
- *   hundido en bajo por la función que sí vive ahí, el bus nunca arranca, y
- *   todo probe da TIMEOUT. Determinado empíricamente (barrido de AF0..AF15 y
- *   comparación PB6/PB8 sobre la misma red de J8), porque la Tabla 13 del
- *   DS12589 no estaba disponible. Es reincidencia del patrón de N1.9: el
- *   alternate function es propio de cada PIN, no del periférico.
+ *   DS12589 Tabla 13, fila PB6: la casilla de AF4 está VACÍA. No es que ahí
+ *   viva otra función — es que no vive ninguna. Un AF sin asignar deja el
+ *   driver de salida sin fuente de señal y el pin emite 0; con open-drain eso
+ *   hunde la línea permanentemente, el bus nunca arranca y todo probe da
+ *   TIMEOUT.
+ *
+ *     PB6  AF4 = (vacío)      ← NO usar para I2C
+ *     PB7  AF4 = I2C1_SDA
+ *     PB8  AF4 = I2C1_SCL
+ *
+ *   Se descubrió empíricamente (barrido de AF0..AF15 y comparación PB6/PB8
+ *   sobre la misma red de J8) porque el DS12589 no estaba en el repo; ya está
+ *   en papers/. Es reincidencia del patrón de N1.9: el alternate function es
+ *   propio de cada PIN, no del periférico.
  *
  *   Mapeo vigente en J8:  pad 2 (B+/H2) = PB7 = SDA
  *                         pad 3 (Z+/H3) = PB8 = SCL

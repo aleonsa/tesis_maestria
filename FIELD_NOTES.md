@@ -1833,6 +1833,12 @@ PC13 AFR  = 6  (expected 6 = TIM1)
    > no es I²C1_SCL; SCL vive en PB8. Costó una sesión entera. El comentario del código
    > llegó a citar «DS12589 Table 13» sin que nadie abriera esa tabla — el datasheet ni
    > estaba en el repo. Ver [N1.16](#n116--bring-up-del-as5600-por-i²c1-el-sentido-de-posición).
+   >
+   > **Antídoto instalado (2026-08-10):** el DS12589 ya vive en
+   > `papers/ds12589-stm32g431cb-datasheet.pdf`. La **Tabla 13** («Alternate function»,
+   > §4.11) da pin por pin qué periférico cae en cada AF0..AF15. Consultarla antes de
+   > escribir cualquier línea de `AFR` cuesta dos minutos; no consultarla ha costado dos
+   > sesiones.
 
 4. **Si hay manera de detectar este error sin scope**: imprimir `GPIOx->ODR` (output data register) para los pines TIM1 mientras el counter corre. Si el AF está mal, GPIO no controla el output → puede dar lecturas raras. Pero esto es indirecto. La validación real es **comparar AFR contra la tabla 13** del datasheet con el código en una pantalla y la datasheet en otra.
 
@@ -3140,12 +3146,39 @@ Movido el cable del pad 1 al pad 3, cerró:
 [as5600] STATUS=0x20  MD=1 ML=0 MH=0
 ```
 
-**Causa raíz: `AF4` en `PB6` no es `I2C1_SCL` en el STM32G431.** Es otra función, y como
-está inactiva emite 0 — con el pin en open-drain, eso hunde la línea permanentemente.
+**Causa raíz: `AF4` en `PB6` no es `I2C1_SCL` en el STM32G431.** Con el DS12589 ya en
+`papers/`, la Tabla 13 lo confirma y además precisa el mecanismo: en la fila `PB6`, la
+casilla de `AF4` está **vacía**. No es "otra función": es **ninguna función**.
 
-El barrido de AF0..AF15 dejó además una lectura útil: los AF **sin asignar** liberan el pin
-(`HIGH`), los **asignados** lo emiten en 0 (`LOW`). AF15 = `EVENTOUT` sirvió de control
-positivo, y cayó del lado `LOW` como debía.
+| Pin | AF2 | AF3 | **AF4** | AF5 |
+|---|---|---|---|---|
+| `PB6` | `TIM4_CH1` | — | **— (sin asignar)** | `TIM8_CH1` |
+| `PB7` | `TIM4_CH2` | — | **`I2C1_SDA`** | `TIM8_BKIN` |
+| `PB8` | `TIM4_CH3` | `SAI1_CK1` | **`I2C1_SCL`** | — |
+
+Un AF sin asignar deja el driver de salida **sin fuente de señal**, y el pin emite 0. Con
+open-drain, eso hunde la línea de forma permanente. Por eso el periférico parecía "sujetar
+SCL" estando ocioso: no la sujetaba el I²C1 — es que el I²C1 nunca estuvo conectado a ese
+pin, y lo que había en su lugar era un cero cableado.
+
+**Corrección a lo que se anotó en caliente:** durante la sesión interpretamos el barrido al
+revés («los AF sin asignar liberan el pin, los asignados emiten 0»). Contrastado contra la
+Tabla 13, la correlación es exactamente la contraria, y es perfecta:
+
+| AF en `PB6` | Tabla 13 | Nivel medido |
+|---|---|---|
+| 3, 4, 9, 12, 13 | **—** (sin asignar) | `LOW` |
+| 1, 2, 5, 6, 7, 8, 10, 11, 14 | función asignada | `HIGH` |
+| 15 | `EVENTOUT` | `LOW` |
+
+Los periféricos asignados pero **deshabilitados** sueltan la línea; los AF vacíos la hunden.
+`AF15 = EVENTOUT` cae en `LOW` por mérito propio: es una salida real que emite 0 en reposo.
+(`AF0` es la excepción, por ser la función de sistema.)
+
+El barrido dio el pin correcto igual, porque la pregunta que importaba —¿cuál genera
+reloj?— la contestó el `probe`, no el nivel de reposo. Pero la explicación que le pusimos
+encima estaba invertida, y una nota que se guarda para el futuro no puede quedarse con la
+explicación equivocada.
 
 ### Por qué esto ya nos había pasado
 
@@ -3174,9 +3207,9 @@ para cuando el datasheet no esté: el barrido empírico de AF que quedó en el h
 
 | Concepto | Valor | Fuente |
 |---|---|---|
-| **SCL** | **PB8** — pad 3 de J8 (`Z+/H3`), **AF4** | verificado empíricamente 2026-08-10 |
+| **SCL** | **PB8** — pad 3 de J8 (`Z+/H3`), **AF4** | DS12589 Tabla 13 + verificado en banco 2026-08-10 |
 | **SDA** | **PB7** — pad 2 de J8 (`B+/H2`), **AF4** | ídem |
-| PB6 (`A+/H1`) | **libre** — AF4 aquí NO es I2C1_SCL | ídem |
+| PB6 (`A+/H1`) | **libre** — AF4 aquí está SIN ASIGNAR (emite 0) | DS12589 Tabla 13 |
 | Modo GPIO | AF, **open-drain**, sin pull interno, OSPEED alto | `i2c.c` |
 | Kernel clock | **HSI16** (`I2C1SEL = 0b10`) | RM0440 §7.4.27 |
 | `TIMINGR` | `0x30420F13` → ~100 kHz | `i2c.c` |
@@ -3326,9 +3359,18 @@ dejaban el pin en alto. ¿Significaba que alguno era el correcto, o que estaban 
 asignar?
 
 Lo que lo resolvió fue reconocer un **control positivo**: AF15 es `EVENTOUT`, una función que
-sabemos que existe y que emite 0 cuando está inactiva. Salió `LOW`. Eso confirmó la
-interpretación —los AF asignados hunden el pin, los libres lo sueltan— y con ella el `LOW` de
-AF4 dejó de ser un misterio y pasó a ser información.
+sabemos que existe y que emite 0 cuando está inactiva. Salió `LOW`, o sea que el instrumento
+sí medía.
+
+Vale la pena señalar que **la interpretación que le dimos en caliente estaba invertida**
+—creímos que los AF asignados hundían el pin y los libres lo soltaban, cuando es al revés—
+y aun así el experimento entregó el pin correcto. Sobrevivió porque la conclusión no
+dependía del nivel de reposo sino del `probe`: la pregunta operativa era *¿cuál genera
+reloj?*, no *¿cuál está alto?*.
+
+De ahí una lección de segundo orden: **un experimento cuyo veredicto depende de una sola
+señal robusta aguanta que la teoría de alrededor esté mal.** Si hubiéramos decidido el pin
+mirando solo el nivel de reposo, habríamos elegido cualquiera de los nueve que daban `HIGH`.
 
 **Un experimento sin control positivo no distingue "no hay señal" de "el instrumento no
 mide".**
