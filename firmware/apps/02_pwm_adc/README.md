@@ -10,7 +10,7 @@ App de **Fase 1** del bring-up del banco. Objetivo: generar 6 PWMs complementari
 | TIM1 TRGO | (señal interna, no es un pin) | Dispara ADC al pico/valle del contador |
 | ADC1, ADC2 | (en semana 5) | Dual regular simultaneous, JEXTSEL = TIM1_TRGO |
 | OPAMP1/2/3 | (en semana 5) | PGA para corrientes de shunt |
-| I²C1 | PB6/SCL, PB7/SDA | AS5600 (en semana 7) |
+| I²C1 | **PB8/SCL**, PB7/SDA | AS5600 (validado 2026-08-10; PB6 NO es SCL) |
 
 ## Plan por semana
 

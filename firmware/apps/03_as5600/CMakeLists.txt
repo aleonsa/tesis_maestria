@@ -6,6 +6,7 @@ add_executable(as5600.elf
     src/main.c
     src/i2c.c
     src/as5600.c
+    src/swi2c.c
     ${STARTUP_SRC}
 )
 

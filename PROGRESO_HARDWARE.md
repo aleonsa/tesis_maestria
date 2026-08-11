@@ -176,7 +176,7 @@ Si medición OK pero corriente baja:
 
   | Pad J8 | Pin STM32 | Función AF4 |
   |---|---|---|
-  | A+/H1 | PB6 | **I2C1_SCL** |
+  | A+/H1 | PB6 | ~~I2C1_SCL~~ **libre** — AF4 aquí no es I2C1_SCL (2026-08-10) |
   | B+/H2 | PB7 | **I2C1_SDA** |
   | Z+/H3 | PB8 | libre (reservado instrumentación) |
   | 5V | — | alimentación |
@@ -194,7 +194,7 @@ Si medición OK pero corriente baja:
   - VCC → 5V (confirmado por usuario: módulo acepta 5V)
   - GND → GND
   - SDA → B+/H2 (PB7)
-  - SCL → A+/H1 (PB6)
+  - SCL → **Z+/H3 (PB8)** — corregido 2026-08-10, ver FIELD_NOTES N1.16
   - PB8 (Z+/H3) sin conectar — reservado para instrumentación con osciloscopio.
 - **J5/J6 (Vbus)**: NO conectado todavía.
 

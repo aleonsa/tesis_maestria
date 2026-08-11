@@ -15,17 +15,22 @@
 #define AS5600_REG_STATUS      0x0BU
 #define AS5600_REG_RAWANGLE_H  0x0CU
 
-uint16_t as5600_raw_angle(void) {
+i2c_status_t as5600_raw_angle(uint16_t *out) {
     uint8_t b[2];
-    i2c1_read_regs(AS5600_ADDR7, AS5600_REG_RAWANGLE_H, b, 2U);
+    i2c_status_t st = i2c1_read_regs(AS5600_ADDR7, AS5600_REG_RAWANGLE_H, b, 2U);
+    if (st != I2C_OK) return st;
 
     /* b[0] = registro 0x0C (solo bits 3:0 válidos = ángulo[11:8]).
      * b[1] = registro 0x0D (ángulo[7:0]). */
-    return (uint16_t)(((uint16_t)(b[0] & 0x0FU) << 8) | b[1]);
+    *out = (uint16_t)(((uint16_t)(b[0] & 0x0FU) << 8) | b[1]);
+    return I2C_OK;
 }
 
-uint8_t as5600_status(void) {
+i2c_status_t as5600_status(uint8_t *out) {
     uint8_t s;
-    i2c1_read_regs(AS5600_ADDR7, AS5600_REG_STATUS, &s, 1U);
-    return s & (AS5600_STATUS_MD | AS5600_STATUS_ML | AS5600_STATUS_MH);
+    i2c_status_t st = i2c1_read_regs(AS5600_ADDR7, AS5600_REG_STATUS, &s, 1U);
+    if (st != I2C_OK) return st;
+
+    *out = s & (AS5600_STATUS_MD | AS5600_STATUS_ML | AS5600_STATUS_MH);
+    return I2C_OK;
 }

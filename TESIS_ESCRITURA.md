@@ -44,7 +44,9 @@ El usuario decidió escribir la **introducción al final**. Orden real:
 
 - **Hardware fuera de este sprint.** Toda la parte de STM32G431 + B-G431B-ESC1 + AS5600 + 2804 va en una sección/capítulo separado posterior. No se menciona en el cuerpo teórico.
 - **Control Repetitivo (RC) IGNORADO por completo en este sprint.** No aparece en preliminares, no aparece en desarrollo, no aparece en trabajo futuro. Se trata cuando se ataque la Fase 3.
-- **Resultados del Cap. 5 con números P=4.** Se redacta con los datos actuales (LUT sintética, 4 pares de polos) y se marca con `\todo{}` que se regenerarán cuando P=8 corregido esté validado. No bloquea la redacción.
+- ~~**Resultados del Cap. 5 con números P=4.**~~ **SUPERADO (2026-07-07).** No hizo falta el
+  `\todo{}`: el Cap. 5 se escribió directamente con las corridas P=8 (`p.P = 8`, 4 pares de
+  polos). El cuadro `tab:params-sim` dice `$p$ = 4 pares de polos`, que es lo correcto.
 - **El Cap. 4 todavía no tiene título.** Propuesta: "Esquema FCS-M2PC con estimación adaptable de BEMF" o similar. A decidir cuando lo abordemos.
 
 ---
@@ -158,7 +160,10 @@ Nota: Cap. 2 y Cap. 3 quedaron SIN figuras (revisar después; el autor lo señal
 
 ## Pendientes globales (no bloquean redacción)
 
-- [ ] Regenerar resultados con P=8 corregido (afecta tablas y figuras del Cap. 5)
+- [x] ~~Regenerar resultados con P=8 corregido~~ **HECHO**. Las corridas 2026-07-07 que
+      alimentan el Cap. 5 ya son con `p.P = 8` (`fcs_m2pc_v2/params/motor_params.m:14`).
+      La LUT real (`data/bemf_real_lut.mat`) se regeneró el 2026-04-11 con θ corregido.
+      No queda ningún número P=4 en el documento.
 - [ ] Decidir título definitivo del Cap. 4
 - [ ] Llenar Portada con datos reales (asesor, fecha de grado, etc.)
 - [ ] Llenar Resumen y Abstract (al final, con números finales)

@@ -2,6 +2,7 @@
 #define AS5600_H
 
 #include <stdint.h>
+#include "i2c.h"
 
 /*
  * as5600.h — encoder magnético absoluto AS5600 (12-bit, I2C).
@@ -23,10 +24,17 @@
 #define AS5600_STATUS_ML   (1U << 4)   /* AGC máximo: imán demasiado lejos  */
 #define AS5600_STATUS_MD   (1U << 5)   /* imán detectado                    */
 
-/* Lee RAW ANGLE (0x0C/0x0D) → 0..4095. */
-uint16_t as5600_raw_angle(void);
+/*
+ * Lee RAW ANGLE (0x0C/0x0D) → 0..4095 en *out.
+ * Devuelve I2C_OK, o el error de bus que impidió la lectura. *out solo es
+ * válido con I2C_OK.
+ */
+i2c_status_t as5600_raw_angle(uint16_t *out);
 
-/* Lee STATUS (0x0B): combinación de bits MD/ML/MH de arriba. */
-uint8_t as5600_status(void);
+/*
+ * Lee STATUS (0x0B) → combinación de bits MD/ML/MH de arriba en *out.
+ * Devuelve I2C_OK o el error de bus.
+ */
+i2c_status_t as5600_status(uint8_t *out);
 
 #endif

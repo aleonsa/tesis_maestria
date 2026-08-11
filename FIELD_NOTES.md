@@ -34,6 +34,10 @@
 - [N1.11 — OPAMPs internos del STM32G4: modos, PGA, calibración](#n111--opamps-internos-del-stm32g4-modos-pga-calibración)
 - [N1.12 — El ADC del STM32G4: cómo se convierte voltaje en número](#n112--el-adc-del-stm32g4-cómo-se-convierte-voltaje-en-número)
 - [N1.13 — Bring-up del ADC: tres trampas que encontramos](#n113--bring-up-del-adc-tres-trampas-que-encontramos)
+- [N1.14 — ISR JEOS: el latido del lazo de control](#n114--isr-jeos-el-latido-del-lazo-de-control)
+- [N1.15 — Race condition latente: regular vs injected en el mismo ADC](#n115--race-condition-latente-regular-vs-injected-en-el-mismo-adc)
+- [N1.16 — Bring-up del AS5600 por I²C1: el sentido de posición](#n116--bring-up-del-as5600-por-i²c1-el-sentido-de-posición)
+- [N1.17 — Bisección: cómo se depura un síntoma que mezcla cuatro cosas](#n117--bisección-cómo-se-depura-un-síntoma-que-mezcla-cuatro-cosas)
 
 ---
 
@@ -607,7 +611,7 @@ Todo eso es Fase 1. Cuatro piezas:
 |---|---|---|---|
 | **PWM 3-fásico complementario** | TIM1 | PA8, PA9, PA10 + PC13, PA12, PB15 | 30 kHz |
 | **Lectura de corriente sincronizada** | ADC1, ADC2, OPAMP1/2/3 | Curr_fdbk1/2/3 | 30 kHz (1 muestra/PWM) |
-| **Lectura de posición** | I²C1 | PB6, PB7 | ~6.6 kHz (limitado por AS5600) |
+| **Lectura de posición** | I²C1 | **PB8 (SCL), PB7 (SDA)** | ~6.6 kHz (limitado por AS5600) |
 | **Sincronización entre todo** | TIM1 TRGO → ADC JEXTSEL | (interno) | 30 kHz |
 
 ### El "metrónomo"
@@ -642,7 +646,7 @@ El timer (TIM1) es el director de orquesta. Cada vez que llega a su pico, dispar
 | 4 | TIM1 generando PWM 3-fásico centrado a 30 kHz con dead-time ~500 ns | Oscilograma de las 6 salidas |
 | 5 | ADC1+ADC2 leyendo 3 corrientes + Vbus, sincronizados con TIM1 | Log por UART de los valores |
 | 6 | ISR completa con calibración de offsets y medición de tiempo | Tiempo de ISR confirmado < 25 μs |
-| 7 | AS5600 vía I²C1 con extrapolación de θ entre lecturas | Posición legible girando el motor a mano |
+| 7 | AS5600 vía I²C1 con extrapolación de θ entre lecturas | ✅ Posición legible girando el motor a mano (2026-08-10). Extrapolación pendiente |
 
 Final de Fase 1: **decisión crítica**. Si la ISR no entra en presupuesto, hay que ajustar Ts a 50 μs (20 kHz), usar el coprocesador CORDIC para acelerar el cálculo de sin/cos, o reducir el horizonte de predicción.
 
@@ -702,7 +706,7 @@ De la Tabla 4 del UM2516:
 | PA7 | Curr_fdbk2_OPAmp+ | Shunt 2 |
 | PB14 | Temperature feedback | ADC: NTC en MOSFET |
 | PB13 | N.C. | No conectado |
-| PB6 | I²C1_SCL | AS5600 SCL (J8) |
+| PB6 | ~~I²C1_SCL~~ **libre** | pad A+/H1 de J8. ⚠ AF4 aquí NO es I²C1_SCL — ver [N1.16](#n116--bring-up-del-as5600-por-i²c1-el-sentido-de-posición) |
 | PB7 | I²C1_SDA | AS5600 SDA (J8) |
 | PB8 | I/O libre (J8 pad Z+/H3) | Reservado para instrumentación con scope |
 | PC6 | LED STATUS | LED user del blink |
@@ -1825,6 +1829,11 @@ PC13 AFR  = 6  (expected 6 = TIM1)
 
 3. **Para futuros pines de la placa B-G431B-ESC1**: cuando llegue I²C1 para el AS5600 (Semana 7), verificar AF de PB6/PB7 directamente del datasheet. **No asumir nada.**
 
+   > **Epílogo (2026-08-10): esta recomendación NO se siguió, y volvió a pasar.** AF4 en PB6
+   > no es I²C1_SCL; SCL vive en PB8. Costó una sesión entera. El comentario del código
+   > llegó a citar «DS12589 Table 13» sin que nadie abriera esa tabla — el datasheet ni
+   > estaba en el repo. Ver [N1.16](#n116--bring-up-del-as5600-por-i²c1-el-sentido-de-posición).
+
 4. **Si hay manera de detectar este error sin scope**: imprimir `GPIOx->ODR` (output data register) para los pines TIM1 mientras el counter corre. Si el AF está mal, GPIO no controla el output → puede dar lecturas raras. Pero esto es indirecto. La validación real es **comparar AFR contra la tabla 13** del datasheet con el código en una pantalla y la datasheet en otra.
 
 ### Tabla maestra de AFs para TIM1 en STM32G431 (B-G431B-ESC1)
@@ -2893,5 +2902,471 @@ Si en VCP en algún momento aparece `Vbus=552` o cualquier número que **no corr
 
 ---
 
+## N1.16 — Bring-up del AS5600 por I²C1: el sentido de posición
 
+### Panorama
 
+Hasta aquí el banco sabía dos cosas: cuánta corriente circula (N1.10–N1.13) y cuándo
+calcular (N1.14). Le faltaba la tercera, y sin ella el FCS-M²PC no existe: **dónde está
+el rotor**.
+
+El motivo es directo. La BEMF del motor es $\mathbf{e} = K_e\,\omega_m\,\mathbf{s}(\theta_e)$.
+Toda la tesis se apoya en estimar esa forma $\mathbf{s}(\theta_e)$ con el ADALINE, y el
+ADALINE se alimenta de un regresor de Fourier evaluado en $\theta_e$. Sin posición no hay
+regresor, sin regresor no hay estimación, sin estimación no hay referencia de corriente.
+La cadena entera cuelga de este dato.
+
+El sensor es un **AS5600**: encoder magnético absoluto de 12 bits, integrado de fábrica al
+motor 2804. "Absoluto" significa que al encender ya sabe su ángulo — no necesita una vuelta
+de homing como un encoder incremental. Lee el campo de un imán diametral pegado al eje
+mediante sensores Hall en el silicio, y reporta el ángulo por **I²C**.
+
+Esta nota tiene dos partes. La primera es cómo funciona el bus y por qué el driver está
+escrito como está. La segunda es **la trampa que costó la sesión entera**, que resultó no
+ser ninguna de las cosas que parecía.
+
+### Analogía — el bus de dos hilos como una conversación por radio
+
+I²C es una radio compartida de dos cables donde todos escuchan y hablan por turnos. Un
+cable es la voz (**SDA**, datos), el otro el metrónomo (**SCL**, reloj). El maestro —nuestro
+STM32— es el único que marca el ritmo.
+
+La particularidad está en la electrónica: nadie puede *empujar* la línea hacia arriba. Cada
+participante solo tiene permiso para **tirarla a tierra**. El "1" lógico no lo genera nadie:
+lo provee una resistencia de pull-up que mantiene el cable arriba cuando todos sueltan. Eso
+es **open-drain**, y es lo que permite que varios dispositivos compartan el mismo par de
+cables sin destruirse: si dos hablan a la vez, ambos tiran a cero y nadie pelea contra nadie
+por imponer un 3.3 V.
+
+Una transacción típica es una llamada corta con acuse de recibo. El maestro dice "atención,
+dispositivo 0x36"; el esclavo contesta con un **ACK** (hunde SDA un ciclo). Si nadie
+contesta, la línea se queda arriba: eso es un **NACK**, "aquí no hay nadie con ese nombre".
+
+Reténgase esa distinción, porque más abajo es la que resuelve el caso: **NACK significa que
+el reloj corrió**. Para llegar al bit de acuse hay que haber generado nueve pulsos de SCL.
+Un bus que ni siquiera puede completar la condición de parada no da NACK: da *timeout*.
+Son dos fallos completamente distintos que a simple vista parecen el mismo.
+
+### Detalle 1 — Por qué el kernel clock es HSI16 y no PCLK1
+
+En el STM32G4 casi todos los periféricos serie eligen de qué reloj se alimentan. El registro
+es `RCC_CCIPR`, campo `I2C1SEL` (RM0440 §7.4.27): `00` = PCLK1, `01` = SYSCLK, `10` = HSI16.
+
+Elegimos **HSI16** (`i2c.c`), y no es arbitrario:
+
+1. **Desacople del PLL.** PCLK1 corre a 170 MHz derivado del HSE por el PLL. Si algún día
+   tocamos M/N/R —para bajar consumo, para cambiar Ts, para lo que sea— la temporización del
+   I²C se movería con él, en silencio. Con HSI16 el bus vive en su propio dominio.
+2. **Timing tabulado.** ST publica valores de `TIMINGR` ya calculados para 16 MHz. Con
+   170 MHz habría que derivar el preescalador a mano y el error de redondeo es más difícil
+   de acotar.
+3. **HSI16 es un RC interno**, ±1%. Sobra para I²C, que tolera desviación de reloj sin
+   problema: el esclavo se sincroniza con SCL, no tiene reloj propio.
+
+El HSI16 hay que **encenderlo explícitamente** (`RCC->CR |= RCC_CR_HSION`) y esperar
+`HSIRDY` antes de enrutarlo. Está apagado si el sistema arrancó desde HSE, que es
+exactamente nuestro caso.
+
+### Detalle 2 — Anatomía del TIMINGR
+
+`TIMINGR` junta cinco campos que definen la forma de onda de SCL. Nuestro valor es
+`0x30420F13`:
+
+| Campo | Bits | Valor | Significado | Cuenta |
+|---|---|---|---|---|
+| `PRESC` | 31:28 | `0x3` | preescalador del kernel clock | $t_{PRESC} = (3{+}1)/16\,\text{MHz} = 250$ ns |
+| `SCLDEL` | 23:20 | `0x4` | setup de datos antes del flanco | $(4{+}1)\cdot250 = 1250$ ns |
+| `SDADEL` | 19:16 | `0x2` | hold de datos tras el flanco | $2\cdot250 = 500$ ns |
+| `SCLH` | 15:8 | `0x0F` | duración del nivel alto | $(15{+}1)\cdot250 = 4.00$ µs |
+| `SCLL` | 7:0 | `0x13` | duración del nivel bajo | $(19{+}1)\cdot250 = 5.00$ µs |
+
+El periodo resulta $t_{SCL} \approx 5.00 + 4.00 = 9.0$ µs más subida/bajada, o sea cerca de
+100 kHz. La asimetría (bajo más largo que alto) no es capricho: el estándar Standard Mode
+exige $t_{LOW} \ge 4.7$ µs y $t_{HIGH} \ge 4.0$ µs, porque el flanco de subida es lento —lo
+hace el pull-up cargando la capacitancia del bus, no un transistor— y hay que darle tiempo.
+
+Elegimos 100 kHz aunque el AS5600 llega a 1 MHz (Fast Mode Plus). Criterio de siempre: la
+versión lenta y robusta primero.
+
+**`TIMINGR` solo se escribe con `PE = 0`.** Por eso `i2c1_init()` limpia `PE`, escribe el
+timing, y recién entonces habilita. Mismo patrón "enable al final" del TIM1 y del UART.
+
+### Detalle 3 — Los pull-ups que NO pusimos, y la red oculta de J8
+
+La decisión en el código es dejar `PUPDR = 00`, sin pull interno. El razonamiento: el módulo
+AS5600 está alimentado a **5 V** y trae sus propios pull-ups a 5 V. Los pines PB6/PB7/PB8 son
+**5V-tolerant** (tipo FT), así que ver 5 V en reposo no los daña. Pero si activáramos el
+pull-up *interno*, ese va a **VDD = 3.3 V**: tendríamos la línea en reposo a 5 V por un lado
+y una resistencia hacia 3.3 V por el otro, o sea un camino de corriente permanente desde el
+bus hacia el riel de 3.3 V atravesando el pin. Funciona —los FT lo aguantan— pero es
+exactamente el tipo de detalle que degrada un pin con el tiempo.
+
+**Regla general: en un bus de 5 V, los pull-ups los pone el lado de 5 V, nunca el micro de
+3.3 V.**
+
+Lo que no sabíamos hasta esta sesión es que **la placa no conecta J8 directo al micro**.
+Leyendo el esquemático MB1419 (hoja 5, bloque `HALL/ENCODER SENSOR`), cada línea lleva:
+
+```
+J8 pad ──[ R74/R75/R77 = 1.8 kΩ serie ]──┬── R71/R72/R73 = 10 kΩ pull-up
+                                          ├── D17/D18/D19 = BAT30 (clamp Schottky)
+                                          ├── C67/C68/C69 = 10 pF
+                                          └── PB6 / PB7 / PB8
+```
+
+Esa red está pensada para **sensores Hall con salida push-pull**, no para un bus
+open-drain. El resistor en serie forma un divisor con el pull-up del módulo y limita cuán
+abajo puede llevar el maestro la línea **vista desde el esclavo**. Cuando el STM32 hunde su
+pin a ~0.2 V, del otro lado del 1.8 kΩ la línea se queda en:
+
+| Pull-up del módulo | V que ve el AS5600 en un '0' | Veredicto (V_IL de 5 V = 1.5 V) |
+|---|---|---|
+| 10 kΩ | 0.93 V | ✅ holgado |
+| 4.7 kΩ | 1.53 V | ⚠️ al filo |
+| 2.2 kΩ | 2.25 V | ❌ el esclavo nunca ve el cero |
+
+**Lo contraintuitivo:** si el bus fallara por esto, la solución es **debilitar** los pull-ups
+del módulo, no reforzarlos. El reflejo normal en I²C es bajar la resistencia; aquí eso
+empeora el divisor.
+
+En nuestro caso la red **no** resultó ser el problema —a 100 kHz pasa limpia, y el bit-bang
+a 20 kHz también— pero queda documentada porque es la primera sospechosa el día que
+subamos a Fast Mode Plus.
+
+### Detalle 4 — La transacción de dos fases: repeated-START
+
+Leer un registro de un dispositivo I²C no es una operación, son dos pegadas. Hay que decir
+*qué* registro se quiere (una escritura) y después *leerlo*, sin soltar el bus en medio. Si
+lo soltáramos, otro maestro podría meterse y mover el puntero.
+
+La maniobra se llama **repeated-START**:
+
+**Fase 1 — escribir el puntero.** `CR2` se escribe **de un golpe**, no con `|=` acumulativos,
+para que todos los campos queden en estado conocido: `RD_WRN = 0` (escritura) y
+`AUTOEND = 0` (no mandes STOP al terminar) caen implícitos en la asignación. El `addr7 << 1`
+coloca la dirección de 7 bits en `SADD[7:1]`; el bit 0 lo llena el periférico con el sentido
+de la transferencia.
+
+Luego se esperan dos flags en orden: **`TXIS`** sube cuando el esclavo hizo ACK a la
+dirección y `TXDR` está libre; **`TC`** sube cuando ese byte salió y, con `AUTOEND = 0`, el
+bus queda **en hold** — SCL retenido, nadie más puede hablar.
+
+**Fase 2 — leer.** Un `START` sobre un bus retenido **no** es un START nuevo: el hardware
+emite un repeated-START. Ahora `RD_WRN = 1` y `AUTOEND = 1`, y el periférico manda el STOP
+solo al completar los `n` bytes. Cada byte se recoge cuando `RXNE` sube; al final se espera
+`STOPF` y se limpia por `ICR` — si no se limpia, la siguiente transacción arranca sobre un
+flag viejo.
+
+El detalle que abarata esto: **el AS5600 auto-incrementa su puntero interno**. Pedir 2 bytes
+desde `0x0C` devuelve `0x0C` y luego `0x0D` en una sola transacción.
+
+### Detalle 5 — RAW ANGLE (0x0C) y no ANGLE (0x0E)
+
+El AS5600 expone el ángulo en dos sitios y elegimos el crudo:
+
+- **`RAW ANGLE` (0x0C/0x0D)** — la medición directa, 12 bits, 0..4095.
+- **`ANGLE` (0x0E/0x0F)** — la misma tras un filtro interno y el escalado por `ZPOS`/`MPOS`.
+
+Queremos el crudo por **latencia** (el filtro interno añade retardo que no controlamos ni
+documenta bien el datasheet, y en un lazo a 50 kHz cada microsegundo de retardo de fase se
+paga en el margen del predictor) y porque **filtrar es trabajo nuestro**: el observador y la
+extrapolación de θ necesitan el dato sin procesar para no filtrar dos veces.
+
+La conversión a grados aprovecha que 4096 es potencia de dos:
+
+```c
+uint32_t deg10 = ((uint32_t)raw * 3600U) >> 12;   /* raw · 3600 / 4096 */
+```
+
+Grados×10 en entero, sin float. `raw · 3600 ≤ 4095 · 3600 < 2^24`, cabe holgado en 32 bits.
+Coherente con la decisión de punto fijo para todo el path de control.
+
+También leemos **`STATUS` (0x0B)**, que trae tres bits del control automático de ganancia:
+`MD` (imán detectado), `ML` (demasiado lejos), `MH` (demasiado cerca). Es el diagnóstico
+mecánico del montaje: si `MD = 0`, el problema no es el firmware, es que el imán no está
+donde debería.
+
+---
+
+### La trampa — AF4 en PB6 no es I2C1_SCL
+
+Aquí está la parte que costó la sesión.
+
+**Síntoma:** al arrancar, el firmware imprimía las dos primeras líneas y moría. Con el
+driver instrumentado, el cuadro era: `SCL(PB6) = LOW` en reposo, `SDA(PB7) = HIGH`, y las
+112 direcciones del barrido dando **timeout**.
+
+Un bus I²C en reposo debe estar alto en las dos líneas. Una clavada abajo apunta a corto,
+esclavo reteniendo el bus, o falta de pull-ups. Ninguna de las tres era.
+
+**Lo que descartamos, en orden, y con qué:**
+
+| Hipótesis | Prueba | Resultado |
+|---|---|---|
+| Cable roto o módulo sin alimentar | PB6 como GPIO **entrada pura** | `HIGH` — el cable está sano |
+| Corto a GND | Pull-up interno de ~40 kΩ en PB6 | Sube a `HIGH` — no hay camino de baja impedancia |
+| La red de 1.8 kΩ de J8 | Es simétrica en las tres líneas | SDA reposa bien → no explica la asimetría |
+| Kernel clock ausente | Probar las tres fuentes (PCLK1 / SYSCLK / HSI16) | Las tres dan `LOW` |
+| Periférico en reset o sin clock gating | Volcado de registros | `I2C1EN=1`, `I2C1RST=0`, `TIMINGR` coincide exacto |
+| El pin no puede manejar la línea | Bit-bang: hundir y soltar | Ambos `OK` |
+| El AS5600 está muerto | I²C por software, con el periférico fuera | **`ACK`, `MD=1`, ángulo válido** |
+
+Después de eso quedaba un hecho incómodo: el periférico sujetaba SCL con reloj presente,
+`PE = 1`, `BUSY = 0` y sin transferencia pedida. Nada de eso es comportamiento documentado.
+
+**La prueba que lo resolvió** fue comparar PB6 con **PB8**, que cuelga del pad `Z+/H3` de J8
+—o sea, **exactamente la misma red**— y estaba libre:
+
+```
+[scltest] PB6(AF4)=LOW   PB8(AF4)=HIGH
+```
+
+Y luego, con SDA todavía conectado en PB7:
+
+```
+[auto] SCL en PB6: reposo=LOW  probe=TIMEOUT
+[auto] SCL en PB8: reposo=HIGH probe=NACK
+```
+
+Ese **`NACK`** es la prueba. Para llegar al bit de acuse hay que generar nueve pulsos de
+reloj; el `TIMEOUT` de PB6 significa que la transacción ni arrancaba. Con SCL en PB8 el
+periférico generaba reloj de verdad y solo faltaba que el cable del sensor llegara ahí.
+
+Movido el cable del pad 1 al pad 3, cerró:
+
+```
+[auto] SCL en PB8: reposo=HIGH probe=ACK
+[scan]   ACK en 0x36   <-- AS5600
+[as5600] STATUS=0x20  MD=1 ML=0 MH=0
+```
+
+**Causa raíz: `AF4` en `PB6` no es `I2C1_SCL` en el STM32G431.** Es otra función, y como
+está inactiva emite 0 — con el pin en open-drain, eso hunde la línea permanentemente.
+
+El barrido de AF0..AF15 dejó además una lectura útil: los AF **sin asignar** liberan el pin
+(`HIGH`), los **asignados** lo emiten en 0 (`LOW`). AF15 = `EVENTOUT` sirvió de control
+positivo, y cayó del lado `LOW` como debía.
+
+### Por qué esto ya nos había pasado
+
+Esto es **reincidencia exacta de [N1.9](#n19--la-trampa-del-alternate-function-af-no-es-uniforme-por-periférico)**. Aquella nota cierra diciendo:
+
+> el AF para TIM1 NO es uniforme por periférico. Es propio de cada pin individual.
+
+Y su recomendación explícita era:
+
+> **Para futuros pines de la placa B-G431B-ESC1**: cuando llegue I²C1 para el AS5600
+> (Semana 7), verificar AF de PB6/PB7 directamente del datasheet. **No asumir nada.**
+
+No se hizo. El código llevaba escrito en el comentario `DS12589 Table 13 (AF mapping:
+PB6/PB7 = I2C1 en AF4)` una cita a una tabla **que nunca se consultó** — el DS12589 no
+estaba en el repo. La cita daba la apariencia de verificación sin la verificación.
+
+Sesión 7-8: PB15 en AF4 y no AF6, PC13 en AF4 y no AF6. Sesión de hoy: PB6 no es SCL. Mismo
+error, tres pines, dos periféricos, tres meses de diferencia.
+
+**Antídoto que sí funciona:** tener el DS12589 en `papers/` y mirar la Tabla 13 antes de
+escribir la línea de `AFR`. Cuesta dos minutos y hoy costó una sesión. Segundo antídoto,
+para cuando el datasheet no esté: el barrido empírico de AF que quedó en el historial de
+`i2c.c` — barrer AF0..15 y buscar cuál genera reloj es determinante y toma segundos.
+
+### Tabla maestra del I²C1 + AS5600
+
+| Concepto | Valor | Fuente |
+|---|---|---|
+| **SCL** | **PB8** — pad 3 de J8 (`Z+/H3`), **AF4** | verificado empíricamente 2026-08-10 |
+| **SDA** | **PB7** — pad 2 de J8 (`B+/H2`), **AF4** | ídem |
+| PB6 (`A+/H1`) | **libre** — AF4 aquí NO es I2C1_SCL | ídem |
+| Modo GPIO | AF, **open-drain**, sin pull interno, OSPEED alto | `i2c.c` |
+| Kernel clock | **HSI16** (`I2C1SEL = 0b10`) | RM0440 §7.4.27 |
+| `TIMINGR` | `0x30420F13` → ~100 kHz | `i2c.c` |
+| Dirección esclavo | **0x36** (7 bits) | Datasheet AS5600 |
+| Registro STATUS | 0x0B — bits MD(5) / ML(4) / MH(3) | `as5600.h` |
+| Registro RAW ANGLE | 0x0C (H, bits 3:0) / 0x0D (L) → 0..4095 | `as5600.c` |
+| Transacción | write 1 byte (AUTOEND=0) → repeated-START → read n (AUTOEND=1) | `i2c.c` |
+| Refresco interno | ~7 kHz (~150 µs) | Datasheet AS5600 |
+| Red de J8 | 1.8 kΩ serie + 10 kΩ pull-up + clamp BAT30 por línea | MB1419 hoja 5 |
+| Alimentación | el pad de 5 V de J8 sale del riel lógico: **basta el USB** | verificado 2026-08-10 |
+
+### Validación — CERRADA 2026-08-10
+
+- ✅ `STATUS = 0x20`, `MD=1`, `ML=0`, `MH=0`. Imán detectado y a buena distancia.
+- ✅ `raw` recorre 0..4095 de forma monótona al girar el rotor a mano, con un solo salto por
+  vuelta mecánica (se observó el wrap 358.2° → 0.4°).
+- ✅ Barrido de direcciones: exactamente un dispositivo, en 0x36, sin timeouts.
+- ✅ Lectura por hardware (I2C1), no solo por bit-bang.
+
+Dos observaciones de los datos que **no** son problemas: los valores repetidos entre
+muestras son la mano quieta a 10 Hz de muestreo, y los retrocesos de 6-8 LSB (≈0.6°) son el
+rotor asentándose contra el cogging al soltar. Ambos son físicos.
+
+**Resolución angular efectiva:** 4096 cuentas por vuelta **mecánica** con 7 pares de polos
+son **585 cuentas por vuelta eléctrica**, es decir 0.615° eléctricos por LSB. Para el
+regresor de Fourier con H=10 el mínimo por Nyquist son 20 muestras por periodo eléctrico;
+tenemos 585. **La resolución del AS5600 no va a limitar al ADALINE.** La limitante es la
+latencia, como sigue.
+
+### Para la sesión siguiente
+
+1. **Offset entre θ del AS5600 y la fase A.** El sensor mide un ángulo mecánico absoluto,
+   pero su cero no coincide con el eje magnético de la fase A. El experimento es la
+   alineación con el eje d: inyectar DC en una fase, dejar que el rotor se alinee solo, y
+   declarar esa posición como $\theta_e = 0$. Sin esto el ADALINE aprende una BEMF rotada y
+   el par sale mal aunque todo lo demás esté bien.
+
+2. **Extrapolación de θ entre lecturas.** Ver el cálculo de abajo.
+
+3. **Presupuesto de la ISR completa.** Medir ADC + I²C + Clarke + M²PC + LMS juntos. Target
+   < 15 µs de los 20 µs de Ts. **Es el punto de decisión de Fase 1**: si no cabe, los
+   fallbacks están en N1.8 (bajar a 30 kHz, CORDIC, o cambiar el AS5600 por un
+   AS5048A/AS5047P por SPI).
+
+### El problema que viene: esta lectura no cabe en la ISR
+
+Una lectura de ángulo cuesta:
+
+| Tramo | Clocks de SCL |
+|---|---|
+| START + dirección + ACK | 9 |
+| byte de registro + ACK | 9 |
+| repeated-START + dirección + ACK | 9 |
+| 2 bytes de datos + ACK | 18 |
+| **Total** | **~45** |
+
+A 100 kHz cada clock son 10 µs, así que **una lectura son ~450 µs de bus**. El periodo de la
+ISR es 20 µs: la transacción tarda **veintidós veces más que el ciclo de control completo**.
+
+Leer el encoder de forma bloqueante dentro de la ISR no es difícil, es **imposible**. Ni
+subir a Fast Mode Plus lo arregla: a 1 MHz son ~45 µs, todavía más del doble del presupuesto
+entero. Las salidas son tres y hay que combinarlas: mover la transferencia a **DMA o IRQ**
+para que avance en segundo plano, leer a **la tasa real del sensor** (~7 kHz, su refresco
+interno) en vez de a la de la ISR, y **extrapolar** θ en los ciclos intermedios con la
+velocidad estimada.
+
+Conviene notar que la limitación no es del todo mala: el sensor solo tiene dato nuevo cada
+~150 µs, así que leerlo a 50 kHz sería pedir la misma cifra siete veces. El diseño correcto
+—leer a ~7 kHz en segundo plano y extrapolar— es el que el hardware pedía desde el principio.
+
+**Esto no es optimización: es rediseño obligatorio antes de meter el control en la ISR.**
+
+---
+
+## N1.17 — Bisección: cómo se depura un síntoma que mezcla cuatro cosas
+
+### Panorama
+
+La sesión del AS5600 se fue en depurar, no en escribir código. Vale la pena destilar el
+método, porque es transferible a cualquier periférico y porque **la sesión habría durado
+veinte minutos si hubiera existido esta nota**.
+
+El síntoma inicial era un firmware que arrancaba y moría en silencio. Un solo síntoma, y
+detrás cuatro capas independientes que podían fallar:
+
+```
+  [ periférico I2C1 ]  ← ¿configurado bien? ¿tiene reloj? ¿está en reset?
+          │
+  [ pin / alternate function ]  ← ¿el AF conecta el periférico a ESTE pin?
+          │
+  [ línea física ]  ← ¿cable, pull-ups, cortos?
+          │
+  [ esclavo AS5600 ]  ← ¿alimentado? ¿vivo? ¿la dirección es esa?
+```
+
+Mirando el síntoma de frente, las cuatro son indistinguibles. Todas producen "no lee".
+
+### Analogía — el electricista que no cambia bombillas al azar
+
+Una lámpara no enciende. El aficionado prueba otra bombilla, luego otro enchufe, luego mueve
+el cable, y si en algún momento funciona no sabe cuál de las tres cosas era. El electricista
+mide: ¿hay tensión en el enchufe? Si sí, el problema está de la lámpara hacia dentro. ¿Pasa
+corriente por el cable? Si sí, es la bombilla.
+
+Cada medición **parte el espacio de causas en dos**. Con cuatro capas, cuatro mediciones bien
+elegidas bastan; probando combinaciones al azar hacen falta muchas más y al final no se sabe
+por qué funcionó.
+
+### El principio — cada prueba debe aislar UNA capa
+
+La regla operativa: **no preguntes "¿funciona?", pregunta "¿funciona esta capa con las demás
+fuera del circuito?"**.
+
+Las cuatro pruebas que usamos, y qué capa aísla cada una:
+
+| Prueba | Cómo saca a las demás del circuito | Qué contesta |
+|---|---|---|
+| Pin como **GPIO de entrada pura** | El driver de salida queda desconectado: el micro no participa | ¿Cómo está la línea *físicamente*? |
+| **Pull-up interno** de ~40 kΩ y releer | Compara contra una impedancia conocida | ¿Está flotando o hay un camino de baja impedancia a tierra? |
+| **Bit-bang** por GPIO | El periférico entero queda fuera | ¿Sirven el pin y la línea? ¿Vive el esclavo? |
+| **Volcado de registros** | No mueve nada, solo observa | ¿El periférico está como creemos? |
+
+Ninguna de las cuatro depende de que las otras tres funcionen. Esa independencia es todo el
+truco.
+
+### Detalle 1 — El valor de las señales que distinguen
+
+La medición más rentable de la sesión no midió voltajes: fue notar que **`NACK` y `TIMEOUT`
+son fallos distintos**.
+
+- **`NACK`** = el maestro generó los nueve pulsos de reloj y llegó al bit de acuse. El bus
+  funciona eléctricamente; simplemente nadie contestó en esa dirección.
+- **`TIMEOUT`** = la transacción no completó ni la condición de parada. El bus no arranca.
+
+Confundirlos es fatal porque llevan a diagnósticos opuestos: uno dice "revisa el esclavo",
+el otro "revisa el bus". El driver original no los distinguía —se colgaba en un `while`
+desnudo— así que ese bit de información no existía.
+
+**Lección general: instrumentar para distinguir modos de fallo vale más que instrumentar
+para detectarlos.** Un `while(flag){}` detecta el fallo perfectamente; no dice nada sobre
+cuál es.
+
+### Detalle 2 — El control positivo
+
+Al barrer AF0..AF15 buscando cuál era I²C1_SCL, el resultado bruto era ambiguo: varios AF
+dejaban el pin en alto. ¿Significaba que alguno era el correcto, o que estaban todos sin
+asignar?
+
+Lo que lo resolvió fue reconocer un **control positivo**: AF15 es `EVENTOUT`, una función que
+sabemos que existe y que emite 0 cuando está inactiva. Salió `LOW`. Eso confirmó la
+interpretación —los AF asignados hunden el pin, los libres lo sueltan— y con ella el `LOW` de
+AF4 dejó de ser un misterio y pasó a ser información.
+
+**Un experimento sin control positivo no distingue "no hay señal" de "el instrumento no
+mide".**
+
+### Detalle 3 — La comparación con red idéntica
+
+La prueba definitiva fue comparar PB6 contra PB8. Funcionó porque **ambos cuelgan de la
+misma red de J8**: mismos 1.8 kΩ en serie, mismo pull-up de 10 kΩ, mismo clamp. Los niveles
+eran directamente comparables sin corregir nada.
+
+Si hubiéramos comparado contra un pin de otro conector, cualquier diferencia habría sido
+atribuible a la red y no al AF, y la prueba no habría concluido nada.
+
+**Al buscar un control, elige el que difiera en UNA sola variable.**
+
+### Por qué importa
+
+1. **El orden importa tanto como las pruebas.** Nosotros probamos de barato a caro: niveles
+   con el multímetro y el GPIO antes que barridos de AF, y volcado de registros antes que
+   reescribir el driver. Las primeras tres pruebas costaron minutos y descartaron la mitad
+   del espacio.
+
+2. **Instrumentar es más rápido que adivinar, aunque parezca lo contrario.** Escribir
+   `i2c1_probe`, `i2c1_lines` y `swi2c` tomó tiempo que "podría" haberse ido en mirar el
+   osciloscopio. Pero el scope habría mostrado la línea baja sin decir quién la hunde, que
+   es exactamente lo que ya sabíamos.
+
+3. **Este patrón aplica a cualquier periférico.** SPI, UART, ADC, CAN: siempre hay un
+   periférico, un mapeo de pin, una línea física y un dispositivo al otro lado. Las cuatro
+   pruebas se traducen casi literalmente.
+
+4. **El código de diagnóstico se queda.** `probe`, `scan`, `lines` y `dump_regs` viven ahora
+   en `i2c.c` de forma permanente, y `swi2c.c` se conserva como camino independiente. No es
+   deuda: es el instrumental. La próxima vez que el bus falle, las cuatro respuestas están a
+   un reset de distancia.
+
+### La regla en una línea
+
+**Antes de arreglar, aísla. Antes de aislar, busca la prueba que parta el problema en dos.**
+
+---

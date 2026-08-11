@@ -130,7 +130,9 @@ La BEMF medida se obtiene del observador (no del sensor directamente — no hay 
 
 **Semana 1 (10 h)** ✅ COMPLETADA 2026-05-18
 - ✅ Lectura UM2516 entero (cap. 5 layout + Tabla 4 pinout).
-- ✅ Validación pinout J8 contra DS12589 Tabla 13 (PB6/PB7 = I2C1_SCL/SDA en AF4).
+- ❌ **FALSO**: se dio por validado el pinout J8 contra la Tabla 13 del DS12589, pero ese
+  datasheet nunca estuvo en el repo. AF4 en PB6 NO es I2C1_SCL. Corregido 2026-08-10:
+  **SCL = PB8**, SDA = PB7. Ver FIELD_NOTES N1.16.
 - ✅ Toolchain en la Pi (sin CubeIDE — bare-metal directo): arm-none-eabi-gcc 10.3, OpenOCD 0.11, reglas udev, SSH alias `raspi`.
 - ✅ CMSIS Device Pack via submódulo `cmsis_device_g4`.
 - ✅ Proyecto `firmware/blink/` con `CMakeLists.txt`, compilado a 880 B Flash, flasheado, LED PC6 parpadeando.
@@ -422,7 +424,7 @@ Cada uno de estos requiere una decisión consciente, escrita y justificada **ant
 **Adquirido y cableado**
 - ✅ Osciloscopio.
 - ✅ Motor 2804 (12N14P) con AS5600 integrado de fábrica.
-- ✅ B-G431B-ESC1 + cableado físico completo (motor a J7, AS5600 a J8: PB6=SCL, PB7=SDA, 5V, GND).
+- ✅ B-G431B-ESC1 + cableado físico completo (motor a J7, AS5600 a J8: **PB8=SCL**, PB7=SDA, 5V, GND).
 - ✅ **Fuente DC regulada**: buck-boost ZK-4KX alimentada desde fuente de PC vieja. Modos CV/CC.
 - ✅ Raspberry Pi como host de programación (USB → ST-LINK de la placa).
 

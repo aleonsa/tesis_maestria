@@ -61,3 +61,6 @@ opencode.json
 
 # ── Firmware: vendor de terceros (clone local, no se versiona) ─────────────
 vendor/
+
+# graphify — grafo de conocimiento generado, no es fuente
+graphify-out/
