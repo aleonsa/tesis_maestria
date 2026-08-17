@@ -56,6 +56,18 @@
 \definecolor{eqcolor}{RGB}{80,80,80}
 \usepackage[hidelinks, breaklinks=true, backref=page,colorlinks=true,linkcolor=black,citecolor=refcolor, urlcolor=gray!50!black]{hyperref}
 \usepackage{graphicx}
+% Rutas de figuras: el preambulo de un subfile NO se ejecuta al compilar desde
+% este main, asi que el \graphicspath tiene que vivir aqui. \subfix mantiene las
+% rutas validas si se compila un capitulo por separado.
+\graphicspath{%
+  {\subfix{Documentos/Chapters/Capitulo1/FigureC1/}}%
+  {\subfix{Documentos/Chapters/Capitulo2/FigureC2/}}%
+  {\subfix{Documentos/Chapters/Capitulo3/FigureC3/}}%
+  {\subfix{Documentos/Chapters/Capitulo4/FigureC4/}}%
+  {\subfix{Documentos/Chapters/Capitulo5/FigureC5/}}%
+  {\subfix{Documentos/Chapters/Capitulo6/FigureC6/}}%
+  {\subfix{Documentos/Portada/}}%
+}
 \usepackage{subfigure}
 \usepackage{float}
 \usepackage{multirow, array}
