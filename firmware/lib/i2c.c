@@ -1,16 +1,20 @@
 /*
- * i2c.c — I2C1 master, polling mode, sobre PB8 (SCL) / PB7 (SDA).
+ * i2c.c — I2C1 master sobre PB8 (SCL) / PB7 (SDA). Polling + camino por IRQ.
  *
- * Cross-ref: RM0440 §40 (I2C), §7.4.27 (RCC_CCIPR / I2C1SEL), §11 (GPIO).
+ * Cross-ref: RM0440 Rev 9 — §39 (I2C), §7.4.27 (RCC_CCIPR / I2C1SEL), §9 (GPIO).
+ * Los números de capítulo cambian entre revisiones del RM0440; los de aquí son
+ * los de la Rev 9, que es la que está en papers/. Antes decían §40/§11, que son
+ * los de una revisión distinta y no llevan a ninguna parte en la nuestra.
  *
  * Decisiones de diseño:
  *   - Kernel clock = HSI16 (16 MHz), NO PCLK1 (170 MHz). Desacopla el I2C
  *     del PLL y permite usar el TIMINGR canónico de ST tabulado para 16 MHz.
  *   - Standard mode 100 kHz: robusto para bring-up; el AS5600 soporta hasta
  *     FM+ 1 MHz, subimos después si conviene.
- *   - Polling, sin IRQ/DMA: igual que el primer uart2. Una cosa a la vez.
- *     (Ver la nota de latencia al final: para el lazo de control esto NO
- *     alcanza y habrá que migrarlo.)
+ *   - Dos caminos: polling para bring-up y arranque, IRQ para el lazo de
+ *     control. El polling se quedó porque es la herramienta de diagnóstico
+ *     (i2c1_scan, i2c1_probe) y porque antes de que exista una ISR no hay nada
+ *     que proteger. Ver la sección de lectura no bloqueante al final.
  *   - Todas las esperas llevan timeout y vigilan NACKF. Un esclavo mudo
  *     produce un código de error, no un cuelgue.
  *
@@ -77,6 +81,9 @@ const char *i2c_status_str(i2c_status_t st) {
         case I2C_ERR_TIMEOUT_TC:    return "TIMEOUT esperando TC";
         case I2C_ERR_TIMEOUT_RXNE:  return "TIMEOUT esperando RXNE";
         case I2C_ERR_TIMEOUT_STOPF: return "TIMEOUT esperando STOPF";
+        case I2C_ERR_ARG:           return "ARG invalido (n fuera de rango)";
+        case I2C_ERR_INCOMPLETE:    return "INCOMPLETA (STOP con bytes de menos)";
+        case I2C_ERR_BUS:           return "ERROR DE BUS (BERR/ARLO/OVR)";
         default:                    return "??";
     }
 }
@@ -140,11 +147,16 @@ void i2c1_init(void) {
 }
 
 void i2c1_reset_peripheral(void) {
+    /* RM0440 Rev 9 §39.4.6 pide exactamente esto: «PE must be kept low during at
+     * least three APB clock cycles [...] 1. Write PE = 0  2. Check PE = 0
+     * 3. Write PE = 1». El paso 2 es una RELECTURA, no un retardo: la lectura
+     * del APB no retorna hasta que el bus completó el ciclo, así que garantiza
+     * el tiempo mínimo sin depender de cuántos NOP deje el compilador.
+     *
+     * La versión anterior giraba un bucle de 100 iteraciones `volatile`.
+     * Funcionaba, pero por accidente: medía tiempo del lado equivocado. */
     I2C1->CR1 &= ~I2C_CR1_PE;
-    /* RM0440 §40.4.1: PE debe quedar en 0 al menos 3 ciclos de APB para que el
-     * reset interno se complete. A 170 MHz son ~18 ns; el bucle corto es más
-     * honesto que confiar en el timing que elija el compilador. */
-    for (volatile uint32_t d = 0U; d < 100U; d++) { }
+    while ((I2C1->CR1 & I2C_CR1_PE) != 0U) { }
     I2C1->CR1 |= I2C_CR1_PE;
 }
 
@@ -338,21 +350,238 @@ void i2c1_dump_regs(void) {
 }
 
 /*
- * ─────────────────────────────────────────────────────────────────────────
- * LÍMITE CONOCIDO — este driver no cabe dentro de la ISR de control.
+ * ═════════════════════════════════════════════════════════════════════════
+ * LECTURA NO BLOQUEANTE POR IRQ
  *
- * Una lectura de ángulo cuesta ~45 pulsos de SCL (START + dirección + ACK,
- * registro + ACK, repeated-START + dirección + ACK, 2 bytes + ACK). A 100 kHz
- * cada pulso son 10 µs, así que la transacción completa son ~450 µs.
+ * El problema, en números. Una lectura de ángulo cuesta ~45 pulsos de SCL:
+ * START + dirección + ACK (9), registro + ACK (9), repeated-START + dirección
+ * + ACK (9), dos bytes + ACK (18). A 100 kHz cada pulso son 10 µs, así que la
+ * transacción completa son ~450 µs. El periodo de la ISR de control a 50 kHz
+ * son 20 µs: la lectura bloqueante tarda 22× MÁS que el ciclo de control
+ * entero. Subir a Fast Mode Plus (1 MHz) la deja en ~45 µs, todavía más del
+ * doble del presupuesto. No hay margen que rascar afinando; hay que sacar la
+ * espera del camino.
  *
- * El periodo de la ISR a 50 kHz son 20 µs. La lectura tarda 22× MÁS que el
- * ciclo de control entero. Subir a Fast Mode Plus (1 MHz) la deja en ~45 µs,
- * todavía más del doble del presupuesto.
+ * Esta es la primera de las tres piezas de la solución: la transferencia
+ * avanza sola. Las otras dos —leer a la tasa real del sensor (~7 kHz de
+ * refresco interno del AS5600) en vez de a la de la ISR, y extrapolar θ en los
+ * ciclos intermedios con la ω estimada— viven en la capa de arriba.
  *
- * La salida combina tres cosas: DMA o IRQ para que la transferencia avance en
- * segundo plano, leer a la tasa real del sensor (~7 kHz, su refresco interno)
- * en vez de a la de la ISR, y extrapolar θ en los ciclos intermedios con la
- * velocidad estimada. No es optimización: es rediseño obligatorio antes de
- * meter el control en la ISR.
- * ─────────────────────────────────────────────────────────────────────────
+ * Coste para la CPU: 4 IRQ por lectura, cada una mueve un byte o reprograma
+ * CR2. Del orden de 1 µs cada una contra 450 µs de bus, menos del 1% de
+ * ocupación. Por qué IRQ y no DMA: el DMA baja de 4 eventos a 2, pero paga
+ * DMAMUX, dos canales y coherencia de buffer para ahorrar ~2 µs de cada 450.
+ * Se mide primero; si el número molesta, se escala con datos.
+ * ═════════════════════════════════════════════════════════════════════════
  */
+
+/*
+ * Fase dentro de la transferencia. Sirve para UNA cosa: decir de qué fue el
+ * NACK. NACKF mientras se escribe el puntero de registro significa "nadie en
+ * esa dirección"; después de haberlo escrito significa "contestó y luego
+ * rechazó el dato". Esa distinción es la que hace útil al camino de polling y
+ * no se pierde aquí.
+ */
+typedef enum {
+    NB_PH_ADDR_W = 0,   /* START mandado, esperando TXIS              */
+    NB_PH_REG,          /* puntero de registro escrito, esperando TC  */
+    NB_PH_RX,           /* repeated-START hecho, recibiendo           */
+} nb_phase_t;
+
+/* Sin inicializador: los estáticos arrancan en cero, que es exactamente
+ * IDLE / I2C_OK / NB_PH_ADDR_W / contadores a 0. */
+static struct {
+    volatile i2c_nb_state_t state;
+    volatile i2c_status_t   status;
+    volatile uint32_t       seq;
+    volatile uint32_t       errors;
+    volatile uint32_t       err_isr;
+    nb_phase_t              phase;
+    uint8_t                 addr7;
+    uint8_t                 reg;
+    uint8_t                 n;
+    uint8_t                 idx;
+    uint8_t                 buf[I2C_NB_MAXBYTES];
+} nb;
+
+void i2c1_nb_init(void) {
+    /* Fuentes de evento que la máquina de estados necesita. Dejarlas armadas en
+     * reposo no genera IRQ espurias: TXIS solo sube tras el ACK de dirección de
+     * una escritura, y RXNE/TC/STOPF solo dentro de una transferencia. El
+     * periférico en reposo tiene TXE=1, que NO es TXIS. */
+    I2C1->CR1 |= I2C_CR1_TXIE | I2C_CR1_RXIE | I2C_CR1_TCIE
+               | I2C_CR1_STOPIE | I2C_CR1_NACKIE | I2C_CR1_ERRIE;
+
+    /* Prioridad 3 contra la 1 de la ISR de control: el control SIEMPRE preempta
+     * (y 0 queda reservada para faults). Es seguro porque el maestro estira SCL
+     * en los tres puntos donde esta máquina tiene que actuar —RM0440 Rev 9
+     * §39.4.7 para TXE/RXNE, §39.4.9 para TC—: llegar tarde ALARGA la
+     * transacción, no pierde ni corrompe un byte.
+     *
+     * Son dos vectores distintos, no uno: I2C1_EV (eventos, nº 31) e I2C1_ER
+     * (errores de bus, nº 32). */
+    NVIC_SetPriority(I2C1_EV_IRQn, 3U);
+    NVIC_SetPriority(I2C1_ER_IRQn, 3U);
+    NVIC_EnableIRQ(I2C1_EV_IRQn);
+    NVIC_EnableIRQ(I2C1_ER_IRQn);
+}
+
+/*
+ * Cierre único de la transferencia. Solo actúa desde BUSY, así que el STOPF
+ * que llega DESPUÉS de un abort no vuelve a contar el error ni pisa el estado.
+ */
+static void nb_finish(void) {
+    if (nb.state != I2C_NB_BUSY) return;
+
+    /* Barrera antes de publicar el estado: el consumidor corre en una ISR de
+     * prioridad más alta y en cuanto vea DONE va a leer nb.buf. */
+    __DMB();
+
+    if (nb.status == I2C_OK) {
+        nb.seq++;
+        nb.state = I2C_NB_DONE;
+    } else {
+        nb.errors++;
+        nb.state = I2C_NB_ERR;
+    }
+}
+
+i2c_status_t i2c1_read_regs_start(uint8_t addr7, uint8_t reg, uint8_t n) {
+    if ((n == 0U) || (n > I2C_NB_MAXBYTES)) return I2C_ERR_ARG;
+    if (nb.state == I2C_NB_BUSY)            return I2C_ERR_BUSY;
+
+    /* Una sola mirada al bus, sin esperar: si está ocupado, el llamador
+     * reintenta en su próximo ciclo. Girar aquí sería reintroducir justo la
+     * espera que vinimos a quitar. */
+    if ((I2C1->ISR & I2C_ISR_BUSY) != 0U)   return I2C_ERR_BUSY;
+
+    nb.addr7  = addr7;
+    nb.reg    = reg;
+    nb.n      = n;
+    nb.idx    = 0U;
+    nb.phase  = NB_PH_ADDR_W;
+    nb.status = I2C_OK;
+    /* Todo el contexto escrito ANTES de mover el periférico: llamada desde
+     * código de fondo, la IRQ puede dispararse en la instrucción siguiente al
+     * START y encontrarse la estructura a medio llenar. */
+    nb.state  = I2C_NB_BUSY;
+
+    I2C1->ICR = I2C_ICR_NACKCF | I2C_ICR_STOPCF
+              | I2C_ICR_BERRCF | I2C_ICR_ARLOCF | I2C_ICR_OVRCF;
+
+    /* Fase 1: puntero de registro, 1 byte, AUTOEND=0 para retener el bus de
+     * cara al repeated-START. Misma secuencia que el camino de polling. */
+    I2C1->CR2 = ((uint32_t)addr7 << (I2C_CR2_SADD_Pos + 1U))
+              | (1U << I2C_CR2_NBYTES_Pos);
+    I2C1->CR2 |= I2C_CR2_START;
+
+    return I2C_OK;
+}
+
+void I2C1_EV_IRQHandler(void) {
+    uint32_t isr = I2C1->ISR;
+
+    /* NACK. El hardware manda el STOP por su cuenta incluso con AUTOEND=0
+     * (§39.4.9: «When a NACK is received, the TXIS flag is not set and a STOP
+     * condition is automatically sent»), así que aquí solo anotamos la causa y
+     * dejamos que STOPF cierre. Un único punto de cierre, sin caminos gemelos. */
+    if ((isr & I2C_ISR_NACKF) != 0U) {
+        I2C1->ICR = I2C_ICR_NACKCF;
+        nb.status = (nb.phase == NB_PH_REG) ? I2C_ERR_NACK_DATA
+                                            : I2C_ERR_NACK_ADDR;
+    }
+
+    if ((isr & I2C_ISR_TXIS) != 0U) {
+        I2C1->TXDR = nb.reg;          /* escribir TXDR es lo que baja TXIS */
+        nb.phase   = NB_PH_REG;
+    }
+
+    if ((isr & I2C_ISR_TC) != 0U) {
+        /* Fase 2: repeated-START + lectura. AUTOEND=1 → el STOP lo pone el
+         * hardware tras el último byte. Setear START es lo que baja TC. */
+        I2C1->CR2 = ((uint32_t)nb.addr7 << (I2C_CR2_SADD_Pos + 1U))
+                  | ((uint32_t)nb.n << I2C_CR2_NBYTES_Pos)
+                  | I2C_CR2_RD_WRN
+                  | I2C_CR2_AUTOEND;
+        I2C1->CR2 |= I2C_CR2_START;
+        nb.phase   = NB_PH_RX;
+    }
+
+    /* RXDR se lee SIEMPRE que RXNE esté alto, aunque el buffer ya esté lleno:
+     * leerlo es lo único que baja el flag, y un RXNE que no se atiende con
+     * RXIE armado es una tormenta de interrupciones. El descarte se decide
+     * después, sobre el dato ya sacado. */
+    if ((isr & I2C_ISR_RXNE) != 0U) {
+        uint8_t d = (uint8_t)I2C1->RXDR;
+        if (nb.idx < nb.n) nb.buf[nb.idx++] = d;
+    }
+
+    /* STOPF al final a propósito: con AUTOEND el último byte y el STOP pueden
+     * estar pendientes en la misma entrada al handler, y drenar RXDR antes
+     * evita perderlo. */
+    if ((isr & I2C_ISR_STOPF) != 0U) {
+        I2C1->ICR = I2C_ICR_STOPCF;
+        if ((nb.status == I2C_OK) && (nb.idx < nb.n)) {
+            nb.status = I2C_ERR_INCOMPLETE;
+        }
+        nb_finish();
+    }
+}
+
+void I2C1_ER_IRQHandler(void) {
+    /* BERR (START/STOP fuera de sitio), ARLO (arbitraje perdido) y OVR. La
+     * trama está perdida; guardamos el ISR crudo porque el código de error solo
+     * dice "de bus" y en el postmortem hace falta saber cuál de los tres. */
+    nb.err_isr = I2C1->ISR;
+    nb.status  = I2C_ERR_BUS;
+    I2C1->ICR  = I2C_ICR_BERRCF | I2C_ICR_ARLOCF | I2C_ICR_OVRCF;
+
+    /* A diferencia del NACK, aquí el hardware NO manda STOP solo: lo pedimos y
+     * cerramos sin esperarlo. Si el bus está clavado el STOP no saldrá, el
+     * STOPF tardío se encontrará el estado ya fuera de BUSY y nb_finish() lo
+     * ignorará. */
+    I2C1->CR2 |= I2C_CR2_STOP;
+    nb_finish();
+}
+
+void i2c1_nb_abort(void) {
+    if (nb.state != I2C_NB_BUSY) return;
+
+    /* TIMEOUT_STOPF es literal: la transacción no llegó a su STOP dentro del
+     * plazo que fijó el consumidor. */
+    if (nb.status == I2C_OK) nb.status = I2C_ERR_TIMEOUT_STOPF;
+
+    I2C1->CR2 |= I2C_CR2_STOP;
+    nb_finish();
+}
+
+i2c_nb_state_t i2c1_nb_state(void) { return nb.state; }
+uint32_t       i2c1_nb_seq(void)     { return nb.seq; }
+uint32_t       i2c1_nb_errors(void)  { return nb.errors; }
+uint32_t       i2c1_nb_err_isr(void) { return nb.err_isr; }
+
+i2c_status_t i2c1_nb_take(uint8_t *buf, uint8_t n) {
+    switch (nb.state) {
+        case I2C_NB_BUSY:
+            return I2C_ERR_BUSY;
+
+        case I2C_NB_ERR: {
+            i2c_status_t st = nb.status;
+            nb.state = I2C_NB_IDLE;
+            return st;
+        }
+
+        case I2C_NB_DONE:
+            break;
+
+        default:                       /* IDLE: no hay nada que recoger */
+            return I2C_ERR_INCOMPLETE;
+    }
+
+    uint8_t k = (n < nb.n) ? n : nb.n;
+    for (uint8_t i = 0U; i < k; i++) buf[i] = nb.buf[i];
+
+    nb.state = I2C_NB_IDLE;
+    return I2C_OK;
+}
+

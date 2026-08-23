@@ -42,6 +42,24 @@
 /* Volcado de registros + estado de líneas al arrancar. Barato y ha pagado. */
 #define DIAG_ON_BOOT       1
 
+/*
+ * Camino por IRQ (i2c1_read_regs_start + i2c1_nb_take) en vez del bloqueante.
+ * Es el que va a usar el lazo de control; aquí se ejerce el mismo patrón
+ * start/poll/take a mano para validarlo antes de montarle el PLL encima.
+ * Solo aplica con USE_SOFTWARE_I2C == 0.
+ */
+#define USE_NONBLOCKING    1
+
+/*
+ * Prueba de rendimiento al arrancar: lecturas seguidas durante 1 s para medir
+ * cuántas caben de verdad. La cuenta teórica a 100 kHz da ~2.2 kHz (~45 pulsos
+ * de SCL por lectura), contra los ~7 kHz de refresco interno del AS5600. Si el
+ * número medido se queda corto, la conclusión no es "optimizar el driver" sino
+ * subir el bus a Fast Mode — y entonces hay que mirar con scope la red de J8
+ * (1.8 kΩ serie + 10 kΩ pull-up), que está pensada para Hall push-pull.
+ */
+#define THROUGHPUT_TEST    1
+
 static volatile uint32_t g_ticks = 0;
 
 void SysTick_Handler(void) {
@@ -65,6 +83,52 @@ static void delay_ms(uint32_t ms) {
     uint32_t start = g_ticks;
     while ((g_ticks - start) < ms) { }
 }
+
+#if ((USE_SOFTWARE_I2C == 0) && (USE_NONBLOCKING == 1))
+
+/*
+ * Plazo máximo que se le da a una transferencia antes de darla por perdida.
+ * Una legítima son ~450 µs; 10 ms es factor ~20 y sigue siendo imperceptible.
+ * El driver no lleva reloj a propósito: el timeout es del consumidor, que es
+ * quien sabe a qué ritmo corre.
+ */
+#define NB_DEADLINE_MS   10U
+
+/*
+ * Bombea el camino por IRQ durante `ms` y devuelve las lecturas completadas.
+ * El bucle no espera a nada: mira el estado, y arranca o recoge. Es el mismo
+ * esqueleto que irá dentro de la ISR de control, con la diferencia de que allá
+ * cada pasada la dispara el timer en vez de un while.
+ */
+static uint32_t nb_pump(uint32_t ms, uint16_t *last_raw, uint32_t *aborts) {
+    uint32_t t0        = g_ticks;
+    uint32_t seq0      = i2c1_nb_seq();
+    uint32_t busy_from = g_ticks;
+
+    while ((g_ticks - t0) < ms) {
+        switch (i2c1_nb_state()) {
+            case I2C_NB_IDLE:
+                busy_from = g_ticks;
+                (void)as5600_raw_angle_start();
+                break;
+
+            case I2C_NB_BUSY:
+                if ((g_ticks - busy_from) >= NB_DEADLINE_MS) {
+                    i2c1_nb_abort();
+                    if (aborts != 0) (*aborts)++;
+                }
+                break;
+
+            default:   /* DONE o ERR: recoger y dejar el driver libre */
+                (void)as5600_raw_angle_take(last_raw);
+                break;
+        }
+    }
+
+    return i2c1_nb_seq() - seq0;
+}
+
+#endif
 
 int main(void) {
     clock_init_170mhz_hse();
@@ -125,6 +189,29 @@ int main(void) {
         printf("[as5600] no se pudo leer STATUS\r\n");
     }
 
+#if ((USE_SOFTWARE_I2C == 0) && (USE_NONBLOCKING == 1))
+    i2c1_nb_init();
+    printf("[i2c] camino por IRQ armado (I2C1_EV/ER, prioridad NVIC 3)\r\n");
+
+#if (THROUGHPUT_TEST == 1)
+    {
+        uint16_t raw_tp  = 0U;
+        uint32_t aborts  = 0U;
+        uint32_t err0    = i2c1_nb_errors();
+        uint32_t reads   = nb_pump(1000U, &raw_tp, &aborts);
+
+        printf("[perf] %lu lecturas/s  (teorico ~2200 a 100kHz)\r\n",
+               (unsigned long)reads);
+        printf("[perf] errores=%lu  abortadas=%lu  ultimo raw=%u\r\n",
+               (unsigned long)(i2c1_nb_errors() - err0),
+               (unsigned long)aborts, (unsigned)raw_tp);
+        printf("[perf] refresco interno del AS5600 ~7 kHz: %s\r\n",
+               (reads >= 7000U) ? "el bus NO es el cuello de botella"
+                                : "el bus limita, el sensor tiene mas que dar");
+    }
+#endif
+#endif
+
     printf("\r\n[loop] gira el rotor a mano: raw debe recorrer 0..4095 de\r\n"
            "       forma monotona, con un solo salto por vuelta mecanica.\r\n");
 
@@ -138,6 +225,15 @@ int main(void) {
         uint8_t b[2];
         ok = (swi2c_read_regs(AS5600_ADDR7, 0x0CU, b, 2U) == 0);
         if (ok) raw = (uint16_t)(((uint16_t)(b[0] & 0x0FU) << 8) | b[1]);
+#elif (USE_NONBLOCKING == 1)
+        /* Arranca, deja correr, recoge. Entre el start y el take el bus avanza
+         * por IRQ; aquí no hay nada que hacer salvo esperar, pero en la ISR de
+         * control ese hueco es donde vive el lazo entero. */
+        uint32_t aborts = 0U;
+        i2c_status_t r = I2C_OK;
+        ok = (nb_pump(5U, &raw, &aborts) > 0U);
+        if (!ok) r = i2c1_nb_state() == I2C_NB_BUSY ? I2C_ERR_BUSY
+                                                    : I2C_ERR_INCOMPLETE;
 #else
         i2c_status_t r = as5600_raw_angle(&raw);
         ok = (r == I2C_OK);

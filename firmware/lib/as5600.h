@@ -37,4 +37,18 @@ i2c_status_t as5600_raw_angle(uint16_t *out);
  */
 i2c_status_t as5600_status(uint8_t *out);
 
+/*
+ * Variante no bloqueante de as5600_raw_angle(), para usar dentro del lazo de
+ * control. Requiere i2c1_nb_init() hecho.
+ *
+ *   as5600_raw_angle_start()  arranca la lectura y vuelve enseguida
+ *   ... el lazo sigue trabajando mientras el bus avanza por IRQ ...
+ *   as5600_raw_angle_take()   cuando i2c1_nb_state() == I2C_NB_DONE
+ *
+ * La razón de existir está en i2c.h: la lectura bloqueante son ~450 µs contra
+ * los 20 µs de periodo de la ISR.
+ */
+i2c_status_t as5600_raw_angle_start(void);
+i2c_status_t as5600_raw_angle_take(uint16_t *out);
+
 #endif

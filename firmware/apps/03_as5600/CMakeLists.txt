@@ -1,11 +1,11 @@
-# 03_as5600 — bring-up del encoder magnético AS5600 vía I2C1 (PB6/PB7).
+# 03_as5600 — bring-up del encoder magnético AS5600 vía I2C1 (PB8=SCL/PB7=SDA).
 # Fase 1 del bring-up del banco: cierra el sensing de posición del rotor.
 # Config compartida (toolchain, vendor, flags) viene del CMakeLists del padre.
+#
+# i2c.c y as5600.c viven en lib/ desde el 2026-08-18; llegan vía stm32g4_lib.
 
 add_executable(as5600.elf
     src/main.c
-    src/i2c.c
-    src/as5600.c
     src/swi2c.c
     ${STARTUP_SRC}
 )
