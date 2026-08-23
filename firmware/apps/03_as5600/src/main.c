@@ -60,6 +60,14 @@
  */
 #define THROUGHPUT_TEST    1
 
+/*
+ * Prueba de una sola transferencia, con el bus en reposo antes y después.
+ * Separa dos preguntas que el test de rendimiento mezcla: "¿funciona UNA
+ * lectura por IRQ?" y "¿aguanta que la martilleemos sin pausa?". Sin
+ * separarlas, un fallo no dice cuál de las dos cosas está mal.
+ */
+#define NB_SINGLE_SHOT     1
+
 static volatile uint32_t g_ticks = 0;
 
 void SysTick_Handler(void) {
@@ -85,6 +93,50 @@ static void delay_ms(uint32_t ms) {
 }
 
 #if ((USE_SOFTWARE_I2C == 0) && (USE_NONBLOCKING == 1))
+
+/*
+ * Vuelca el estado del último fallo con los flags del ISR desglosados. El
+ * status dice QUÉ pasó, la fase dice DÓNDE, y el ISR dice qué tenía el
+ * periférico en la mano en ese momento. Los tres juntos nombran el bug; el
+ * status solo, no.
+ */
+static void nb_report_failure(const char *tag) {
+    uint32_t isr = i2c1_nb_err_isr();
+
+    printf("[%s] %s\r\n", tag, i2c_status_str(i2c1_nb_err_status()));
+    printf("[%s]   fase=%s  ISR=0x%08lX\r\n",
+           tag, i2c1_nb_err_phase(), (unsigned long)isr);
+    printf("[%s]   BUSY=%u TC=%u TCR=%u STOPF=%u NACKF=%u "
+           "RXNE=%u TXIS=%u TXE=%u | BERR=%u ARLO=%u OVR=%u\r\n",
+           tag,
+           (isr & I2C_ISR_BUSY)  ? 1U : 0U,
+           (isr & I2C_ISR_TC)    ? 1U : 0U,
+           (isr & I2C_ISR_TCR)   ? 1U : 0U,
+           (isr & I2C_ISR_STOPF) ? 1U : 0U,
+           (isr & I2C_ISR_NACKF) ? 1U : 0U,
+           (isr & I2C_ISR_RXNE)  ? 1U : 0U,
+           (isr & I2C_ISR_TXIS)  ? 1U : 0U,
+           (isr & I2C_ISR_TXE)   ? 1U : 0U,
+           (isr & I2C_ISR_BERR)  ? 1U : 0U,
+           (isr & I2C_ISR_ARLO)  ? 1U : 0U,
+           (isr & I2C_ISR_OVR)   ? 1U : 0U);
+}
+
+/*
+ * Una transferencia, esperando a que termine con plazo generoso. Devuelve el
+ * status y deja el driver en IDLE.
+ */
+static i2c_status_t nb_one_shot(uint16_t *raw) {
+    i2c_status_t st = i2c1_read_regs_start(AS5600_ADDR7, 0x0CU, 2U);
+    if (st != I2C_OK) return st;          /* ni arrancó */
+
+    uint32_t t0 = g_ticks;
+    while (i2c1_nb_state() == I2C_NB_BUSY) {
+        if ((g_ticks - t0) >= 50U) { i2c1_nb_abort(); break; }
+    }
+
+    return as5600_raw_angle_take(raw);
+}
 
 /*
  * Plazo máximo que se le da a una transferencia antes de darla por perdida.
@@ -193,11 +245,27 @@ int main(void) {
     i2c1_nb_init();
     printf("[i2c] camino por IRQ armado (I2C1_EV/ER, prioridad NVIC 3)\r\n");
 
+#if (NB_SINGLE_SHOT == 1)
+    printf("\r\n[shot] 5 lecturas aisladas, 200 ms entre una y otra:\r\n");
+    for (int k = 0; k < 5; k++) {
+        uint16_t raw_s = 0U;
+        i2c_status_t st = nb_one_shot(&raw_s);
+
+        if (st == I2C_OK) {
+            printf("[shot] %d: OK  raw=%u\r\n", k, (unsigned)raw_s);
+        } else {
+            nb_report_failure("shot");
+        }
+        delay_ms(200U);
+    }
+#endif
+
 #if (THROUGHPUT_TEST == 1)
     {
         uint16_t raw_tp  = 0U;
         uint32_t aborts  = 0U;
         uint32_t err0    = i2c1_nb_errors();
+        printf("\r\n[perf] martilleando 1 s sin pausa...\r\n");
         uint32_t reads   = nb_pump(1000U, &raw_tp, &aborts);
 
         printf("[perf] %lu lecturas/s  (teorico ~2200 a 100kHz)\r\n",
@@ -205,9 +273,14 @@ int main(void) {
         printf("[perf] errores=%lu  abortadas=%lu  ultimo raw=%u\r\n",
                (unsigned long)(i2c1_nb_errors() - err0),
                (unsigned long)aborts, (unsigned)raw_tp);
-        printf("[perf] refresco interno del AS5600 ~7 kHz: %s\r\n",
-               (reads >= 7000U) ? "el bus NO es el cuello de botella"
-                                : "el bus limita, el sensor tiene mas que dar");
+        if (i2c1_nb_errors() != err0) {
+            nb_report_failure("perf");
+        }
+        if (reads > 0U) {
+            printf("[perf] refresco interno del AS5600 ~7 kHz: %s\r\n",
+                   (reads >= 7000U) ? "el bus NO es el cuello de botella"
+                                    : "el bus limita, el sensor tiene mas que dar");
+        }
     }
 #endif
 #endif

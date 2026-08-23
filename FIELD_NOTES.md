@@ -3474,7 +3474,7 @@ en lazos rápidos, SPI suele ganar (ver el plan B de N1.8: AS5048A/AS5047P).
 ### Detalle 2 — La máquina de estados: cuatro toques en el hombro
 
 El driver por IRQ reproduce exactamente la secuencia que ya estaba validada en polling, pero
-cortada en los puntos donde el hardware avisa:
+cortada en los cinco puntos donde el hardware avisa:
 
 | Evento | Estado | Qué hace el handler |
 |---|---|---|
@@ -3483,7 +3483,7 @@ cortada en los puntos donde el hardware avisa:
 | `RXNE` ×2 | recibiendo | `buf[i] = RXDR` |
 | `STOPF` | fin | cierra, publica el estado, incrementa el contador |
 
-Cuatro interrupciones de ~1 µs contra 450 µs de bus: **menos del 1 % de CPU**. El resto del
+Cinco interrupciones de ~1 µs contra 450 µs de bus: **menos del 1 % de CPU**. El resto del
 tiempo el periférico trabaja solo.
 
 ### Detalle 3 — La garantía que autoriza el diseño (lo importante de la nota)
@@ -3519,7 +3519,7 @@ periférico con requisitos duros de tiempo en esa misma prioridad.
 
 ### Detalle 4 — Por qué IRQ y no DMA
 
-El DMA baja de 4 eventos a 2 (una transferencia de escritura, una de lectura). A cambio hay
+El DMA baja de 5 eventos a 2 (una transferencia de escritura, una de lectura). A cambio hay
 que configurar DMAMUX, reservar dos canales y cuidar la coherencia del buffer.
 
 Cuentas: ahorra ~2 µs de cada 450 µs de transacción. **0.4 % de un 1 %.** Se implementa la

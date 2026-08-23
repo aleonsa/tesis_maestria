@@ -118,8 +118,9 @@ void i2c1_dump_regs(void);
  *
  * El llamador arranca la transferencia y sigue con lo suyo; una máquina de
  * estados en I2C1_EV_IRQHandler la lleva hasta el final y deja los bytes en un
- * buffer interno. Cuatro eventos por lectura de 2 bytes: TXIS (escribe el
- * puntero de registro), TC (repeated-START), RXNE (xN), STOPF (cierra).
+ * buffer interno. Cinco eventos por lectura de 2 bytes: TXIS (escribe el
+ * puntero de registro), TC (repeated-START), RXNE una vez por byte, STOPF
+ * (cierra).
  *
  * POR QUÉ ES SEGURO CORRERLO POR DEBAJO DEL CONTROL (prio 3 contra prio 1):
  * en los tres puntos donde esta máquina tiene que actuar, el maestro ESTIRA
@@ -198,9 +199,19 @@ uint32_t i2c1_nb_seq(void);
 uint32_t i2c1_nb_errors(void);
 
 /*
- * Foto del I2C_ISR en el instante del último fallo de bus (BERR/ARLO/OVR).
- * Sin esto, I2C_ERR_BUS no dice cuál de los tres fue.
+ * Foto del I2C_ISR en el instante del último fallo, cualquiera que sea. Sin
+ * esto un I2C_ERR_BUS no dice cuál de los tres flags fue, y un NACK no dice en
+ * qué punto del bus estábamos.
  */
 uint32_t i2c1_nb_err_isr(void);
+
+/*
+ * Nombre de la fase en la que murió la última transferencia fallida. Junto con
+ * el status y el err_isr, es lo que convierte "falla" en un diagnóstico.
+ */
+const char *i2c1_nb_err_phase(void);
+
+/* Status del último fallo. Sobrevive al i2c1_nb_take() que lo consumió. */
+i2c_status_t i2c1_nb_err_status(void);
 
 #endif

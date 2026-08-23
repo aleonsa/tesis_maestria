@@ -367,9 +367,9 @@ void i2c1_dump_regs(void) {
  * refresco interno del AS5600) en vez de a la de la ISR, y extrapolar θ en los
  * ciclos intermedios con la ω estimada— viven en la capa de arriba.
  *
- * Coste para la CPU: 4 IRQ por lectura, cada una mueve un byte o reprograma
- * CR2. Del orden de 1 µs cada una contra 450 µs de bus, menos del 1% de
- * ocupación. Por qué IRQ y no DMA: el DMA baja de 4 eventos a 2, pero paga
+ * Coste para la CPU: 5 IRQ por lectura de 2 bytes, cada una mueve un byte o
+ * reprograma CR2. Del orden de 1 µs cada una contra 450 µs de bus, menos del 1% de
+ * ocupación. Por qué IRQ y no DMA: el DMA baja de 5 eventos a 2, pero paga
  * DMAMUX, dos canales y coherencia de buffer para ahorrar ~2 µs de cada 450.
  * Se mide primero; si el número molesta, se escala con datos.
  * ═════════════════════════════════════════════════════════════════════════
@@ -388,6 +388,15 @@ typedef enum {
     NB_PH_RX,           /* repeated-START hecho, recibiendo           */
 } nb_phase_t;
 
+static const char *nb_phase_str(nb_phase_t ph) {
+    switch (ph) {
+        case NB_PH_ADDR_W: return "ADDR_W (esperando TXIS)";
+        case NB_PH_REG:    return "REG (esperando TC)";
+        case NB_PH_RX:     return "RX (recibiendo)";
+        default:           return "??";
+    }
+}
+
 /* Sin inicializador: los estáticos arrancan en cero, que es exactamente
  * IDLE / I2C_OK / NB_PH_ADDR_W / contadores a 0. */
 static struct {
@@ -396,6 +405,9 @@ static struct {
     volatile uint32_t       seq;
     volatile uint32_t       errors;
     volatile uint32_t       err_isr;
+    volatile nb_phase_t     err_phase;
+    volatile i2c_status_t   err_status;
+    volatile uint8_t        err_idx;
     nb_phase_t              phase;
     uint8_t                 addr7;
     uint8_t                 reg;
@@ -441,6 +453,16 @@ static void nb_finish(void) {
         nb.seq++;
         nb.state = I2C_NB_DONE;
     } else {
+        /* La foto del fallo se toma AQUÍ, no en cada sitio que pone un status:
+         * un único punto de cierre es también un único punto de captura, y así
+         * no hay forma de añadir un camino de error que se olvide de dejar
+         * rastro. err_isr puede venir ya escrito por el handler de errores; el
+         * de aquí es el estado en el momento del cierre, que es el que importa
+         * para saber dónde nos quedamos. */
+        nb.err_isr    = I2C1->ISR;
+        nb.err_phase  = nb.phase;
+        nb.err_idx    = nb.idx;
+        nb.err_status = nb.status;
         nb.errors++;
         nb.state = I2C_NB_ERR;
     }
@@ -530,9 +552,7 @@ void I2C1_EV_IRQHandler(void) {
 
 void I2C1_ER_IRQHandler(void) {
     /* BERR (START/STOP fuera de sitio), ARLO (arbitraje perdido) y OVR. La
-     * trama está perdida; guardamos el ISR crudo porque el código de error solo
-     * dice "de bus" y en el postmortem hace falta saber cuál de los tres. */
-    nb.err_isr = I2C1->ISR;
+     * trama está perdida. */
     nb.status  = I2C_ERR_BUS;
     I2C1->ICR  = I2C_ICR_BERRCF | I2C_ICR_ARLOCF | I2C_ICR_OVRCF;
 
@@ -559,6 +579,8 @@ i2c_nb_state_t i2c1_nb_state(void) { return nb.state; }
 uint32_t       i2c1_nb_seq(void)     { return nb.seq; }
 uint32_t       i2c1_nb_errors(void)  { return nb.errors; }
 uint32_t       i2c1_nb_err_isr(void) { return nb.err_isr; }
+const char    *i2c1_nb_err_phase(void) { return nb_phase_str(nb.err_phase); }
+i2c_status_t   i2c1_nb_err_status(void) { return nb.err_status; }
 
 i2c_status_t i2c1_nb_take(uint8_t *buf, uint8_t n) {
     switch (nb.state) {
