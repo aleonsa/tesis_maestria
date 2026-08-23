@@ -38,6 +38,7 @@
 - [N1.15 — Race condition latente: regular vs injected en el mismo ADC](#n115--race-condition-latente-regular-vs-injected-en-el-mismo-adc)
 - [N1.16 — Bring-up del AS5600 por I²C1: el sentido de posición](#n116--bring-up-del-as5600-por-i²c1-el-sentido-de-posición)
 - [N1.17 — Bisección: cómo se depura un síntoma que mezcla cuatro cosas](#n117--bisección-cómo-se-depura-un-síntoma-que-mezcla-cuatro-cosas)
+- [N1.18 — La lectura que no cabe en la ISR: I²C no bloqueante](#n118--la-lectura-que-no-cabe-en-la-isr-i²c-no-bloqueante)
 
 ---
 
@@ -706,9 +707,9 @@ De la Tabla 4 del UM2516:
 | PA7 | Curr_fdbk2_OPAmp+ | Shunt 2 |
 | PB14 | Temperature feedback | ADC: NTC en MOSFET |
 | PB13 | N.C. | No conectado |
-| PB6 | ~~I²C1_SCL~~ **libre** | pad A+/H1 de J8. ⚠ AF4 aquí NO es I²C1_SCL — ver [N1.16](#n116--bring-up-del-as5600-por-i²c1-el-sentido-de-posición) |
+| PB6 | **Sonda de la ISR** (GPIO puro) | pad A+/H1 de J8. ⚠ AF4 aquí está VACÍA: no sirve para I²C ni para ningún AF — ver [N1.16](#n116--bring-up-del-as5600-por-i²c1-el-sentido-de-posición). Como GPIO va perfecto, así que aquí vive el toggle de `ADC1_2_IRQHandler` |
 | PB7 | I²C1_SDA | AS5600 SDA (J8) |
-| PB8 | I/O libre (J8 pad Z+/H3) | Reservado para instrumentación con scope |
+| PB8 | **I²C1_SCL** | AS5600 SCL (pad Z+/H3 de J8). Fue pin de sonda hasta [N1.18](#n118--la-lectura-que-no-cabe-en-la-isr-i²c-no-bloqueante); la sonda se mudó a PB6 para no hundir el bus |
 | PC6 | LED STATUS | LED user del blink |
 
 ### Por qué importa
@@ -3410,5 +3411,180 @@ atribuible a la red y no al AF, y la prueba no habría concluido nada.
 ### La regla en una línea
 
 **Antes de arreglar, aísla. Antes de aislar, busca la prueba que parta el problema en dos.**
+
+---
+
+## N1.18 — La lectura que no cabe en la ISR: I²C no bloqueante
+
+### Panorama
+
+El AS5600 ya leía bien al cerrar N1.16, y aun así el sensado de posición seguía sin servir
+para el lazo de control. El motivo no es un bug: es aritmética.
+
+```
+  lectura de ángulo por I²C a 100 kHz  ....  ~450 µs
+  periodo de la ISR de control a 50 kHz ...    20 µs
+                                             ────────
+  la lectura tarda 22× MÁS que el ciclo entero
+```
+
+No hay forma de acomodar eso. Subir el bus a Fast Mode Plus (1 MHz) deja la lectura en
+~45 µs, que sigue siendo **más del doble** del presupuesto completo del ciclo. Ninguna
+cantidad de afinado cierra un hueco de ese tamaño; lo que hay que cambiar es la forma del
+problema, no el número.
+
+La salida tiene tres piezas, y esta nota cubre la primera:
+
+1. **La transferencia avanza sola** (IRQ o DMA), sin que nadie la espere. ← esta nota
+2. **Leer a la tasa real del sensor** (~7 kHz de refresco interno), no a la de la ISR.
+3. **Extrapolar θ** en los ciclos intermedios con la velocidad estimada.
+
+### Analogía — el pedido que se deja encargado
+
+La versión bloqueante es ir a la ferretería, pedir un tornillo y **quedarse parado frente al
+mostrador** hasta que te lo traen del almacén. Si el resto de tu día está partido en bloques
+de 20 segundos y el encargado tarda 7 minutos, tu día no existe.
+
+La versión por IRQ es dejar el pedido encargado y seguir trabajando. Cuando el encargado
+tiene algo que decirte, te toca el hombro; cada toque te cuesta un segundo. El pedido sigue
+tardando 7 minutos —eso no cambió— pero ya no son *tus* 7 minutos.
+
+Y aquí está lo que hace que el arreglo funcione de verdad: **si estás ocupado cuando te toca
+el hombro, el encargado espera con el tornillo en la mano.** No lo tira ni se lo da a otro.
+Esa cortesía, en el I²C, se llama *clock stretching*, y es lo que permite darle a la
+transferencia una prioridad más baja que al lazo de control.
+
+### Detalle 1 — De dónde salen los 450 µs
+
+Una lectura de registro en I²C no es "pedir 2 bytes". Es esto:
+
+| Tramo | Pulsos de SCL |
+|---|---|
+| START + dirección (7 bits) + R/W + ACK | 9 |
+| Byte de registro (0x0C) + ACK | 9 |
+| repeated-START + dirección + R/W + ACK | 9 |
+| Dato 0x0C + ACK | 9 |
+| Dato 0x0D + NACK final | 9 |
+| **Total** | **~45** |
+
+A 100 kHz cada pulso son 10 µs. 45 × 10 µs = 450 µs. El dato útil son 12 bits; el protocolo
+cuesta el resto. Esa desproporción es normal en I²C y es la razón por la que, para sensores
+en lazos rápidos, SPI suele ganar (ver el plan B de N1.8: AS5048A/AS5047P).
+
+### Detalle 2 — La máquina de estados: cuatro toques en el hombro
+
+El driver por IRQ reproduce exactamente la secuencia que ya estaba validada en polling, pero
+cortada en los puntos donde el hardware avisa:
+
+| Evento | Estado | Qué hace el handler |
+|---|---|---|
+| `TXIS` | esperando el puntero | escribe `TXDR = 0x0C` |
+| `TC` | puntero enviado | reprograma CR2 (RD_WRN, AUTOEND) y pide repeated-START |
+| `RXNE` ×2 | recibiendo | `buf[i] = RXDR` |
+| `STOPF` | fin | cierra, publica el estado, incrementa el contador |
+
+Cuatro interrupciones de ~1 µs contra 450 µs de bus: **menos del 1 % de CPU**. El resto del
+tiempo el periférico trabaja solo.
+
+### Detalle 3 — La garantía que autoriza el diseño (lo importante de la nota)
+
+La pregunta que decide si esto es viable no es "¿funciona?", sino: **¿qué pasa si la ISR de
+control interrumpe al I²C en mitad de una trama?**
+
+Si la respuesta fuera "se pierde un byte", habría que poner el I²C *por encima* del lazo de
+control, y un periférico de sensado retrasando el control es inaceptable. Por eso esto se
+verificó en el manual **antes** de escribir la primera línea:
+
+> **RM0440 Rev 9 §39.4.7:** *"If TXE = 1, which means that no data is written yet in
+> I2C_TXDR, **the SCL line is stretched low until I2C_TXDR is written**. The stretch starts
+> after the ninth SCL pulse."*
+>
+> *"If RXNE = 1, which means that the previous received data byte has not yet been read,
+> **the SCL line is stretched low until I2C_RXDR is read**."*
+>
+> **§39.4.9, con AUTOEND = 0:** *"the TC flag is set and **the SCL line is stretched low**,
+> to perform software actions"*.
+
+Los tres puntos donde la máquina de estados tiene que actuar son exactamente los tres puntos
+donde el maestro **agarra el reloj y detiene el bus** hasta que lo atendamos. Llegar tarde
+alarga la transacción; no pierde ni corrompe nada.
+
+Conclusión operativa: **I²C en prioridad NVIC 3, control en 1** (0 reservada para faults).
+El control siempre preempta, y el costo es que alguna lectura tarde un poco más.
+
+Corolario menos obvio: eso significa que **el tiempo de transacción del I²C no es
+determinista** y depende de la carga de la ISR. Da igual para el ángulo —el sensor se muestrea
+cuando se muestrea, y el PLL absorbe el jitter— pero sería fatal si algún día se cuelga un
+periférico con requisitos duros de tiempo en esa misma prioridad.
+
+### Detalle 4 — Por qué IRQ y no DMA
+
+El DMA baja de 4 eventos a 2 (una transferencia de escritura, una de lectura). A cambio hay
+que configurar DMAMUX, reservar dos canales y cuidar la coherencia del buffer.
+
+Cuentas: ahorra ~2 µs de cada 450 µs de transacción. **0.4 % de un 1 %.** Se implementa la
+versión medible primero; si el número molesta, se escala con datos y no con intuición. Los
+dos canales de DMA, además, probablemente valgan más en el ADC o en el UART de telemetría.
+
+### Detalle 5 — Un comentario que era verdad y dejó de serlo
+
+`adc.c` usaba PB8 como pin de sonda para medir la ISR con el osciloscopio, y lo justificaba
+así:
+
+```c
+/* PB8 corresponde a Z+/H3 del J8, reservado en sesión 2 para esto.
+ * No interfiere con I²C1 (PB6/PB7, AS5600) ... */
+```
+
+Era cierto cuando se escribió. Dejó de serlo en N1.16, al descubrir que **I2C1_SCL vive en
+PB8**, no en PB6. El resultado, de no haberlo visto: un `MODER = 01` push-pull sobre el SCL
+del encoder, y un bus muerto en cuanto se fusionen control y sensado. Silencioso, además,
+porque `adc.c` no menciona el I²C por ningún lado.
+
+Arreglo: la sonda se mueve a **PB6**, que quedó libre justo por la razón que lo hacía inútil
+para el bus (su casilla AF4 está vacía) pero que como GPIO puro funciona perfectamente.
+
+La lección no es "revisa los pines". Es que **un comentario que afirma algo sobre otro
+subsistema es una aserción sin test**: nada la revalida cuando el otro subsistema cambia.
+Los que dicen "no interfiere con X" son los más peligrosos, porque son los que más se creen.
+
+### Detalle 6 — Dos correcciones de manual de propina
+
+**a) `i2c1_reset_peripheral()` medía el tiempo del lado equivocado.** El código giraba un
+bucle de 100 iteraciones `volatile` entre `PE = 0` y `PE = 1`. La secuencia que prescribe ST
+(§39.4.6) no es un retardo, es una **relectura**:
+
+> *"PE must be kept low during at least three APB clock cycles. To ensure this, perform the
+> following software sequence: 1. Write PE = 0  2. **Check PE = 0**  3. Write PE = 1"*
+
+La lectura del bus APB no retorna hasta que el ciclo termina, así que garantiza el mínimo sin
+depender de cuántos NOP deje el compilador con `-Og` frente a `-O2`. El bucle funcionaba por
+accidente.
+
+**b) Los números de capítulo del RM0440 cambian entre revisiones.** Los comentarios citaban
+"§40 (I2C)" y "§11 (GPIO)"; en la **Rev 9**, que es la que está en `papers/`, el I²C es
+**§39** y el GPIO es **§9** (§40 es el USART). Una referencia cruzada que apunta a otro
+capítulo es peor que ninguna: manda a leer lo que no es. Desde ahora las citas del firmware
+llevan la revisión explícita.
+
+### Por qué importa
+
+1. **El presupuesto de tiempo es un requisito de diseño, no un detalle de implementación.**
+   "Funciona en el banco a 10 Hz" y "cabe en un lazo de 50 kHz" son preguntas distintas, y la
+   segunda no se contesta optimizando la primera.
+
+2. **Verificar la garantía antes de escribir el código ahorró la sesión.** Si el hardware no
+   estirara SCL, todo el diseño de prioridades estaría al revés y se habría descubierto
+   depurando corrupción intermitente de tramas — el peor bug posible, porque aparece solo
+   bajo carga.
+
+3. **El driver no lleva reloj a propósito.** No hay timeout dentro de la máquina de estados:
+   el que sabe a qué ritmo corre es el consumidor, y es él quien decide cuándo llamar a
+   `i2c1_nb_abort()`. Meter un timeout en el driver habría significado inventarle un tick que
+   no tiene.
+
+4. **El contador `seq` en vez de un flag de "hay dato nuevo".** Un flag se pierde si el
+   consumidor llega tarde dos veces seguidas; un contador monótono deja ver *cuántas* se
+   perdieron. La diferencia cuesta cero y convierte un fallo invisible en una métrica.
 
 ---

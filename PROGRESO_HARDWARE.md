@@ -5,14 +5,49 @@
 
 ---
 
+## Sesión 13 — 2026-08-18 — I²C no bloqueante por IRQ (el encoder ya cabe en el lazo)
+
+**Hito**: la lectura del AS5600 deja de bloquear. Máquina de estados por interrupción, 4 eventos por lectura, <1 % de CPU. Con esto el sensado de posición ya es compatible con la ISR de 50 kHz. Sin flashear todavía.
+
+### Verificado en el manual ANTES de escribir código
+
+- **RM0440 Rev 9 §39.4.7 / §39.4.9**: el maestro **estira SCL** en los tres puntos donde la máquina de estados tiene que actuar (TXE, RXNE, TC con AUTOEND=0). Esto es lo que autoriza correr el I²C en **prioridad NVIC 3** por debajo del control (prio 1): que el control preempte solo alarga la transacción, no pierde ni corrompe un byte. Sin esta garantía todo el diseño de prioridades estaría al revés.
+- **Los capítulos del RM0440 se renumeran entre revisiones.** En la Rev 9 (la de `papers/`) el I²C es **§39** y el GPIO es **§9**; los comentarios decían §40 y §11, que apuntan a otra cosa. Corregido, y desde ahora las citas llevan la revisión explícita.
+- **Vectores confirmados en el binario**, no asumidos: offset `0x00BC` = `I2C1_EV_IRQHandler`, `0x00C0` = `I2C1_ER_IRQHandler`.
+
+### Implementado
+
+- **`lib/i2c.{c,h}` y `lib/as5600.{c,h}`** — promovidos desde `apps/03_as5600/src/`. El lazo de control los necesita y duplicarlos garantizaba divergencia. `swi2c` se queda en la app: es red de seguridad de bring-up, no código de producción.
+- **Camino no bloqueante** en `i2c.c`: `i2c1_nb_init()`, `i2c1_read_regs_start()`, `i2c1_nb_take()`, `i2c1_nb_abort()`, contadores `seq`/`errors` y foto del ISR en fallo de bus. Estados IDLE/BUSY/DONE/ERR, cierre en un único punto (`nb_finish`, solo desde BUSY) para que un STOPF tardío no cuente dos veces.
+- **Sin timeout propio, a propósito**: el driver no tiene reloj. El plazo lo pone el consumidor, que sabe a qué ritmo corre.
+- **`as5600_raw_angle_start()` / `_take()`** — el desempaquetado de 12 bits queda en un solo sitio para los dos caminos.
+- **`i2c1_reset_peripheral()` corregido**: la secuencia de ST (§39.4.6) es `PE=0` → **releer PE** → `PE=1`, no un retardo. El bucle de 100 iteraciones `volatile` que había funcionaba por accidente.
+- **Colisión de pines resuelta**: `adc.c` usaba **PB8** como sonda de scope de la ISR, y PB8 es I2C1_SCL. Un `MODER=01` push-pull ahí habría hundido el bus al fusionar encoder y control, en silencio. Sonda movida a **PB6**, libre justo porque su AF4 está vacía pero como GPIO puro va perfecto.
+- **`03_as5600/main.c`**: modo de banco `USE_NONBLOCKING` que ejerce el patrón start/poll/take, más `THROUGHPUT_TEST` que mide lecturas/s reales durante 1 s.
+- **`FIELD_NOTES.md` N1.18** — nota pedagógica completa, incluido el mapa de pines actualizado.
+
+### Estado
+
+Compila limpio en el Mac (`arm-none-eabi-gcc` 15.2.1, `-Wall -Wextra`, sin warnings). **No flasheado.**
+
+### Para la sesión siguiente
+
+1. **Flashear `03_as5600` y leer `[perf] N lecturas/s`.** Es la medición que decide si hace falta Fast Mode: teórico ~2200 a 100 kHz contra ~7 kHz de refresco interno del AS5600. Si el bus limita y queremos subir a 400 kHz, hay que mirar con scope los tiempos de subida sobre la red de J8 (1.8 kΩ serie + 10 kΩ pull-up, pensada para Hall push-pull) antes de dar por bueno el cambio.
+2. **Observador PLL tipo II** para θ/ω en punto fijo, θ como acumulador Q32 de una vuelta eléctrica (coherente con `OPENLOOP_DELTA_Q32`). Filtra el ruido de cuantificación (~24 rad/s si se deriva θ a pelo) y da la extrapolación gratis.
+3. **App `04_theta_pll`** a 50 kHz por timer, sin PWM/ADC/motor, validada girando el rotor a mano: θ̂ continuo entre muestras y ω̂ limpio.
+4. **Compensación de latencia** como adelanto constante en cuentas: ~450 µs de transacción + ~150 µs de refresco son ~19° eléctricos a 80 rad/s mecánicos con P=7. Sin corregir, el ADALINE aprendería una BEMF rotada — indistinguible de un offset de fase A mal puesto.
+5. **Offset θ_e ↔ fase A** (necesita Vbus y motor) y **presupuesto completo de ISR** (Clarke + M²PC + LMS juntos) siguen fuera de este bloque.
+
+---
+
 ## Sesión 10 — 2026-05-22/23 — ISR JEOS funcionando (Semana 6 abre)
 
-**Hito**: lazo de control a 50 kHz montado. ISR JEOS entra cada 20 μs, lee i_a/i_b/i_c en globals, toca PB8 para instrumentación. Cierre del primer paso del plan de Semana 6.
+**Hito**: lazo de control a 50 kHz montado. ISR JEOS entra cada 20 μs, lee i_a/i_b/i_c en globals, toca PB8 para instrumentación (la sonda se movió a **PB6** en la sesión 13: PB8 es I2C1_SCL). Cierre del primer paso del plan de Semana 6.
 
 ### Implementado
 
 - `apps/02_pwm_adc/src/adc.h` — declara globals `g_ia_raw / g_ib_raw / g_ic_raw / g_isr_count` (volatile) y la API `adc_isr_init()`.
-- `apps/02_pwm_adc/src/adc.c` — `adc_isr_init()` habilita JEOSIE en ADC2, configura PB8 como output, registra el handler con prioridad 1 en NVIC. `ADC1_2_IRQHandler()` togglea PB8, lee los 3 JDR, incrementa counter, limpia flag.
+- `apps/02_pwm_adc/src/adc.c` — `adc_isr_init()` habilita JEOSIE en ADC2, configura PB8 como output (hoy PB6, ver sesión 13), registra el handler con prioridad 1 en NVIC. `ADC1_2_IRQHandler()` togglea la sonda, lee los 3 JDR, incrementa counter, limpia flag.
 - `apps/02_pwm_adc/src/main.c` — llama `adc_isr_init()` entre `adc_init()` y `pwm_enable()`. El while reporta `isr_count` y Δ por segundo.
 - `FIELD_NOTES.md` N1.14 — nota pedagógica: panorama, analogía (médico de guardia con busca), detalle de JEOS, NVIC, latencia/jitter, reglas de oro para handlers, decisión "JEOSIE en ADC2 no ADC1" justificada.
 
