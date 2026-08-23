@@ -388,6 +388,14 @@ typedef enum {
     NB_PH_RX,           /* repeated-START hecho, recibiendo           */
 } nb_phase_t;
 
+/* Bits de la traza de eventos. */
+#define NB_EV_TXIS    (1U << 0)
+#define NB_EV_TC      (1U << 1)
+#define NB_EV_RXNE    (1U << 2)
+#define NB_EV_STOPF   (1U << 3)
+#define NB_EV_NACKF   (1U << 4)
+#define NB_EV_ERR     (1U << 5)
+
 static const char *nb_phase_str(nb_phase_t ph) {
     switch (ph) {
         case NB_PH_ADDR_W: return "ADDR_W (esperando TXIS)";
@@ -407,6 +415,12 @@ static struct {
     volatile uint32_t       err_isr;
     volatile nb_phase_t     err_phase;
     volatile i2c_status_t   err_status;
+    /* Traza de la última transferencia. No es adorno: sin ella, "STOP sin
+     * datos" tiene varias causas indistinguibles desde fuera. */
+    volatile uint16_t       ev;         /* bitmask NB_EV_*                   */
+    volatile uint16_t       irqs;       /* entradas al handler de eventos    */
+    volatile uint32_t       cr2_rx;     /* CR2 tal como quedó para la lectura*/
+    volatile uint32_t       isr_tc;     /* ISR en el momento del TC          */
     volatile uint8_t        err_idx;
     nb_phase_t              phase;
     uint8_t                 addr7;
@@ -483,6 +497,10 @@ i2c_status_t i2c1_read_regs_start(uint8_t addr7, uint8_t reg, uint8_t n) {
     nb.idx    = 0U;
     nb.phase  = NB_PH_ADDR_W;
     nb.status = I2C_OK;
+    nb.ev     = 0U;
+    nb.irqs   = 0U;
+    nb.cr2_rx = 0U;
+    nb.isr_tc = 0U;
     /* Todo el contexto escrito ANTES de mover el periférico: llamada desde
      * código de fondo, la IRQ puede dispararse en la instrucción siguiente al
      * START y encontrarse la estructura a medio llenar. */
@@ -502,18 +520,21 @@ i2c_status_t i2c1_read_regs_start(uint8_t addr7, uint8_t reg, uint8_t n) {
 
 void I2C1_EV_IRQHandler(void) {
     uint32_t isr = I2C1->ISR;
+    nb.irqs++;
 
     /* NACK. El hardware manda el STOP por su cuenta incluso con AUTOEND=0
      * (§39.4.9: «When a NACK is received, the TXIS flag is not set and a STOP
      * condition is automatically sent»), así que aquí solo anotamos la causa y
      * dejamos que STOPF cierre. Un único punto de cierre, sin caminos gemelos. */
     if ((isr & I2C_ISR_NACKF) != 0U) {
+        nb.ev |= NB_EV_NACKF;
         I2C1->ICR = I2C_ICR_NACKCF;
         nb.status = (nb.phase == NB_PH_REG) ? I2C_ERR_NACK_DATA
                                             : I2C_ERR_NACK_ADDR;
     }
 
     if ((isr & I2C_ISR_TXIS) != 0U) {
+        nb.ev |= NB_EV_TXIS;
         I2C1->TXDR = nb.reg;          /* escribir TXDR es lo que baja TXIS */
         nb.phase   = NB_PH_REG;
     }
@@ -527,6 +548,10 @@ void I2C1_EV_IRQHandler(void) {
                   | I2C_CR2_AUTOEND;
         I2C1->CR2 |= I2C_CR2_START;
         nb.phase   = NB_PH_RX;
+
+        nb.ev    |= NB_EV_TC;
+        nb.isr_tc = isr;
+        nb.cr2_rx = I2C1->CR2;        /* lo que de verdad quedó programado */
     }
 
     /* RXDR se lee SIEMPRE que RXNE esté alto, aunque el buffer ya esté lleno:
@@ -534,6 +559,7 @@ void I2C1_EV_IRQHandler(void) {
      * RXIE armado es una tormenta de interrupciones. El descarte se decide
      * después, sobre el dato ya sacado. */
     if ((isr & I2C_ISR_RXNE) != 0U) {
+        nb.ev |= NB_EV_RXNE;
         uint8_t d = (uint8_t)I2C1->RXDR;
         if (nb.idx < nb.n) nb.buf[nb.idx++] = d;
     }
@@ -542,6 +568,7 @@ void I2C1_EV_IRQHandler(void) {
      * estar pendientes en la misma entrada al handler, y drenar RXDR antes
      * evita perderlo. */
     if ((isr & I2C_ISR_STOPF) != 0U) {
+        nb.ev |= NB_EV_STOPF;
         I2C1->ICR = I2C_ICR_STOPCF;
         if ((nb.status == I2C_OK) && (nb.idx < nb.n)) {
             nb.status = I2C_ERR_INCOMPLETE;
@@ -554,6 +581,7 @@ void I2C1_ER_IRQHandler(void) {
     /* BERR (START/STOP fuera de sitio), ARLO (arbitraje perdido) y OVR. La
      * trama está perdida. */
     nb.status  = I2C_ERR_BUS;
+    nb.ev     |= NB_EV_ERR;
     I2C1->ICR  = I2C_ICR_BERRCF | I2C_ICR_ARLOCF | I2C_ICR_OVRCF;
 
     /* A diferencia del NACK, aquí el hardware NO manda STOP solo: lo pedimos y
@@ -581,6 +609,15 @@ uint32_t       i2c1_nb_errors(void)  { return nb.errors; }
 uint32_t       i2c1_nb_err_isr(void) { return nb.err_isr; }
 const char    *i2c1_nb_err_phase(void) { return nb_phase_str(nb.err_phase); }
 i2c_status_t   i2c1_nb_err_status(void) { return nb.err_status; }
+
+void i2c1_nb_trace(i2c_nb_trace_t *t) {
+    t->ev     = nb.ev;
+    t->irqs   = nb.irqs;
+    t->cr2_rx = nb.cr2_rx;
+    t->isr_tc = nb.isr_tc;
+    t->idx    = nb.err_idx;
+    t->n      = nb.n;
+}
 
 i2c_status_t i2c1_nb_take(uint8_t *buf, uint8_t n) {
     switch (nb.state) {

@@ -120,6 +120,30 @@ static void nb_report_failure(const char *tag) {
            (isr & I2C_ISR_BERR)  ? 1U : 0U,
            (isr & I2C_ISR_ARLO)  ? 1U : 0U,
            (isr & I2C_ISR_OVR)   ? 1U : 0U);
+
+    i2c_nb_trace_t t;
+    i2c1_nb_trace(&t);
+    printf("[%s]   eventos: TXIS=%u TC=%u RXNE=%u STOPF=%u NACKF=%u ERR=%u "
+           "| irqs=%u  bytes=%u/%u\r\n",
+           tag,
+           (t.ev & (1U << 0)) ? 1U : 0U,
+           (t.ev & (1U << 1)) ? 1U : 0U,
+           (t.ev & (1U << 2)) ? 1U : 0U,
+           (t.ev & (1U << 3)) ? 1U : 0U,
+           (t.ev & (1U << 4)) ? 1U : 0U,
+           (t.ev & (1U << 5)) ? 1U : 0U,
+           (unsigned)t.irqs, (unsigned)t.idx, (unsigned)t.n);
+    printf("[%s]   CR2 de lectura=0x%08lX  (SADD=0x%02lX NBYTES=%lu RD_WRN=%lu "
+           "AUTOEND=%lu START=%lu STOP=%lu)  ISR@TC=0x%08lX\r\n",
+           tag,
+           (unsigned long)t.cr2_rx,
+           (unsigned long)((t.cr2_rx >> 1) & 0x7FU),
+           (unsigned long)((t.cr2_rx >> 16) & 0xFFU),
+           (unsigned long)((t.cr2_rx & I2C_CR2_RD_WRN)  ? 1U : 0U),
+           (unsigned long)((t.cr2_rx & I2C_CR2_AUTOEND) ? 1U : 0U),
+           (unsigned long)((t.cr2_rx & I2C_CR2_START)   ? 1U : 0U),
+           (unsigned long)((t.cr2_rx & I2C_CR2_STOP)    ? 1U : 0U),
+           (unsigned long)t.isr_tc);
 }
 
 /*

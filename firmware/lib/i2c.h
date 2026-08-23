@@ -214,4 +214,20 @@ const char *i2c1_nb_err_phase(void);
 /* Status del último fallo. Sobrevive al i2c1_nb_take() que lo consumió. */
 i2c_status_t i2c1_nb_err_status(void);
 
+/*
+ * Traza de la última transferencia. "STOP sin datos" tiene varias causas que
+ * desde fuera son indistinguibles: hace falta saber qué eventos entraron, con
+ * qué CR2 se programó la fase de lectura, y cuántos bytes se guardaron.
+ */
+typedef struct {
+    uint16_t ev;        /* bitmask: 1=TXIS 2=TC 4=RXNE 8=STOPF 16=NACKF 32=ERR */
+    uint16_t irqs;      /* entradas al handler de eventos                      */
+    uint32_t cr2_rx;    /* CR2 leído justo tras programar la fase de lectura    */
+    uint32_t isr_tc;    /* ISR en el momento del TC                            */
+    uint8_t  idx;       /* bytes guardados al cerrar                           */
+    uint8_t  n;         /* bytes pedidos                                       */
+} i2c_nb_trace_t;
+
+void i2c1_nb_trace(i2c_nb_trace_t *t);
+
 #endif
