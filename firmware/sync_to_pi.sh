@@ -35,5 +35,7 @@ rsync -av --delete \
 echo
 echo "Sync completo. Próximos pasos en el Pi:"
 echo "  ssh raspi"
-echo "  cd ~/projects/stm32g4/firmware/blink"
+echo "  cd ~/projects/stm32g4/firmware"
 echo "  cmake -B build && cmake --build build"
+echo
+echo "El build es del árbol entero: build/apps/<app>/<app>.elf"
