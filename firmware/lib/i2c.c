@@ -388,6 +388,18 @@ typedef enum {
     NB_PH_RX,           /* repeated-START hecho, recibiendo           */
 } nb_phase_t;
 
+/*
+ * Bitácora ordenada de entradas al handler. Se llena hasta el tope y deja de
+ * escribir: interesan las PRIMERAS interrupciones de la transferencia, que es
+ * donde se decide todo, no las últimas.
+ */
+static struct {
+    uint32_t isr;
+    uint32_t cr2;
+} nb_log[I2C_NB_LOG_N];
+
+static volatile uint8_t nb_log_n;
+
 /* Bits de la traza de eventos. */
 #define NB_EV_TXIS    (1U << 0)
 #define NB_EV_TC      (1U << 1)
@@ -501,6 +513,7 @@ i2c_status_t i2c1_read_regs_start(uint8_t addr7, uint8_t reg, uint8_t n) {
     nb.irqs   = 0U;
     nb.cr2_rx = 0U;
     nb.isr_tc = 0U;
+    nb_log_n  = 0U;
     /* Todo el contexto escrito ANTES de mover el periférico: llamada desde
      * código de fondo, la IRQ puede dispararse en la instrucción siguiente al
      * START y encontrarse la estructura a medio llenar. */
@@ -521,6 +534,14 @@ i2c_status_t i2c1_read_regs_start(uint8_t addr7, uint8_t reg, uint8_t n) {
 void I2C1_EV_IRQHandler(void) {
     uint32_t isr = I2C1->ISR;
     nb.irqs++;
+
+    /* Foto al ENTRAR, antes de limpiar ningún flag: es el estado que provocó
+     * esta interrupción, no el que dejamos después de manosearlo. */
+    if (nb_log_n < I2C_NB_LOG_N) {
+        nb_log[nb_log_n].isr = isr;
+        nb_log[nb_log_n].cr2 = I2C1->CR2;
+        nb_log_n++;
+    }
 
     /* NACK. El hardware manda el STOP por su cuenta incluso con AUTOEND=0
      * (§39.4.9: «When a NACK is received, the TXIS flag is not set and a STOP
@@ -575,6 +596,15 @@ void I2C1_EV_IRQHandler(void) {
         }
         nb_finish();
     }
+}
+
+uint8_t i2c1_nb_log(uint32_t *isr_out, uint32_t *cr2_out, uint8_t max) {
+    uint8_t k = (nb_log_n < max) ? nb_log_n : max;
+    for (uint8_t i = 0U; i < k; i++) {
+        isr_out[i] = nb_log[i].isr;
+        cr2_out[i] = nb_log[i].cr2;
+    }
+    return k;
 }
 
 void I2C1_ER_IRQHandler(void) {

@@ -144,6 +144,29 @@ static void nb_report_failure(const char *tag) {
            (unsigned long)((t.cr2_rx & I2C_CR2_START)   ? 1U : 0U),
            (unsigned long)((t.cr2_rx & I2C_CR2_STOP)    ? 1U : 0U),
            (unsigned long)t.isr_tc);
+
+    /* La secuencia, en orden. Una fila por interrupción. */
+    uint32_t lisr[I2C_NB_LOG_N];
+    uint32_t lcr2[I2C_NB_LOG_N];
+    uint8_t  k = i2c1_nb_log(lisr, lcr2, (uint8_t)I2C_NB_LOG_N);
+
+    printf("[%s]   secuencia de %u IRQ (ISR al entrar / CR2):\r\n", tag, (unsigned)k);
+    for (uint8_t i = 0U; i < k; i++) {
+        printf("[%s]     #%u ISR=0x%08lX [%s%s%s%s%s%s%s] CR2=0x%08lX "
+               "NBYTES=%lu ST=%lu SP=%lu\r\n",
+               tag, (unsigned)i, (unsigned long)lisr[i],
+               (lisr[i] & I2C_ISR_TXIS)  ? "TXIS "  : "",
+               (lisr[i] & I2C_ISR_TC)    ? "TC "    : "",
+               (lisr[i] & I2C_ISR_TCR)   ? "TCR "   : "",
+               (lisr[i] & I2C_ISR_RXNE)  ? "RXNE "  : "",
+               (lisr[i] & I2C_ISR_STOPF) ? "STOPF " : "",
+               (lisr[i] & I2C_ISR_NACKF) ? "NACKF " : "",
+               (lisr[i] & I2C_ISR_BUSY)  ? "BUSY"   : "",
+               (unsigned long)lcr2[i],
+               (unsigned long)((lcr2[i] >> 16) & 0xFFU),
+               (unsigned long)((lcr2[i] & I2C_CR2_START) ? 1U : 0U),
+               (unsigned long)((lcr2[i] & I2C_CR2_STOP)  ? 1U : 0U));
+    }
 }
 
 /*

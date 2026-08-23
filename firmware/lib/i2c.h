@@ -230,4 +230,18 @@ typedef struct {
 
 void i2c1_nb_trace(i2c_nb_trace_t *t);
 
+/*
+ * Bitácora ORDENADA de las entradas al handler de eventos: ISR y CR2 tal como
+ * estaban al entrar, una fila por interrupción.
+ *
+ * El bitmask de i2c_nb_trace_t dice QUÉ eventos hubo pero pierde el ORDEN, y
+ * resulta que el orden era el dato: un RXNE que llega después del cierre y uno
+ * que llega antes ponen el mismo bit. Esto no.
+ *
+ * Copia hasta `max` filas en los arrays del llamador y devuelve cuántas.
+ */
+#define I2C_NB_LOG_N   8U
+
+uint8_t i2c1_nb_log(uint32_t *isr_out, uint32_t *cr2_out, uint8_t max);
+
 #endif
