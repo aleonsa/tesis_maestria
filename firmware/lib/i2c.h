@@ -211,8 +211,22 @@ uint32_t i2c1_nb_err_isr(void);
  */
 const char *i2c1_nb_err_phase(void);
 
-/* Status del último fallo. Sobrevive al i2c1_nb_take() que lo consumió. */
+/*
+ * Status del último CIERRE fallido. Sobrevive al i2c1_nb_take() que lo consumió.
+ *
+ * Devuelve I2C_OK si todavía no ha habido ningún cierre fallido, lo cual NO
+ * significa "la última operación fue bien": una transferencia que no llegó ni a
+ * arrancar (start() rechazado por bus ocupado) no cierra nada y deja esto
+ * intacto. Para saber si hubo cierre, mirar i2c1_nb_closes().
+ */
 i2c_status_t i2c1_nb_err_status(void);
+
+/*
+ * Cierres fallidos acumulados. Sirve para distinguir "falló la transferencia"
+ * de "no hubo transferencia": si esto no se movió, el _err_status y la traza
+ * son de un fallo ANTERIOR y no dicen nada del intento actual.
+ */
+uint32_t i2c1_nb_closes(void);
 
 /*
  * Traza de la última transferencia. "STOP sin datos" tiene varias causas que
@@ -226,6 +240,7 @@ typedef struct {
     uint32_t isr_tc;    /* ISR en el momento del TC                            */
     uint8_t  idx;       /* bytes guardados al cerrar                           */
     uint8_t  n;         /* bytes pedidos                                       */
+    uint32_t closes;    /* cierres fallidos acumulados (ver i2c1_nb_closes)    */
 } i2c_nb_trace_t;
 
 void i2c1_nb_trace(i2c_nb_trace_t *t);

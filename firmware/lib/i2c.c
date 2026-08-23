@@ -639,6 +639,7 @@ uint32_t       i2c1_nb_errors(void)  { return nb.errors; }
 uint32_t       i2c1_nb_err_isr(void) { return nb.err_isr; }
 const char    *i2c1_nb_err_phase(void) { return nb_phase_str(nb.err_phase); }
 i2c_status_t   i2c1_nb_err_status(void) { return nb.err_status; }
+uint32_t       i2c1_nb_closes(void)     { return nb.errors; }
 
 void i2c1_nb_trace(i2c_nb_trace_t *t) {
     t->ev     = nb.ev;
@@ -647,6 +648,7 @@ void i2c1_nb_trace(i2c_nb_trace_t *t) {
     t->isr_tc = nb.isr_tc;
     t->idx    = nb.err_idx;
     t->n      = nb.n;
+    t->closes = nb.errors;
 }
 
 i2c_status_t i2c1_nb_take(uint8_t *buf, uint8_t n) {

@@ -100,10 +100,31 @@ static void delay_ms(uint32_t ms) {
  * periférico en la mano en ese momento. Los tres juntos nombran el bug; el
  * status solo, no.
  */
-static void nb_report_failure(const char *tag) {
+static void nb_report_failure(const char *tag, i2c_status_t returned) {
     uint32_t isr = i2c1_nb_err_isr();
 
-    printf("[%s] %s\r\n", tag, i2c_status_str(i2c1_nb_err_status()));
+    /* Lo PRIMERO, el cable. Un bus con una línea clavada en bajo invalida todo
+     * lo que venga debajo, y sin este renglón se pierde una sesión leyendo
+     * flags de un periférico que no tiene con quién hablar. */
+    uint8_t scl, sda, busy;
+    i2c1_lines(&scl, &sda, &busy);
+    printf("[%s] devolvio: %s\r\n", tag, i2c_status_str(returned));
+    printf("[%s]   lineas: SCL(PB8)=%s SDA(PB7)=%s BUSY=%u%s\r\n",
+           tag, scl ? "HIGH" : "LOW", sda ? "HIGH" : "LOW", (unsigned)busy,
+           (!scl || !sda) ? "   <== LINEA CLAVADA, el bus no es usable" : "");
+
+    /* Si no hubo cierre, todo lo de abajo es de un fallo anterior. Decirlo, en
+     * vez de presentar datos viejos como si fueran de este intento. */
+    i2c_nb_trace_t tr;
+    i2c1_nb_trace(&tr);
+    if (tr.closes == 0U) {
+        printf("[%s]   la transferencia no llego a cerrar: no hay traza de\r\n"
+               "[%s]   este intento (probablemente ni arranco).\r\n", tag, tag);
+        return;
+    }
+
+    printf("[%s] ultimo cierre fallido: %s\r\n",
+           tag, i2c_status_str(i2c1_nb_err_status()));
     printf("[%s]   fase=%s  ISR=0x%08lX\r\n",
            tag, i2c1_nb_err_phase(), (unsigned long)isr);
     printf("[%s]   BUSY=%u TC=%u TCR=%u STOPF=%u NACKF=%u "
@@ -121,8 +142,7 @@ static void nb_report_failure(const char *tag) {
            (isr & I2C_ISR_ARLO)  ? 1U : 0U,
            (isr & I2C_ISR_OVR)   ? 1U : 0U);
 
-    i2c_nb_trace_t t;
-    i2c1_nb_trace(&t);
+    i2c_nb_trace_t t = tr;
     printf("[%s]   eventos: TXIS=%u TC=%u RXNE=%u STOPF=%u NACKF=%u ERR=%u "
            "| irqs=%u  bytes=%u/%u\r\n",
            tag,
@@ -175,7 +195,11 @@ static void nb_report_failure(const char *tag) {
  */
 static i2c_status_t nb_one_shot(uint16_t *raw) {
     i2c_status_t st = i2c1_read_regs_start(AS5600_ADDR7, 0x0CU, 2U);
-    if (st != I2C_OK) return st;          /* ni arrancó */
+    if (st != I2C_OK) {
+        /* No es lo mismo que fallar la transferencia: aquí el bus ni se movió.
+         * Se distingue por el contador de cierres del reporte. */
+        return st;
+    }
 
     uint32_t t0 = g_ticks;
     while (i2c1_nb_state() == I2C_NB_BUSY) {
@@ -301,7 +325,7 @@ int main(void) {
         if (st == I2C_OK) {
             printf("[shot] %d: OK  raw=%u\r\n", k, (unsigned)raw_s);
         } else {
-            nb_report_failure("shot");
+            nb_report_failure("shot", st);
         }
         delay_ms(200U);
     }
@@ -321,7 +345,10 @@ int main(void) {
                (unsigned long)(i2c1_nb_errors() - err0),
                (unsigned long)aborts, (unsigned)raw_tp);
         if (i2c1_nb_errors() != err0) {
-            nb_report_failure("perf");
+            nb_report_failure("perf", i2c1_nb_err_status());
+        } else if (reads == 0U) {
+            /* Cero lecturas y cero cierres: ninguna transferencia arrancó. */
+            nb_report_failure("perf", I2C_ERR_BUSY);
         }
         if (reads > 0U) {
             printf("[perf] refresco interno del AS5600 ~7 kHz: %s\r\n",
@@ -350,10 +377,12 @@ int main(void) {
          * por IRQ; aquí no hay nada que hacer salvo esperar, pero en la ISR de
          * control ese hueco es donde vive el lazo entero. */
         uint32_t aborts = 0U;
-        i2c_status_t r = I2C_OK;
         ok = (nb_pump(5U, &raw, &aborts) > 0U);
-        if (!ok) r = i2c1_nb_state() == I2C_NB_BUSY ? I2C_ERR_BUSY
-                                                    : I2C_ERR_INCOMPLETE;
+        /* El status real del último cierre, no uno inventado a partir del
+         * estado. La versión anterior reportaba INCOMPLETE cuando el driver
+         * estaba en IDLE porque nada había arrancado, que es justo lo que no
+         * hay que hacer con un mensaje de error. */
+        i2c_status_t r = ok ? I2C_OK : i2c1_nb_err_status();
 #else
         i2c_status_t r = as5600_raw_angle(&raw);
         ok = (r == I2C_OK);
