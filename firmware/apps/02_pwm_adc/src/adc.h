@@ -85,7 +85,7 @@ extern volatile uint16_t g_ic_raw;
 extern volatile uint32_t g_isr_count;
 
 /*
- * adc_isr_init — habilita JEOSIE en ADC2 + GPIO PB8 (scope) + NVIC ADC1_2.
+ * adc_isr_init — habilita JEOSIE en ADC2 + GPIO PB6 (scope) + NVIC ADC1_2.
  *
  * Pre-condición: adc_init() ya ejecutado. Esto solo arma la interrupción,
  * sin reconfigurar el ADC. La ISR empezará a correr cuando pwm_enable()

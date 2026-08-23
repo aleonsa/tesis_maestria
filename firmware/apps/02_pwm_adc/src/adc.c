@@ -340,11 +340,24 @@ void adc_dump_regs(void) {
  * Línea NVIC: ADC1_2_IRQn (= 18). Handler compartido entre ADC1 y ADC2;
  * solo ADC2 dispara IRQ (JEOSIE en ADC1 queda en 0).
  *
- * Pin de instrumentación: PB8 — toggle al entrar y salir para medir
- * frecuencia y duración con scope. PB8 corresponde a Z+/H3 del J8,
- * reservado en sesión 2 para esto. No interfiere con I²C1 (PB6/PB7,
- * AS5600) ni con TIM1 PWM (PA8/9/10/12, PB15, PC13).
+ * Pin de instrumentación: PB6 — toggle al entrar y salir para medir
+ * frecuencia y duración con scope. Corresponde a A+/H1 del J8.
+ *
+ * ⚠ ERA PB8 y tenía que cambiar. La nota original decía "no interfiere con
+ *   I²C1 (PB6/PB7)", y era falsa: I2C1_SCL vive en PB8, no en PB6 (DS12589
+ *   Tabla 13; FIELD_NOTES N1.16). Dejar aquí un MODER=01 push-pull sobre PB8
+ *   hunde el SCL del AS5600 en cuanto se fusionen encoder y control — y lo
+ *   haría de forma silenciosa, porque este archivo no habla de I²C.
+ *
+ *   PB6 es el destino correcto justo por la razón que lo hacía inútil para el
+ *   bus: su casilla AF4 está vacía, no sirve para alternate function, pero
+ *   como GPIO puro funciona perfectamente. Sonda y bus dejan de pelearse.
+ *
+ * Sigue sin interferir con TIM1 PWM (PA8/9/10/12, PB15, PC13).
  * -------------------------------------------------------------------------- */
+
+/* Pin de sonda de la ISR. Ver la nota de arriba sobre por qué NO es PB8. */
+#define ISR_PROBE_PIN   6U
 
 volatile uint16_t g_ia_raw    = 0U;
 volatile uint16_t g_ib_raw    = 0U;
@@ -448,10 +461,10 @@ void adc_isr_init(void) {
     RCC->AHB2ENR |= RCC_AHB2ENR_GPIOBEN;
     (void)RCC->AHB2ENR;
 
-    /* PB8 = general purpose output, push-pull, sin pull, speed default (low).
-     * Bits del MODER para pin 8: 17:16. */
-    GPIOB->MODER &= ~(0x3U << (8U * 2U));
-    GPIOB->MODER |=  (0x1U << (8U * 2U));   /* MODER=01 = output */
+    /* PB6 = general purpose output, push-pull, sin pull, speed default (low).
+     * Bits del MODER para pin 6: 13:12. */
+    GPIOB->MODER &= ~(0x3U << (ISR_PROBE_PIN * 2U));
+    GPIOB->MODER |=  (0x1U << (ISR_PROBE_PIN * 2U));   /* MODER=01 = output */
 
     /* JEOSIE en ADC2 (no ADC1). Sin esto, JEOS solo levanta el flag pero
      * el NVIC nunca dispara. */
@@ -464,8 +477,8 @@ void adc_isr_init(void) {
 }
 
 void ADC1_2_IRQHandler(void) {
-    /* PB8 HIGH — borde de subida = entrada al handler. */
-    GPIOB->BSRR = (1U << 8U);
+    /* Sonda HIGH — borde de subida = entrada al handler. */
+    GPIOB->BSRR = (1U << ISR_PROBE_PIN);
 
     /* Snapshot atómico de los 3 JDRs. JDR* es de 16 bits útiles (resultado
      * de 12 bits alineado a la derecha). */
@@ -540,6 +553,6 @@ void ADC1_2_IRQHandler(void) {
      * del handler el flag sigue activo → NVIC reentra inmediatamente. */
     ADC2->ISR = ADC_ISR_JEOS;
 
-    /* PB8 LOW — borde de bajada = salida del handler. */
-    GPIOB->BSRR = (1U << (8U + 16U));
+    /* Sonda LOW — borde de bajada = salida del handler. */
+    GPIOB->BSRR = (1U << (ISR_PROBE_PIN + 16U));
 }
