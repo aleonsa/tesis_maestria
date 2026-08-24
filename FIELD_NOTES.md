@@ -39,6 +39,7 @@
 - [N1.16 — Bring-up del AS5600 por I²C1: el sentido de posición](#n116--bring-up-del-as5600-por-i²c1-el-sentido-de-posición)
 - [N1.17 — Bisección: cómo se depura un síntoma que mezcla cuatro cosas](#n117--bisección-cómo-se-depura-un-síntoma-que-mezcla-cuatro-cosas)
 - [N1.18 — La lectura que no cabe en la ISR: I²C no bloqueante](#n118--la-lectura-que-no-cabe-en-la-isr-i²c-no-bloqueante)
+- [N1.19 — El fallo que se multiplica: por qué un error de I²C tiene que dejar el periférico limpio](#n119--el-fallo-que-se-multiplica-por-qué-un-error-de-i²c-tiene-que-dejar-el-periférico-limpio)
 
 ---
 
@@ -3222,6 +3223,71 @@ para cuando el datasheet no esté: el barrido empírico de AF que quedó en el h
 | Red de J8 | 1.8 kΩ serie + 10 kΩ pull-up + clamp BAT30 por línea | MB1419 hoja 5 |
 | Alimentación | el pad de 5 V de J8 sale del riel lógico: **basta el USB** | verificado 2026-08-10 |
 
+### Diagrama de conexiones del banco — el estado que hay que ver antes de cada prueba
+
+Esto no es adorno: cada vez que el I²C falla, la primera pregunta es «¿está el bus como
+debería?», y responderla de memoria es cómo se pierde una sesión entera persiguiendo un
+fantasma de software que era hardware, o al revés.
+
+```
+   Mac ──rsync──► Raspberry Pi ──USB──► ST-LINK integrado ──SWD──► STM32G431CBU6
+                       │                      │
+                       │                      └── VCP = /dev/ttyACM0  (USART2, 115200 8N1)
+                       └── openocd + arm-none-eabi-gcc
+
+   ┌───────────────────────── B-G431B-ESC1 ─────────────────────────┐
+   │                                                                │
+   │  J8  «HALL / ENCODER SENSOR»          (silkscreen en la placa) │
+   │  ┌────────┬────────┬─────────────────────────────────────────┐ │
+   │  │  pad   │  MCU   │  se conecta a                           │ │
+   │  ├────────┼────────┼─────────────────────────────────────────┤ │
+   │  │  5V    │   —    │  VCC del AS5600                         │ │
+   │  │  GND   │   —    │  GND del AS5600                         │ │
+   │  │  B+/H2 │  PB7   │  SDA del AS5600                         │ │
+   │  │  Z+/H3 │  PB8   │  SCL del AS5600                         │ │
+   │  │  A+/H1 │  PB6   │  NADA — libre, sonda de scope de la ISR │ │
+   │  └────────┴────────┴─────────────────────────────────────────┘ │
+   │                                                                │
+   │  J7 «MOTOR»    OUT1 ← blanco    OUT2 ← rojo    OUT3 ← negro    │
+   │  J5 / J6 «Vbus»  ── SIN CONECTAR para las pruebas de encoder   │
+   └────────────────────────────────────────────────────────────────┘
+
+   Cada línea de señal de J8, por dentro (MB1419 hoja 5):
+
+     pad J8 ──[ 1.8 kΩ serie ]──┬── 10 kΩ pull-up a 3V3
+                                ├── clamp BAT30KFILM
+                                └── pin del MCU
+```
+
+Cuatro cosas de esta figura que son las que se olvidan:
+
+1. **SCL es PB8 = `Z+/H3`, no PB6.** PB6 (`A+/H1`) tiene la casilla de AF4 VACÍA en la
+   Tabla 13 del DS12589: puesto en AF4 hunde la línea y el bus no arranca nunca. Es el
+   error que costó la sesión del 2026-08-10.
+2. **No hay que conectar Vbus.** El pad de 5 V de J8 sale del riel lógico, que lo alimenta
+   el USB del ST-LINK. Para leer el encoder no hace falta ni fuente ni motor girando.
+3. **No poner pull-ups propios.** La placa ya trae 10 kΩ por línea, y el módulo AS5600
+   trae los suyos. Añadir más solo baja la resistencia equivalente.
+4. **PB6 queda libre a propósito**, con la sonda de la ISR. Si algún día vuelve a hacer
+   falta un pin de scope, ese es, y no PB8 — que fue pin de sonda hasta N1.18 y hundía
+   el bus al compartirse.
+
+**Chequeo de 20 segundos antes de dar por bueno un fallo de I²C**, con la placa alimentada
+y el firmware corriendo: el arranque de `03_as5600` imprime
+
+```
+[diag] lineas en reposo: SCL(PB8)=HIGH  SDA(PB7)=HIGH  BUSY=0
+```
+
+Las dos en HIGH es un bus en reposo sano. Cualquier otra combinación tiene lectura única:
+
+| SCL | SDA | Qué es |
+|---|---|---|
+| HIGH | HIGH | bus libre. Si aun así falla, es software |
+| HIGH | LOW  | **esclavo colgado a mitad de byte**, no cable suelto. Lo desclava la recuperación de N1.19 |
+| LOW  | cualquiera | el maestro hunde SCL: pin en un AF sin asignar, o corto |
+| LOW  | LOW  | falta alimentación del módulo, o GND no común |
+
 ### Validación — CERRADA 2026-08-10
 
 - ✅ `STATUS = 0x20`, `MD=1`, `ML=0`, `MH=0`. Imán detectado y a buena distancia.
@@ -3586,5 +3652,195 @@ llevan la revisión explícita.
 4. **El contador `seq` en vez de un flag de "hay dato nuevo".** Un flag se pierde si el
    consumidor llega tarde dos veces seguidas; un contador monótono deja ver *cuántas* se
    perdieron. La diferencia cuesta cero y convierte un fallo invisible en una métrica.
+
+---
+
+## N1.19 — El fallo que se multiplica: por qué un error de I²C tiene que dejar el periférico limpio
+
+### Panorama
+
+El camino por IRQ de N1.18 compiló, se flasheó, y el banco devolvió esto:
+
+```
+[perf] 0 lecturas/s
+[perf] errores=5195  abortadas=0
+[loop] error #1: BUSY (bus ocupado al arrancar)
+...
+[loop] error #100: BUSY (bus ocupado al arrancar)
+```
+
+Cinco mil doscientos fallos por segundo y cien negativas a arrancar. Parece un desastre
+con muchas causas. No lo es: es **una** causa, un fallo que se reproduce.
+
+La lección de esta nota no es sobre I²C. Es sobre qué significa "manejar un error" en un
+periférico con estado. Devolver un código de error solo cuenta la mitad: el periférico
+sigue ahí, a medio camino, y si nadie lo devuelve a un estado conocido el siguiente
+intento arranca sobre las ruinas del anterior.
+
+### Analogía
+
+Una llamada de teléfono que se corta. Puedes anotar en tu libreta «llamada fallida» y
+pasar a la siguiente — pero si no cuelgas el auricular, la línea sigue ocupada y todas
+las llamadas siguientes fallan también. El código de error es la anotación en la libreta.
+Colgar el auricular es otra cosa, y hay que hacerla explícitamente.
+
+Peor todavía: imagina que dejaste una palabra a medio decir en la boca. Cuando por fin
+levantas el auricular para llamar a otro, esa palabra sale sola, antes del "hola". El
+interlocutor oye algo que tú no sabes que dijiste.
+
+### Detalle — los tres defectos, en orden de gravedad
+
+**Defecto 1 — el cierre con error no soltaba el bus.**
+
+`nb_finish()` tomaba la foto del fallo, incrementaba el contador y ponía el estado en
+`I2C_NB_ERR`. Nada más. El periférico se quedaba con:
+
+- `ISR.BUSY = 1`, porque una transacción abierta solo se cierra con un STOP;
+- `CR2` con `NBYTES` sin agotar;
+- posiblemente **un byte todavía en `TXDR`**.
+
+Consecuencia inmediata: `i2c1_read_regs_start()` empieza con
+
+```c
+if ((I2C1->ISR & I2C_ISR_BUSY) != 0U) return I2C_ERR_BUSY;
+```
+
+que a partir de ese momento es verdad para siempre. **Los cien `error #100: BUSY` no eran
+cien fallos: eran un fallo y noventa y nueve negativas a intentarlo.** El log parecía
+decir "el bus está ocupado permanentemente" y en realidad decía "yo mismo lo dejé así".
+
+Consecuencia diferida, la más engañosa: el byte que quedó en `TXDR` **sale solo** en la
+siguiente transacción, sin pedir `TXIS`. La máquina de estados nunca se entera de haberlo
+mandado. De ahí salían trazas imposibles como
+
+```
+eventos: TXIS=0 TC=1 RXNE=1 STOPF=1  |  irqs=6 bytes=1/2
+```
+
+`TXIS=0` con bytes ya transferidos: el puntero de registro se envió sin que nadie
+escribiera `TXDR`. No era un fallo nuevo — era el eco del anterior.
+
+El arreglo apoyado en el manual (RM0440 Rev 9 §39.4.6, "I2C software reset"): un ciclo
+`PE = 0` → releer → `PE = 1` borra `CR2`, borra `ISR` dejando `TXE = 1` (o sea, vacía
+`TXDR`) y baja `BUSY`, y **no** toca `TIMINGR` ni la configuración de `CR1`. Eso último es
+lo que hace que el arreglo sea barato: los `TXIE/RXIE/TCIE/STOPIE/NACKIE/ERRIE` que armó
+`i2c1_nb_init()` sobreviven al ciclo y no hay que rearmarlos.
+
+Con un matiz que importa: antes del reset hay que **intentar un STOP de verdad**. `PE = 0`
+suelta SCL y SDA sin generar condición de STOP; si el esclavo estaba a mitad de byte se
+queda conduciendo su bit y clava el bus. Un STOP legítimo son ~10 µs a 100 kHz, así que la
+guardia es de ~300 µs: factor 30 y sigue siendo invisible.
+
+Y el pending del NVIC hay que bajarlo a mano. Si el flag que causó la IRQ ya había
+latcheado una segunda entrada, esa entrada llegaría después del reset a leer flags que ya
+no existen.
+
+**Defecto 2 — el handler atendía interrupciones de transferencias muertas.**
+
+Las ramas de `RXNE` y `STOPF` no comprobaban el estado. El caso es real y no rebuscado:
+con `AUTOEND = 1`, el último `RXNE` y el `STOPF` pueden quedar pendientes a la vez, el
+`STOPF` cierra la transferencia, y la IRQ del `RXNE` entra **después**. Sin guardia, ese
+`RXNE` tardío escribía en `nb.buf` y adelantaba `nb.idx` de una transferencia ya cerrada
+— o, si la siguiente ya había arrancado, corrompía `buf[0]` con un byte del viaje
+anterior.
+
+Era también lo que hacía ilegible la instrumentación: `RXNE=1` con `bytes=0/2` en la misma
+línea es contradictorio, hasta que se entiende que el bit del evento lo puso una IRQ
+posterior al cierre.
+
+La guardia no puede ser un `return` pelado. Un flag con su `IE` armado y sin atender es
+una IRQ que se repite indefinidamente, y `RXNE` solo baja **leyendo `RXDR`**. Así que el
+camino de "esto no es mío" drena `RXDR` y limpia los flags antes de salir.
+
+**Defecto 3 — campos compartidos sin `volatile`.**
+
+`phase`, `addr7`, `reg`, `n`, `idx` y `buf` los escribe el hilo de fondo en
+`read_regs_start()` y los lee el handler. Estaban sin `volatile` dentro de una estructura
+cuyos *otros* campos sí lo eran, que es la forma más fácil de que el detalle pase
+desapercibido en una revisión. El compilador tiene permiso para cachearlos en registro o
+para mover los stores respecto al que arranca el periférico: el `START` puede salir antes
+de que el contexto esté completo. Cuesta cero arreglarlo — el handler toca cada campo una
+vez por transferencia.
+
+### Detalle — la escritura de `CR2` en un solo golpe
+
+Aparte de los tres defectos, un cambio de robustez. El código escribía `CR2` en dos pasos:
+
+```c
+I2C1->CR2 = SADD | NBYTES | RD_WRN | AUTOEND;   /* START = 0 */
+I2C1->CR2 |= I2C_CR2_START;
+```
+
+Entre las dos escrituras el periférico ve `AUTOEND = 1` y `START = 0` sobre un contador de
+bytes ya agotado. El camino de polling hace exactamente lo mismo y funciona, así que no es
+*la* causa — pero la ventana no aporta nada y el HAL de ST escribe `CR2` de una sola vez
+con la petición incluida. Se unificó a una escritura.
+
+Y el `nb.phase = NB_PH_RX` se movió **antes** del write: con la IRQ armada, el primer
+`RXNE` puede entrar en la instrucción siguiente al `START`.
+
+### Detalle — desclavar el bus antes de entregarlo
+
+El síntoma que cerró la sesión anterior fue este:
+
+```
+[diag] lineas en reposo: SCL(PB8)=HIGH  SDA(PB7)=LOW
+[scan] 112 direcciones dieron TIMEOUT
+```
+
+SCL en alto y SDA en bajo, con el maestro recién arrancado y en reposo. **No es un cable
+suelto ni un corto: es un esclavo colgado a mitad de byte.** Pasa cuando el maestro se
+reinicia —un `reset` de openocd, un flash— en medio de una transacción: el STM32 arranca
+de cero, pero el AS5600 no se reinicia con él y sigue conduciendo el bit de datos que
+estaba sacando, esperando el pulso de SCL que ya nunca va a llegar.
+
+Con un firmware que fallaba 5 200 veces por segundo, la probabilidad de que un flash cayera
+en medio de una transacción era ~1. El defecto 1 generaba la condición y el flash la
+convertía en un bus clavado.
+
+La cura es la del estándar I²C: darle los pulsos de reloj que le faltan —como máximo 9, lo
+que queda de un byte más su ACK— con SDA liberada, y cerrar con un STOP manual. En cuanto
+el esclavo completa el byte, suelta SDA.
+
+Lo que fuerza la forma del código: **el periférico I²C del STM32 no puede hacer esto.** Sin
+ver el bus libre no arranca ninguna transacción, así que la recuperación es forzosamente
+bit-bang, y forzosamente **antes** de poner los pines en AF4 — una vez en AF4 el que manda
+es el periférico y el `BSRR` no llega a la línea.
+
+Va dentro de `i2c1_init()`, entre habilitar los relojes y configurar los AF, y solo actúa
+si SDA se lee en bajo. Cuando actúa, lo dice:
+
+```
+[i2c] bus estaba clavado; recuperado con pulsos de SCL
+```
+
+Si tras los nueve pulsos SDA sigue en bajo, entonces sí es hardware, y el mensaje cambia
+para decirlo sin ambigüedad.
+
+### Por qué importa
+
+**1. Un error de bajo nivel tiene dos mitades: informar y limpiar.** La primera es la que
+se escribe sin pensar; la segunda es la que se olvida. En un periférico con estado —I²C,
+SPI, UART, DMA, cualquier cosa con una máquina de estados en silicio— olvidar la segunda
+no produce "un fallo": produce un fallo que se reproduce, y los logs describen el eco en
+vez de la causa.
+
+**2. Un contador de fallos que sube muy rápido es sospechoso de contar ecos.** 5 195 fallos
+en un segundo no eran 5 195 problemas. Cuando la tasa de error es del orden de la tasa de
+intento, la hipótesis por defecto debería ser "el primer fallo envenenó el estado", no
+"todo falla independientemente".
+
+**3. `volatile` en unos campos de una estructura y no en otros es una trampa de revisión.**
+El ojo ve la palabra en la declaración de arriba y asume que cubre el bloque. O toda la
+estructura compartida es `volatile`, o el motivo de la asimetría está escrito al lado.
+
+**4. Y el que se paga más caro: en un fallo intermitente de hardware/software, el sesgo
+propio es la variable más difícil de controlar.** Esta sesión se gastó proponiendo
+bisecciones de cable sobre un banco que nadie había tocado. El usuario insistió en que era
+software y tenía razón. El dato que lo decidía ya estaba en el log — `SCL=HIGH, SDA=LOW`
+es la firma documentada de un esclavo colgado, un estado que **solo** puede provocar el
+maestro — pero se leyó como evidencia de cable flojo porque esa era la hipótesis en
+curso. La tabla de cuatro filas del diagrama de conexiones existe para que la próxima vez
+la lectura no dependa de qué hipótesis se tenía en la cabeza.
 
 ---

@@ -223,7 +223,8 @@ static i2c_status_t nb_one_shot(uint16_t *raw) {
  * esqueleto que irá dentro de la ISR de control, con la diferencia de que allá
  * cada pasada la dispara el timer en vez de un while.
  */
-static uint32_t nb_pump(uint32_t ms, uint16_t *last_raw, uint32_t *aborts) {
+static uint32_t nb_pump(uint32_t ms, uint16_t *last_raw, uint32_t *aborts,
+                        uint32_t *nostarts) {
     uint32_t t0        = g_ticks;
     uint32_t seq0      = i2c1_nb_seq();
     uint32_t busy_from = g_ticks;
@@ -232,7 +233,13 @@ static uint32_t nb_pump(uint32_t ms, uint16_t *last_raw, uint32_t *aborts) {
         switch (i2c1_nb_state()) {
             case I2C_NB_IDLE:
                 busy_from = g_ticks;
-                (void)as5600_raw_angle_start();
+                /* El status del arranque NO se descarta: «no arrancó» y «arrancó
+                 * y falló» tienen causas distintas y contadores distintos. Sin
+                 * esta cuenta, un periférico con BUSY pegado se ve igual que un
+                 * bus lento. */
+                if (as5600_raw_angle_start() != I2C_OK) {
+                    if (nostarts != 0) (*nostarts)++;
+                }
                 break;
 
             case I2C_NB_BUSY:
@@ -335,12 +342,14 @@ int main(void) {
     {
         uint16_t raw_tp  = 0U;
         uint32_t aborts  = 0U;
+        uint32_t nostarts = 0U;
         uint32_t err0    = i2c1_nb_errors();
         printf("\r\n[perf] martilleando 1 s sin pausa...\r\n");
-        uint32_t reads   = nb_pump(1000U, &raw_tp, &aborts);
+        uint32_t reads   = nb_pump(1000U, &raw_tp, &aborts, &nostarts);
 
         printf("[perf] %lu lecturas/s  (teorico ~2200 a 100kHz)\r\n",
                (unsigned long)reads);
+        printf("[perf] no-arrancadas=%lu\r\n", (unsigned long)nostarts);
         printf("[perf] errores=%lu  abortadas=%lu  ultimo raw=%u\r\n",
                (unsigned long)(i2c1_nb_errors() - err0),
                (unsigned long)aborts, (unsigned)raw_tp);
@@ -377,7 +386,7 @@ int main(void) {
          * por IRQ; aquí no hay nada que hacer salvo esperar, pero en la ISR de
          * control ese hueco es donde vive el lazo entero. */
         uint32_t aborts = 0U;
-        ok = (nb_pump(5U, &raw, &aborts) > 0U);
+        ok = (nb_pump(5U, &raw, &aborts, 0) > 0U);
         /* El status real del último cierre, no uno inventado a partir del
          * estado. La versión anterior reportaba INCOMPLETE cuando el driver
          * estaba en IDLE porque nada había arrancado, que es justo lo que no

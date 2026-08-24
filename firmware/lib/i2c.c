@@ -100,6 +100,75 @@ static void gpio_af_od(uint32_t pin, uint32_t af) {
     GPIOB->AFR[pin >> 3U] |=  (af   << ((pin & 7U) * 4U));
 }
 
+/*
+ * Medio periodo del reloj bit-bang de recuperación. ~300 iteraciones de un
+ * bucle `volatile` a 170 MHz son del orden de 10 µs: SCL sale a ~50 kHz, más
+ * lenta que el bus normal. Da igual: aquí no se transmite nada, solo se le
+ * dan pulsos a un esclavo para que suelte la línea.
+ */
+#define I2C_RECOVER_HALF_LOOPS   300U
+
+static void rec_delay(void) {
+    for (volatile uint32_t i = 0U; i < I2C_RECOVER_HALF_LOOPS; i++) { }
+}
+
+/* Pin de GPIOB como salida open-drain de propósito general (no AF). */
+static void gpio_od_out(uint32_t pin) {
+    GPIOB->OTYPER  |=  (1U << pin);
+    GPIOB->PUPDR   &= ~(0x3U << (pin * 2U));
+    GPIOB->OSPEEDR |=  (0x3U << (pin * 2U));
+    GPIOB->MODER   &= ~(0x3U << (pin * 2U));
+    GPIOB->MODER   |=  (0x1U << (pin * 2U));   /* salida */
+}
+
+/*
+ * Desclava el bus antes de entregárselo al periférico.
+ *
+ * El caso que esto resuelve: SCL en alto y SDA en BAJO con el maestro en
+ * reposo. No es un corto ni un cable suelto — es un ESCLAVO colgado a mitad de
+ * byte. Pasa cuando el maestro se reinicia (un `reset` de openocd, un flash)
+ * en medio de una transacción: el STM32 arranca de cero, pero el AS5600 no se
+ * reinicia con él y sigue conduciendo el bit de datos que estaba sacando,
+ * esperando el pulso de SCL que ya nunca llegó.
+ *
+ * La cura es la del estándar I2C: darle los pulsos de reloj que le faltan
+ * —como máximo 9, lo que queda de un byte más su ACK— con SDA liberada, y
+ * cerrar con un STOP manual. En cuanto el esclavo completa el byte, suelta
+ * SDA. El periférico I2C del STM32 no puede hacer esto: sin ver el bus libre
+ * no arranca ninguna transacción, así que la recuperación es forzosamente
+ * bit-bang y forzosamente ANTES de poner los pines en AF4.
+ *
+ * Devuelve 0 = no hacía falta, 1 = recuperado, -1 = sigue clavado (ahí sí es
+ * hardware: corto a masa o el módulo sin alimentación).
+ */
+static int i2c1_bus_recover(void) {
+    gpio_od_out(I2C_SCL_PIN);
+    gpio_od_out(I2C_SDA_PIN);
+
+    /* Ambas liberadas: con open-drain, escribir 1 = dejar de conducir. */
+    GPIOB->BSRR = (1U << I2C_SCL_PIN) | (1U << I2C_SDA_PIN);
+    rec_delay();
+
+    if ((GPIOB->IDR & (1U << I2C_SDA_PIN)) != 0U) return 0;
+
+    for (int i = 0; i < 9; i++) {
+        GPIOB->BSRR = (1U << (I2C_SCL_PIN + 16U));   /* SCL a 0 */
+        rec_delay();
+        GPIOB->BSRR = (1U << I2C_SCL_PIN);           /* SCL liberada */
+        rec_delay();
+        if ((GPIOB->IDR & (1U << I2C_SDA_PIN)) != 0U) break;
+    }
+
+    /* STOP a mano: SDA baja mientras SCL está alta, luego SDA sube. Es la
+     * condición que devuelve a cualquier esclavo a su estado de reposo. */
+    GPIOB->BSRR = (1U << (I2C_SDA_PIN + 16U));
+    rec_delay();
+    GPIOB->BSRR = (1U << I2C_SDA_PIN);
+    rec_delay();
+
+    return ((GPIOB->IDR & (1U << I2C_SDA_PIN)) != 0U) ? 1 : -1;
+}
+
 void i2c1_init(void) {
     /* ---- Paso 1: kernel clock del I2C = HSI16 ----
      * El PLL corre desde HSE; HSI16 es un oscilador aparte. Lo encendemos
@@ -116,6 +185,19 @@ void i2c1_init(void) {
      * GPIOB en AHB2, I2C1 en APB1. Sin estos, los registros se ignoran. */
     RCC->AHB2ENR  |= RCC_AHB2ENR_GPIOBEN;
     RCC->APB1ENR1 |= RCC_APB1ENR1_I2C1EN;
+
+    /* ---- Paso 2b: desclavar el bus si quedó a medias ----
+     * Va aquí y no después: la recuperación necesita los pines como GPIO
+     * normal, y una vez en AF4 el que manda es el periférico. */
+    {
+        int r = i2c1_bus_recover();
+        if (r == 1) {
+            printf("[i2c] bus estaba clavado; recuperado con pulsos de SCL\r\n");
+        } else if (r < 0) {
+            printf("[i2c] SDA SIGUE EN BAJO tras la recuperacion: "
+                   "revisar alimentacion del modulo y cableado\r\n");
+        }
+    }
 
     /* ---- Paso 3: GPIOs en AF4, open-drain, sin pull interno ----
      *
@@ -434,12 +516,18 @@ static struct {
     volatile uint32_t       cr2_rx;     /* CR2 tal como quedó para la lectura*/
     volatile uint32_t       isr_tc;     /* ISR en el momento del TC          */
     volatile uint8_t        err_idx;
-    nb_phase_t              phase;
-    uint8_t                 addr7;
-    uint8_t                 reg;
-    uint8_t                 n;
-    uint8_t                 idx;
-    uint8_t                 buf[I2C_NB_MAXBYTES];
+    /* Estos los escribe el hilo de fondo en read_regs_start() y los lee (y
+     * escribe) el handler. Sin `volatile` el compilador tiene permiso para
+     * cachearlos en registro o mover los stores respecto al que arranca el
+     * periférico, y el START puede salir antes de que el contexto esté
+     * completo. Cuesta cero en el camino real: el handler los toca una vez
+     * cada uno. */
+    volatile nb_phase_t     phase;
+    volatile uint8_t        addr7;
+    volatile uint8_t        reg;
+    volatile uint8_t        n;
+    volatile uint8_t        idx;
+    volatile uint8_t        buf[I2C_NB_MAXBYTES];
 } nb;
 
 void i2c1_nb_init(void) {
@@ -491,6 +579,48 @@ static void nb_finish(void) {
         nb.err_status = nb.status;
         nb.errors++;
         nb.state = I2C_NB_ERR;
+
+        /* ── Y AHORA lo importante: dejar el periférico usable. ──
+         *
+         * Esto faltaba y era la causa de la cascada. Un cierre con error puede
+         * ocurrir con la transacción a medias: BUSY = 1, un byte todavía en
+         * TXDR, CR2 con NBYTES sin agotar. Nada de eso se limpia solo. Las
+         * consecuencias, las dos observadas en el banco:
+         *
+         *   1. `read_regs_start()` mira ISR.BUSY y devuelve I2C_ERR_BUSY —
+         *      para siempre. Es el «[loop] error #100: BUSY» literal: no eran
+         *      cien fallos distintos, era un fallo y noventa y nueve negativas
+         *      a arrancar.
+         *   2. El byte que quedó en TXDR sale SOLO en la siguiente
+         *      transacción, sin pedir TXIS. La máquina de estados nunca se
+         *      enteró de haberlo mandado: de ahí las trazas con TXIS = 0 y
+         *      bytes = 1/2, que no son un fallo nuevo sino el eco del anterior.
+         *
+         * RM0440 Rev 9 §39.4.6 dice qué borra exactamente PE = 0: I2C_CR2,
+         * I2C_ISR (dejando TXE = 1, o sea TXDR vaciado) y los flags. NO toca
+         * TIMINGR ni la configuración de CR1, así que los TXIE/RXIE/TCIE/... de
+         * i2c1_nb_init() sobreviven al ciclo y no hay que rearmarlos.
+         *
+         * El pending del NVIC sí hay que bajarlo a mano: si el flag que causó
+         * esta IRQ ya había latcheado una segunda entrada, esa entrada llegaría
+         * después del reset a leer flags que ya no existen. */
+
+        /* Antes del reset, intentar cerrar en el aire con un STOP de verdad.
+         * PE = 0 suelta SCL y SDA sin condición de STOP: si el esclavo estaba a
+         * mitad de byte se queda conduciendo su bit y clava el bus —
+         * exactamente el estado que hay que recuperar a mano en el arranque. Un
+         * STOP legítimo son ~10 µs a 100 kHz; la guardia son ~300 µs, factor 30
+         * y sigue siendo invisible. Si no sale, el bus ya está roto y el reset
+         * es lo mejor que queda. */
+        if ((I2C1->ISR & I2C_ISR_BUSY) != 0U) {
+            I2C1->CR2 |= I2C_CR2_STOP;
+            uint32_t guard = 5000U;
+            while (((I2C1->ISR & I2C_ISR_BUSY) != 0U) && (--guard != 0U)) { }
+        }
+
+        i2c1_reset_peripheral();
+        NVIC_ClearPendingIRQ(I2C1_EV_IRQn);
+        NVIC_ClearPendingIRQ(I2C1_ER_IRQn);
     }
 }
 
@@ -525,8 +655,8 @@ i2c_status_t i2c1_read_regs_start(uint8_t addr7, uint8_t reg, uint8_t n) {
     /* Fase 1: puntero de registro, 1 byte, AUTOEND=0 para retener el bus de
      * cara al repeated-START. Misma secuencia que el camino de polling. */
     I2C1->CR2 = ((uint32_t)addr7 << (I2C_CR2_SADD_Pos + 1U))
-              | (1U << I2C_CR2_NBYTES_Pos);
-    I2C1->CR2 |= I2C_CR2_START;
+              | (1U << I2C_CR2_NBYTES_Pos)
+              | I2C_CR2_START;
 
     return I2C_OK;
 }
@@ -534,6 +664,23 @@ i2c_status_t i2c1_read_regs_start(uint8_t addr7, uint8_t reg, uint8_t n) {
 void I2C1_EV_IRQHandler(void) {
     uint32_t isr = I2C1->ISR;
     nb.irqs++;
+
+    /* Nada que atender si no hay transferencia viva. Este caso existe de
+     * verdad: con AUTOEND el último RXNE y el STOPF pueden estar pendientes a
+     * la vez, el STOPF cierra, y la IRQ del RXNE entra DESPUÉS. Sin esta
+     * guardia ese RXNE tardío escribía en nb.buf y adelantaba nb.idx de una
+     * transferencia ya cerrada — o peor, de la SIGUIENTE, corrompiendo buf[0]
+     * con un byte del viaje anterior.
+     *
+     * No es un `return` pelado: hay que dejar el periférico callado. Un flag
+     * con su IE armado y sin atender es una IRQ que se repite indefinidamente,
+     * y RXNE solo baja leyendo RXDR. */
+    if (nb.state != I2C_NB_BUSY) {
+        if ((isr & I2C_ISR_RXNE) != 0U) (void)I2C1->RXDR;
+        I2C1->ICR = I2C_ICR_NACKCF | I2C_ICR_STOPCF
+                  | I2C_ICR_BERRCF | I2C_ICR_ARLOCF | I2C_ICR_OVRCF;
+        return;
+    }
 
     /* Foto al ENTRAR, antes de limpiar ningún flag: es el estado que provocó
      * esta interrupción, no el que dejamos después de manosearlo. */
@@ -562,13 +709,18 @@ void I2C1_EV_IRQHandler(void) {
 
     if ((isr & I2C_ISR_TC) != 0U) {
         /* Fase 2: repeated-START + lectura. AUTOEND=1 → el STOP lo pone el
-         * hardware tras el último byte. Setear START es lo que baja TC. */
+         * hardware tras el último byte. Setear START es lo que baja TC, y
+         * va en la MISMA escritura que el resto del campo: dos escrituras
+         * dejan al periférico una ventana con AUTOEND=1 y START=0 sobre un
+         * contador de bytes ya agotado. Es la secuencia del HAL de ST. */
+        nb.phase = NB_PH_RX;          /* antes del write: la IRQ del primer
+                                       * RXNE puede entrar en la instrucción
+                                       * siguiente al START */
         I2C1->CR2 = ((uint32_t)nb.addr7 << (I2C_CR2_SADD_Pos + 1U))
                   | ((uint32_t)nb.n << I2C_CR2_NBYTES_Pos)
                   | I2C_CR2_RD_WRN
-                  | I2C_CR2_AUTOEND;
-        I2C1->CR2 |= I2C_CR2_START;
-        nb.phase   = NB_PH_RX;
+                  | I2C_CR2_AUTOEND
+                  | I2C_CR2_START;
 
         nb.ev    |= NB_EV_TC;
         nb.isr_tc = isr;

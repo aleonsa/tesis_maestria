@@ -5,6 +5,67 @@
 
 ---
 
+## Sesión 14 — 2026-08-23 — El camino por IRQ, depurado: un fallo que se multiplicaba
+
+**Hito**: encontrados y corregidos los tres defectos del driver no bloqueante de la sesión 13. Añadida recuperación de bus. Diagrama de conexiones del banco documentado. Compila limpio; pendiente de flashear.
+
+### Lo que devolvió el banco
+
+```
+[perf] 0 lecturas/s      errores=5195  abortadas=0
+[loop] error #1..#100: BUSY (bus ocupado al arrancar)
+```
+
+Y, en una corrida, el bus clavado: `SCL(PB8)=HIGH  SDA(PB7)=LOW`, 112 direcciones en TIMEOUT.
+
+Todo eso es **una** causa reproduciéndose, no un desastre con muchas. Detalle completo en
+FIELD_NOTES [N1.19](./FIELD_NOTES.md).
+
+### Los tres defectos
+
+| # | Defecto | Consecuencia observada |
+|---|---|---|
+| 1 | `nb_finish()` no dejaba el periférico usable tras un error: `BUSY=1`, `CR2` a medias, un byte vivo en `TXDR` | Los cien `error: BUSY` (un fallo + 99 negativas a arrancar) **y** las trazas con `TXIS=0 bytes=1/2`, que eran el byte del viaje anterior saliendo solo |
+| 2 | Las ramas `RXNE`/`STOPF` del handler no comprobaban `state == BUSY` | Un `RXNE` tardío escribía en el buffer de una transferencia cerrada. Es lo que hacía aparecer `RXNE=1` junto a `bytes=0/2` |
+| 3 | `phase/addr7/reg/n/idx/buf` sin `volatile` en una estructura cuyos otros campos sí lo eran | Latente: el compilador puede mover los stores del contexto respecto al `START` |
+
+Arreglo del 1, apoyado en RM0440 Rev 9 §39.4.6: STOP con guardia corta (~300 µs) y luego
+ciclo `PE=0` → releer → `PE=1`. Eso borra `CR2`, borra `ISR` con `TXE=1` (vacía `TXDR`) y
+baja `BUSY`, **sin** tocar `TIMINGR` ni `CR1` — los `xxIE` sobreviven. Más
+`NVIC_ClearPendingIRQ` de ambos vectores.
+
+### Añadido: recuperación de bus en `i2c1_init()`
+
+`SCL=HIGH` con `SDA=LOW` y el maestro en reposo es un **esclavo colgado a mitad de byte**,
+no un cable suelto. Lo provoca reiniciar el maestro (flash, `reset` de openocd) en medio de
+una transacción: el STM32 arranca de cero, el AS5600 no. Con el defecto 1 fallando 5 200
+veces por segundo, la probabilidad de que un flash cayera a mitad de transacción era ~1.
+
+Cura estándar: hasta 9 pulsos de SCL bit-bang con SDA liberada + STOP manual. Va antes de
+poner los pines en AF4 —el periférico no puede arrancar sobre un bus que no ve libre, y en
+AF4 el `BSRR` ya no llega a la línea— y solo actúa si SDA se lee en bajo.
+
+### Otros cambios
+
+- `CR2` en una sola escritura con `START` incluido (lo que hace el HAL de ST), en vez de dos.
+- `nb.phase = NB_PH_RX` **antes** del write: el primer `RXNE` puede entrar en la instrucción siguiente.
+- `nb_pump()` ya no descarta el status del arranque: contador `no-arrancadas` aparte del de `errores`. «No arrancó» y «arrancó y falló» tienen causas distintas.
+- Corregido el número de eventos por lectura: son **5** IRQ (TXIS, TC, RXNE×2, STOPF), no 4. La entrada de la sesión 13 dice 4.
+
+### Documentación
+
+- **FIELD_NOTES N1.19** — la nota sobre por qué un error de periférico tiene dos mitades (informar y limpiar), y sobre el sesgo de hipótesis que costó la sesión.
+- **Diagrama de conexiones del banco** en la sección del I²C1: J8 pad por pad, la red de 1.8 kΩ + 10 kΩ, y la tabla de cuatro filas que traduce los niveles de reposo de SCL/SDA a un diagnóstico único.
+- Anotadas las dos líneas obsoletas de la Sesión 2 que todavía decían «PB8 sin conectar, reservado para instrumentación».
+
+### Pendiente al cerrar
+
+1. **Flashear y leer el resultado.** Si el camino por IRQ ya completa lecturas, el número que interesa es `[perf] N lecturas/s` (teórico ~2200 a 100 kHz contra ~7 kHz de refresco del AS5600).
+2. Si sigue fallando, la traza ordenada de IRQ por transferencia ya está instrumentada y ahora sale **sin la cascada** encima, así que muestra la primera causa real.
+3. Alternativa más simple que sigue sobre la mesa: polling desde el lazo principal (código ya validado) + extrapolación de θ en la ISR. La lectura bloqueante bloquea el lazo, **no** la ISR, que la preempta sin problema.
+
+---
+
 ## Sesión 13 — 2026-08-18 — I²C no bloqueante por IRQ (el encoder ya cabe en el lazo)
 
 **Hito**: la lectura del AS5600 deja de bloquear. Máquina de estados por interrupción, 4 eventos por lectura, <1 % de CPU. Con esto el sensado de posición ya es compatible con la ISR de 50 kHz. Sin flashear todavía.
@@ -213,7 +274,7 @@ Si medición OK pero corriente baja:
   |---|---|---|
   | A+/H1 | PB6 | ~~I2C1_SCL~~ **libre** — AF4 aquí no es I2C1_SCL (2026-08-10) |
   | B+/H2 | PB7 | **I2C1_SDA** |
-  | Z+/H3 | PB8 | libre (reservado instrumentación) |
+  | Z+/H3 | PB8 | **I2C1_SCL** (corregido 2026-08-10; en su día se anotó como «libre, reservado instrumentación») |
   | 5V | — | alimentación |
   | GND | — | tierra |
 
@@ -230,7 +291,7 @@ Si medición OK pero corriente baja:
   - GND → GND
   - SDA → B+/H2 (PB7)
   - SCL → **Z+/H3 (PB8)** — corregido 2026-08-10, ver FIELD_NOTES N1.16
-  - PB8 (Z+/H3) sin conectar — reservado para instrumentación con osciloscopio.
+  - ~~PB8 (Z+/H3) sin conectar — reservado para instrumentación con osciloscopio.~~ **Obsoleto desde 2026-08-10**: PB8 ES el SCL. El pin de sonda pasó a PB6 (`A+/H1`), que queda libre porque su AF4 está sin asignar.
 - **J5/J6 (Vbus)**: NO conectado todavía.
 
 ### Hardware adicional confirmado

@@ -18,7 +18,7 @@
  *      Sirve para bring-up, diagnóstico y arranque, donde no hay lazo corriendo.
  *
  *   2. IRQ — i2c1_read_regs_start() + i2c1_nb_take(). La transferencia avanza
- *      en segundo plano; el llamador gasta ~4 µs repartidos en 4 IRQ. Es el
+ *      en segundo plano; el llamador gasta ~5 µs repartidos en 5 IRQ. Es el
  *      único camino viable dentro del lazo de control: el periodo de la ISR a
  *      50 kHz son 20 µs y la lectura bloqueante tarda 22× MÁS que el ciclo
  *      entero. No es optimización, es requisito.
