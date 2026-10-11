@@ -5,6 +5,39 @@
 
 ---
 
+## Sesión 15 — 2026-08-24 — Workaround oficial para bloqueo I²C por IRQ
+
+**Hito**: identificada causa de silicio y corregida la secuencia polling/IRQ. Compila; pendiente validar en banco.
+
+### Causa raíz
+
+ES0431 Rev. 9 §2.11.5, `I2C2-190208`, documenta **“Transmission stalled after first byte”**. Su workaround exige precargar el primer dato en `TXDR` antes de generar `START`. La secuencia anterior hacía lo contrario: `START`, esperar `TXIS`, escribir registro. `vendor/STM32CubeG4/Release_Notes.html` confirma que ST incorporó exactamente esta precarga al HAL.
+
+### Cambios
+
+- `i2c1_read_regs()` e `i2c1_read_regs_start()` cargan el registro en `TXDR` antes de `CR2.START`.
+- Camino IRQ normal queda en 4 eventos para dos bytes: `TC`, `RXNE`, `RXNE`, `STOPF`. Un `TXIS` inesperado aborta; nunca reenvía el registro.
+- Fuentes IRQ se habilitan por transferencia y se deshabilitan antes de publicar estado terminal.
+- Abort desde ISR es asíncrono: pide `STOP`, drena `RXDR` y espera `STOPF`; no contiene polling ni reset de `PE`.
+- `closing` y secciones críticas cortas eliminan carreras con ISR de control de mayor prioridad.
+- Flags de bus se capturan antes de limpiarlos; `seq/errors` y `DONE/ERR` se publican juntos al final.
+- Timeout de `nb_pump()` conserva su timestamp entre llamadas y fuerza recuperación desde foreground si `STOPF` no llega.
+- Prueba de arranque reducida a una primera lectura IRQ aislada antes del throughput.
+
+### Verificación
+
+- Build externo completo: `blink.elf`, `pwm_adc.elf`, `as5600.elf`; sin warnings C. Solo stubs `nosys` esperados.
+- `objdump` confirma store a `TXDR` antes de habilitar IRQ y antes del store de `CR2.START`.
+- `as5600.elf`: 15 644 bytes totales (`text=13 524`, `data=92`, `bss=2 028`).
+
+### Pendiente
+
+1. Flashear `03_as5600`.
+2. Confirmar `[shot] 0: OK` y secuencia normal sin `TXIS`.
+3. Registrar `[perf] N lecturas/s`, `errores=0`, `abortadas=0`.
+
+---
+
 ## Sesión 14 — 2026-08-23 — El camino por IRQ, depurado: un fallo que se multiplicaba
 
 **Hito**: encontrados y corregidos los tres defectos del driver no bloqueante de la sesión 13. Añadida recuperación de bus. Diagrama de conexiones del banco documentado. Compila limpio; pendiente de flashear.

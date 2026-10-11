@@ -2,9 +2,9 @@
 
 > Este archivo trackea el progreso de redacción del documento de tesis en `tesis_documento/`. Se actualiza al cierre de cada bloque para no perder hilo entre sesiones.
 
-**Última actualización:** 2026-07-08 (cerrado Bloque F)
+**Última actualización:** 2026-08-17 (cerrado Bloque B — Cap. 1)
 **Archivo LaTeX raíz:** `tesis_documento/Tesis_JALS_Maestria.tex`
-**PDF generado actual:** 53 páginas (frontmatter + Cap. 2 + Cap. 3 + Cap. 4 + Cap. 5 + placeholders restantes)
+**PDF generado actual:** 56 páginas (frontmatter + Cap. 1 + Cap. 2 + Cap. 3 + Cap. 4 + Cap. 5 + Cap. 6 placeholder)
 
 ---
 
@@ -139,11 +139,34 @@ Nota: Cap. 2 y Cap. 3 quedaron SIN figuras (revisar después; el autor lo señal
 
 **Compila limpio** (53 págs, sin refs indefinidas; 3 cuadros + 5 figuras colocados).
 
-### Bloque B — Cap. 1 Introducción ⏳ AL FINAL
-- 1.1 Motivación
-- 1.2 Estado del arte
-- 1.3 Contribución
-- 1.4 Estructura de la tesis
+### Bloque B — Cap. 1 Introducción ✅ HECHO (2026-08-17)
+`\label{cap:introduccion}`. Secciones escritas:
+- 1.1 Motivación (`sec:motivacion`) — BLDC y su ubicuidad → rizo de par → la idealización
+  trapezoidal no se cumple → los esquemas modernos cargan una hipótesis de forma de onda
+  en su modelo interno → la caracterización previa resuelve un motor, no el problema →
+  la pregunta: ¿puede el controlador aprender la forma de onda operando?
+- 1.2 Estado del arte (`sec:estado-arte`), con cuatro subsecciones:
+  - 1.2.1 Reducción de rizo (diseño de máquina vs control; referencia óptima de Le-Huy;
+    rizo de conmutación; DTC; control repetitivo e ILC)
+  - 1.2.2 FCS-MPC (origen, dos debilidades: rizo intra-periodo y sensibilidad al modelo;
+    **M2PC como línea propia: Tarisciotti et al. 2015, no Coronado**; qué NO resuelve el M2PC)
+  - 1.2.3 Estimación de BEMF y aprendizaje (observadores SMO/HOSM orientados a *posición*,
+    no a corregir forma de onda; NN profundas y sus 3 pegas; ADALINE y zhao2025 como lo
+    más cercano, pero compensador aditivo, no toca el predictor)
+  - 1.2.4 La brecha — el hueco que ocupa la tesis
+- 1.3 Contribuciones (`sec:contribuciones`) — 5 párrafos, alineados 1:1 con los objetivos
+  específicos de `sec:objetivos`. Incluye los números: 69%/61%, 40 params vs ~25k.
+- 1.4 Estructura de la tesis (`sec:estructura`) — un párrafo por capítulo con `\ref`.
+
+**Cambio de infraestructura:** `Cap6.tex` ahora lleva `\label{cap:conclusiones}` (lo
+necesitaba 1.4).
+
+**Citas nuevas agregadas al bib — ⚠ METADATOS ESCRITOS DE MEMORIA, VERIFICAR:**
+`jahns1996pulsating`, `carlson1992commutation`, `liu2005dtc`, `qian2004ilc`,
+`rodriguez2013stateofart`, `cortes2012delay`, `tarisciotti2015m2pc`. Ninguno de estos PDFs
+está en `papers/`. Van marcados con un comentario de bloque en `Bibliografia.bib`.
+
+**Compila limpio** (56 págs, 0 refs/citas indefinidas, 0 overfull boxes).
 
 ---
 

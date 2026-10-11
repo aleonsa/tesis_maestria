@@ -1,21 +1,94 @@
 \documentclass[../../../Tesis_JALS_Maestria.tex]{subfiles}
 
-\graphicspath{{\subfix{../FigureC1/}}{\subfix{../}}} % agrega ambas rutas
+\graphicspath{{\subfix{FigureC1/}}{\subfix{./}}} % agrega ambas rutas
 
 \begin{document}
 
-	\chapter{Introducción}
+\chapter{Introducción}
+\label{cap:introduccion}
 
-	\section{Motivación}
-	\lipsum[1-2]
+% =================================================================
+\section{Motivación}
+\label{sec:motivacion}
 
-	\section{Estado del arte}
-	\lipsum[3-4]
+El motor de corriente directa sin escobillas (BLDC) se ha vuelto la opción por defecto en aplicaciones donde importan la densidad de par y la eficiencia: tracción eléctrica, robótica móvil, servoaccionamientos y propulsión de vehículos aéreos no tripulados. Al sustituir la conmutación mecánica por una electrónica, el BLDC elimina el desgaste de las escobillas y alcanza rendimientos que un motor de corriente directa convencional no puede sostener \citep{krishnan2009pmbldc}. El precio de esa sustitución es que la conmutación pasa a ser responsabilidad del control, y con ella aparece un problema que el motor con escobillas no tenía en la misma medida: el rizo de par.
 
-	\section{Contribución}
-	\lipsum[5]
+El rizo de par es la oscilación del par electromagnético alrededor de su valor medio. Se manifiesta como vibración mecánica, ruido acústico y pérdida de precisión en el seguimiento de trayectorias; en accionamientos de tracción se traduce además en desgaste de la transmisión. En aplicaciones de baja velocidad, donde la inercia del rotor ya no filtra las componentes de alta frecuencia, es el factor que limita la calidad del accionamiento \citep{jahns1996pulsating}.
 
-	\section{Estructura de la tesis}
-	\lipsum[6]
+Buena parte de la teoría clásica del BLDC descansa en una idealización: que la fuerza contraelectromotriz (BEMF) inducida en cada devanado es trapezoidal, con un tramo plano de $120^\circ$ eléctricos. Bajo esa hipótesis, inyectar corriente rectangular sincronizada con el tramo plano produce par constante, y la conmutación de seis pasos es la estrategia natural. La dificultad es que ningún motor real cumple la hipótesis. Las ranuras del estator, las tolerancias de magnetización y la geometría del entrehierro introducen armónicos en la BEMF, de modo que la forma de onda efectiva cae en algún punto intermedio entre el trapecio y la senoide \citep{shao2003direct}. A esa desviación se suman el par de detención, que depende sólo de la posición del rotor, y la distorsión que el tiempo muerto del inversor introduce en el voltaje aplicado. Las tres fuentes son periódicas en la posición eléctrica.
+
+Los esquemas modernos de control de corriente ---control por campo orientado, control directo de par, control predictivo--- mejoran de forma sustancial el seguimiento de la corriente de referencia, pero ninguno resuelve por sí solo el problema anterior, porque todos cargan una hipótesis sobre la forma de onda dentro de su modelo interno. Si esa hipótesis no coincide con el motor que se está accionando, el error se propaga por dos caminos: contamina la referencia de corriente que se le pide al lazo interno y sesga la predicción con la que ese lazo decide. El resultado es rizo de par residual incluso cuando el seguimiento de corriente es excelente. Esta observación, que se desarrolla formalmente en el capítulo \ref{cap:modelo}, es el punto de partida de la tesis.
+
+La respuesta habitual de la industria es caracterizar el motor antes de ponerlo en servicio: medir la BEMF en un banco, ajustar una tabla de consulta y cargarla en el controlador. El procedimiento funciona, pero resuelve el problema para un motor y una condición de operación. No sobrevive a la dispersión de fabricación entre unidades del mismo lote, ni a la deriva del flujo de los imanes con la temperatura, ni al envejecimiento. Y exige una etapa de caracterización que no siempre es viable.
+
+La alternativa que se explora aquí es distinta: que el controlador aprenda la forma de onda del motor mientras opera, a partir de las mismas mediciones que ya necesita para funcionar. Si ese aprendizaje es suficientemente barato y suficientemente rápido, el modelo interno deja de ser un supuesto de diseño y pasa a ser una cantidad estimada en línea.
+
+% =================================================================
+\section{Estado del arte}
+\label{sec:estado-arte}
+
+\subsection{Reducción de rizo de par en motores BLDC}
+
+Las técnicas para atenuar el rizo de par se dividen en dos familias \citep{jahns1996pulsating}. La primera actúa sobre el diseño de la máquina: sesgado de ranuras, formas de imán no rectangulares, elección del número de ranuras y polos. Son medidas eficaces, pero se toman en la etapa de fabricación y suelen implicar una pérdida de par medio. La segunda familia actúa sobre el control, y es donde se ubica este trabajo.
+
+Dentro de la familia de control, la línea más antigua consiste en calcular la corriente de referencia que produce par constante para una BEMF dada. \citet{lehuy1986minimization} plantean el problema como la minimización de la norma de la corriente sujeta a la restricción de par y obtienen una referencia que depende explícitamente de la forma de onda. La solución es óptima, pero hereda por completo la calidad del modelo de BEMF que se le proporcione: es exactamente el punto que esta tesis ataca.
+
+Una segunda línea aborda el rizo de conmutación, la componente que aparece durante los intervalos en que una fase se apaga y otra se enciende. \citet{carlson1992commutation} caracterizan el fenómeno y muestran que la asimetría entre las pendientes de subida y bajada de la corriente es la causa dominante, lo que dio pie a esquemas de compensación específicos para el intervalo de conmutación. \citet{liu2005dtc} llevan el control directo de par al BLDC con el mismo objetivo, sustituyendo la tabla de conmutación clásica por una que considera la naturaleza no senoidal de la máquina.
+
+Una tercera línea explota la periodicidad del rizo. Como todas sus fuentes son periódicas en la posición eléctrica, el principio del modelo interno sugiere insertar un generador de señales periódicas en el lazo. En esa dirección se ubican el control repetitivo \citep{hara1988repetitive, ahn2003adaptive} y el control por aprendizaje iterativo \citep{qian2004ilc}. Estos métodos alcanzan atenuaciones notables y no requieren conocer el mecanismo físico que genera la perturbación, pero introducen un retardo de un periodo completo en el lazo y su desempeño se degrada cuando la velocidad varía, porque el periodo de la perturbación cambia con ella.
+
+\subsection{Control predictivo de conjunto finito}
+
+El control predictivo basado en modelo aplicado a convertidores de potencia se consolidó cuando se reconoció que el inversor sólo admite un número finito de configuraciones y que, por lo tanto, no hace falta optimizar sobre un continuo ni interponer un modulador \citep{kouro2009mpc}. El \textit{Finite Control Set Model Predictive Control} (FCS-MPC) evalúa el modelo discreto del sistema para cada uno de los ocho vectores admisibles, aplica el que minimiza una función de costo y repite. Su atractivo es la simplicidad conceptual, la facilidad para incorporar restricciones y no linealidades, y la respuesta dinámica rápida \citep{rodriguez2012predictive, rodriguez2013stateofart}.
+
+El método tiene dos debilidades bien documentadas. La primera es que aplicar un solo vector durante todo el periodo de muestreo produce un rizo de corriente apreciable y un espectro de conmutación disperso, sin frecuencia fija. Reducir ese rizo obliga a bajar el periodo de muestreo, lo que traslada el costo al hardware. La segunda es la sensibilidad al modelo: la predicción usa los parámetros eléctricos y la BEMF, y cualquier discrepancia se traduce en una elección subóptima del vector \citep{rodriguez2013stateofart}. A esto se suman aspectos de implementación como la compensación del retardo de cómputo, que debe incorporarse explícitamente para no perder un periodo entero de horizonte \citep{cortes2012delay}.
+
+La respuesta a la primera debilidad fue el control predictivo modulado, o M2PC, que recupera la idea de repartir el periodo de muestreo entre varios vectores sin abandonar el conjunto finito. \citet{tarisciotti2015m2pc} formulan el esquema para un rectificador activo: en lugar de escoger un vector, el controlador escoge una combinación de dos vectores activos adyacentes más uno nulo, y calcula los tiempos de aplicación que minimizan el costo dentro del periodo. El resultado es frecuencia de conmutación fija y un rizo de corriente sensiblemente menor, conservando la formulación predictiva. \citet{coronado2025} adaptan esta idea al accionamiento de motores BLDC y reportan una reducción del 75 al 80 por ciento en el error cuadrático medio de seguimiento de corriente frente al FCS-MPC clásico bajo el mismo periodo de muestreo. Ese esquema es el punto de partida del controlador que se desarrolla en esta tesis.
+
+Conviene subrayar lo que el M2PC no resuelve. Al mejorar el seguimiento de corriente ataca únicamente la parte del rizo atribuible al lazo interno. La parte que proviene de un modelo de BEMF equivocado permanece intacta, porque el M2PC sigue evaluando su función de costo contra una referencia construida con ese mismo modelo. El capítulo \ref{cap:validacion} muestra un caso donde esta distinción es visible: un modelo senoidal alcanza mejor error de corriente que uno trapezoidal y sin embargo produce más rizo de par.
+
+\subsection{Estimación de la BEMF y métodos basados en aprendizaje}
+
+La estimación de la BEMF ha sido estudiada principalmente con fines de control sin sensor de posición, donde el objetivo es recuperar el ángulo del rotor a partir de las corrientes y voltajes de fase. La detección directa por medición de la fase no energizada \citep{shao2003direct} es la técnica más difundida en accionamientos de seis pasos. Con enfoques basados en observadores, los modos deslizantes ofrecen robustez ante incertidumbre paramétrica: \citet{shao2019ismo} proponen un observador por modos deslizantes integrales que reduce el castañeo característico, y \citet{coronado2023} emplean un diferenciador por modos deslizantes de alto orden para estimar el par de carga en un BLDC. \citet{li2019highstability} atacan específicamente el régimen de baja velocidad, donde la amplitud de la BEMF se desvanece y la relación señal a ruido colapsa. En todos estos trabajos la BEMF estimada se usa para extraer posición o velocidad, no para corregir el modelo de forma de onda del controlador.
+
+En paralelo se han explorado métodos basados en redes neuronales. \citet{ali2024ann} entrenan una red para predecir la BEMF de un BLDC y cerrar con ella un lazo de velocidad sin sensor, y existen propuestas para aprender directamente los instantes de conmutación a partir de datos. Estos trabajos muestran que una red aproxima bien la forma de onda, pero comparten tres inconvenientes desde el punto de vista de una implementación embebida: requieren entrenamiento fuera de línea con datos del motor específico, tienen un número de parámetros del orden de decenas de miles, y no ofrecen garantías de convergencia si se intenta adaptarlos en línea, porque el problema de optimización deja de ser convexo.
+
+El ADALINE, la red lineal de una sola capa introducida por \citet{widrow1960adaline}, se sitúa en el extremo opuesto de ese compromiso. Al ser lineal en los parámetros, su entrenamiento por el algoritmo LMS es un problema convexo con condiciones de convergencia conocidas \citep{widrow1985adaptive, haykin2014adaptive}, y su costo por actualización es lineal en el número de pesos. En accionamientos eléctricos se ha usado sobre todo para identificar armónicos, aprovechando que un regresor de Fourier convierte los pesos de la red en coeficientes espectrales interpretables. La aplicación más cercana al presente trabajo es la de \citet{zhao2025adaline}, que emplean un ADALINE de tiempo finito para suprimir rizo de par en un PMSM. Su esquema, sin embargo, opera como compensador aditivo sobre la referencia de corriente y no modifica el modelo de predicción del controlador.
+
+\subsection{La brecha}
+
+De la revisión anterior se desprende un espacio que ningún trabajo cubre por completo. El FCS-M2PC resuelve el rizo de origen electrónico pero mantiene un modelo fijo de BEMF. Los métodos de estimación de BEMF están orientados a recuperar posición, no a corregir la forma de onda que el controlador supone. Las propuestas basadas en redes neuronales logran esa corrección pero exigen entrenamiento previo y un número de parámetros incompatible con un microcontrolador de gama media. Y los esquemas de aprendizaje en línea que sí se aplican a rizo de par actúan como compensadores externos, sin tocar el modelo interno del predictor.
+
+Esta tesis ocupa ese espacio. La propuesta es estimar en línea la función de forma de la BEMF con un ADALINE sobre base de Fourier e inyectar esa estimación simultáneamente en los dos puntos donde el error de modelo se convierte en rizo: la generación de la referencia de corriente y la predicción del FCS-M2PC.
+
+% =================================================================
+\section{Contribuciones}
+\label{sec:contribuciones}
+
+Las aportaciones de este trabajo son las siguientes.
+
+Se identifican y separan las dos vías por las que un modelo incorrecto de BEMF produce rizo de par en un esquema predictivo, y se muestra que actúan de forma acoplada. El análisis explica un comportamiento que a primera vista resulta contraintuitivo y que se observa en las simulaciones del capítulo \ref{cap:validacion}: un modelo con menor error de seguimiento de corriente puede producir más rizo de par que otro con mayor error. El rizo no es monótono en la calidad del seguimiento.
+
+Se formula el FCS-M2PC de \citet{coronado2025} de manera que la función de forma de la BEMF entre como parámetro estimado y no como constante de diseño, sin alterar la estructura del reparto del periodo de muestreo ni el costo computacional del lazo.
+
+Se diseña un estimador de la BEMF basado en un ADALINE con regresores de Fourier truncados en el décimo armónico, entrenable en línea por LMS. La elección de la base tiene dos consecuencias que se explotan en el capítulo \ref{cap:desarrollo}: los pesos coinciden con los coeficientes de Fourier de la forma de onda, lo que los hace interpretables, y la matriz de autocorrelación del regresor resulta múltiplo de la identidad bajo posición uniformemente distribuida, lo que elimina la dispersión de valores propios y garantiza que todos los modos del LMS converjan al mismo ritmo. El estimador usa 40 parámetros y alcanza la misma calidad de aproximación que una red neuronal profunda de aproximadamente 25 mil.
+
+Se construye un observador discreto de BEMF que provee la señal de aprendizaje al ADALINE a partir de mediciones de corriente y voltaje, de modo que el esquema no requiere un sensor dedicado ni una etapa previa de caracterización del motor.
+
+Se valida el esquema completo en un caso de estudio numérico frente a cinco alternativas, incluyendo modelos fijos trapezoidal y senoidal y un modelo aprendido fuera de línea con una red profunda. La reducción de rizo de par respecto al modelo trapezoidal es del 69 por ciento con supervisión ideal y del 61 por ciento cuando el aprendizaje se alimenta del observador. Se caracteriza además el rizo residual y se establece que el piso alcanzado corresponde a un límite del controlador ---determinado por el número de subintervalos y el periodo de muestreo--- y no del modelo de BEMF, lo que delimita con precisión qué parte del problema queda fuera del alcance de la estrategia propuesta.
+
+% =================================================================
+\section{Estructura de la tesis}
+\label{sec:estructura}
+
+El capítulo \ref{cap:preliminares} reúne el material de referencia: el modelo del motor BLDC y el origen físico del rizo, la transformada de Clarke y la justificación de trabajar en el marco $\alpha\beta$ en lugar de $dq$, el inversor de dos niveles y sus vectores admisibles, la familia de controladores predictivos que da pie al FCS-M2PC, y el ADALINE con el algoritmo LMS.
+
+El capítulo \ref{cap:modelo} plantea el problema. Se escribe el modelo del motor en $\alpha\beta$ en forma de estado, se deriva la referencia de corriente óptima, y se analiza en detalle cómo el error en la función de forma de la BEMF se propaga por las dos vías mencionadas. El capítulo cierra con el planteamiento formal, la hipótesis de trabajo y los objetivos.
+
+El capítulo \ref{cap:desarrollo} contiene el desarrollo. Se deriva el FCS-M2PC con la BEMF estimada como parámetro, se construye el ADALINE con base de Fourier, se analizan su entrenamiento fuera de línea y su adaptación en línea por LMS, se justifica la elección frente a una red profunda, y se diseña el observador que cierra el lazo de aprendizaje. La última sección integra las piezas en una sola arquitectura.
+
+El capítulo \ref{cap:validacion} presenta la validación numérica. Se define el caso de estudio, se comparan los seis métodos bajo supervisión ideal, se estudia la convergencia del aprendizaje en línea, se repite la comparación con el observador en el lazo y se discuten los resultados junto con las limitaciones del esquema.
+
+El capítulo \ref{cap:conclusiones} recoge las conclusiones y las direcciones de trabajo futuro.
 
 \end{document}

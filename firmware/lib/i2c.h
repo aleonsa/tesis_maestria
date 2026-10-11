@@ -118,9 +118,9 @@ void i2c1_dump_regs(void);
  *
  * El llamador arranca la transferencia y sigue con lo suyo; una máquina de
  * estados en I2C1_EV_IRQHandler la lleva hasta el final y deja los bytes en un
- * buffer interno. Cinco eventos por lectura de 2 bytes: TXIS (escribe el
- * puntero de registro), TC (repeated-START), RXNE una vez por byte, STOPF
- * (cierra).
+ * buffer interno. Cuatro eventos por lectura de 2 bytes: el puntero se precarga
+ * en TXDR antes del START, luego TC (repeated-START), RXNE una vez por byte y
+ * STOPF (cierra). La precarga implementa ES0431 §2.11.5 / I2C2-190208.
  *
  * POR QUÉ ES SEGURO CORRERLO POR DEBAJO DEL CONTROL (prio 3 contra prio 1):
  * en los tres puntos donde esta máquina tiene que actuar, el maestro ESTIRA
@@ -182,9 +182,10 @@ i2c_nb_state_t i2c1_nb_state(void);
 i2c_status_t i2c1_nb_take(uint8_t *buf, uint8_t n);
 
 /*
- * Pide STOP y marca la transferencia como fallida, sin esperar. Es la salida
- * del consumidor cuando su propio timeout vence con el estado en BUSY. Si tras
- * esto el bus sigue clavado, el siguiente paso es i2c1_reset_peripheral().
+ * Pide STOP sin esperar. El estado permanece BUSY hasta que STOPF confirma el
+ * cierre; entonces pasa a ERR. Es la salida del consumidor cuando vence su
+ * propio timeout. Si STOPF nunca llega, recuperar con i2c1_reset_peripheral()
+ * desde foreground, nunca desde la ISR de control.
  */
 void i2c1_nb_abort(void);
 

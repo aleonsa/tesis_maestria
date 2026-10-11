@@ -100,7 +100,8 @@ static void delay_ms(uint32_t ms) {
  * periférico en la mano en ese momento. Los tres juntos nombran el bug; el
  * status solo, no.
  */
-static void nb_report_failure(const char *tag, i2c_status_t returned) {
+static void nb_report_failure(const char *tag, i2c_status_t returned,
+                              uint32_t closes_before) {
     uint32_t isr = i2c1_nb_err_isr();
 
     /* Lo PRIMERO, el cable. Un bus con una línea clavada en bajo invalida todo
@@ -117,7 +118,7 @@ static void nb_report_failure(const char *tag, i2c_status_t returned) {
      * vez de presentar datos viejos como si fueran de este intento. */
     i2c_nb_trace_t tr;
     i2c1_nb_trace(&tr);
-    if (tr.closes == 0U) {
+    if (tr.closes == closes_before) {
         printf("[%s]   la transferencia no llego a cerrar: no hay traza de\r\n"
                "[%s]   este intento (probablemente ni arranco).\r\n", tag, tag);
         return;
@@ -202,8 +203,17 @@ static i2c_status_t nb_one_shot(uint16_t *raw) {
     }
 
     uint32_t t0 = g_ticks;
+    uint8_t abort_sent = 0U;
     while (i2c1_nb_state() == I2C_NB_BUSY) {
-        if ((g_ticks - t0) >= 50U) { i2c1_nb_abort(); break; }
+        uint32_t elapsed = g_ticks - t0;
+        if ((elapsed >= 50U) && (abort_sent == 0U)) {
+            i2c1_nb_abort();
+            abort_sent = 1U;
+        } else if (elapsed >= 60U) {
+            /* Foreground-only last resort if requested STOP never completes. */
+            i2c1_reset_peripheral();
+            i2c1_nb_abort();
+        }
     }
 
     return as5600_raw_angle_take(raw);
@@ -224,33 +234,53 @@ static i2c_status_t nb_one_shot(uint16_t *raw) {
  * cada pasada la dispara el timer en vez de un while.
  */
 static uint32_t nb_pump(uint32_t ms, uint16_t *last_raw, uint32_t *aborts,
-                        uint32_t *nostarts) {
+                         uint32_t *nostarts) {
     uint32_t t0        = g_ticks;
     uint32_t seq0      = i2c1_nb_seq();
-    uint32_t busy_from = g_ticks;
+    static uint32_t busy_from;
+    static uint8_t  busy_timed;
+    static uint8_t  abort_sent;
+    static uint8_t  reset_sent;
 
     while ((g_ticks - t0) < ms) {
         switch (i2c1_nb_state()) {
             case I2C_NB_IDLE:
-                busy_from = g_ticks;
                 /* El status del arranque NO se descarta: «no arrancó» y «arrancó
                  * y falló» tienen causas distintas y contadores distintos. Sin
                  * esta cuenta, un periférico con BUSY pegado se ve igual que un
                  * bus lento. */
                 if (as5600_raw_angle_start() != I2C_OK) {
                     if (nostarts != 0) (*nostarts)++;
+                } else {
+                    busy_from = g_ticks;
+                    busy_timed = 1U;
+                    abort_sent = 0U;
+                    reset_sent = 0U;
                 }
                 break;
 
             case I2C_NB_BUSY:
-                if ((g_ticks - busy_from) >= NB_DEADLINE_MS) {
+                if (busy_timed == 0U) {
+                    busy_from = g_ticks;
+                    busy_timed = 1U;
+                }
+                if (((g_ticks - busy_from) >= NB_DEADLINE_MS)
+                        && (abort_sent == 0U)) {
                     i2c1_nb_abort();
+                    abort_sent = 1U;
                     if (aborts != 0) (*aborts)++;
+                } else if (((g_ticks - busy_from) >= (NB_DEADLINE_MS + 2U))
+                        && (reset_sent == 0U)) {
+                    /* Foreground recovery after asynchronous STOP had 2 ms. */
+                    i2c1_reset_peripheral();
+                    i2c1_nb_abort();
+                    reset_sent = 1U;
                 }
                 break;
 
             default:   /* DONE o ERR: recoger y dejar el driver libre */
                 (void)as5600_raw_angle_take(last_raw);
+                busy_timed = 0U;
                 break;
         }
     }
@@ -324,17 +354,25 @@ int main(void) {
     printf("[i2c] camino por IRQ armado (I2C1_EV/ER, prioridad NVIC 3)\r\n");
 
 #if (NB_SINGLE_SHOT == 1)
-    printf("\r\n[shot] 5 lecturas aisladas, 200 ms entre una y otra:\r\n");
-    for (int k = 0; k < 5; k++) {
+    printf("\r\n[shot] primera lectura IRQ aislada:\r\n");
+    for (int k = 0; k < 1; k++) {
         uint16_t raw_s = 0U;
+        uint32_t closes0 = i2c1_nb_closes();
         i2c_status_t st = nb_one_shot(&raw_s);
 
         if (st == I2C_OK) {
             printf("[shot] %d: OK  raw=%u\r\n", k, (unsigned)raw_s);
+            i2c_nb_trace_t tr;
+            i2c1_nb_trace(&tr);
+            printf("[shot] IRQ: TXIS=%u TC=%u RXNE=%u STOPF=%u | entradas=%u\r\n",
+                   (tr.ev & (1U << 0)) ? 1U : 0U,
+                   (tr.ev & (1U << 1)) ? 1U : 0U,
+                   (tr.ev & (1U << 2)) ? 1U : 0U,
+                   (tr.ev & (1U << 3)) ? 1U : 0U,
+                   (unsigned)tr.irqs);
         } else {
-            nb_report_failure("shot", st);
+            nb_report_failure("shot", st, closes0);
         }
-        delay_ms(200U);
     }
 #endif
 
@@ -354,10 +392,10 @@ int main(void) {
                (unsigned long)(i2c1_nb_errors() - err0),
                (unsigned long)aborts, (unsigned)raw_tp);
         if (i2c1_nb_errors() != err0) {
-            nb_report_failure("perf", i2c1_nb_err_status());
+            nb_report_failure("perf", i2c1_nb_err_status(), err0);
         } else if (reads == 0U) {
             /* Cero lecturas y cero cierres: ninguna transferencia arrancó. */
-            nb_report_failure("perf", I2C_ERR_BUSY);
+            nb_report_failure("perf", I2C_ERR_BUSY, err0);
         }
         if (reads > 0U) {
             printf("[perf] refresco interno del AS5600 ~7 kHz: %s\r\n",
@@ -386,12 +424,19 @@ int main(void) {
          * por IRQ; aquí no hay nada que hacer salvo esperar, pero en la ISR de
          * control ese hueco es donde vive el lazo entero. */
         uint32_t aborts = 0U;
+        uint32_t errors0 = i2c1_nb_errors();
         ok = (nb_pump(5U, &raw, &aborts, 0) > 0U);
         /* El status real del último cierre, no uno inventado a partir del
          * estado. La versión anterior reportaba INCOMPLETE cuando el driver
          * estaba en IDLE porque nada había arrancado, que es justo lo que no
          * hay que hacer con un mensaje de error. */
-        i2c_status_t r = ok ? I2C_OK : i2c1_nb_err_status();
+        if (!ok && (i2c1_nb_state() == I2C_NB_BUSY)) {
+            delay_ms(100U);
+            continue;
+        }
+        i2c_status_t r = ok ? I2C_OK
+                           : ((i2c1_nb_errors() != errors0)
+                              ? i2c1_nb_err_status() : I2C_ERR_BUSY);
 #else
         i2c_status_t r = as5600_raw_angle(&raw);
         ok = (r == I2C_OK);

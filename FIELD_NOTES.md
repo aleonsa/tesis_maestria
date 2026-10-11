@@ -40,6 +40,7 @@
 - [N1.17 — Bisección: cómo se depura un síntoma que mezcla cuatro cosas](#n117--bisección-cómo-se-depura-un-síntoma-que-mezcla-cuatro-cosas)
 - [N1.18 — La lectura que no cabe en la ISR: I²C no bloqueante](#n118--la-lectura-que-no-cabe-en-la-isr-i²c-no-bloqueante)
 - [N1.19 — El fallo que se multiplica: por qué un error de I²C tiene que dejar el periférico limpio](#n119--el-fallo-que-se-multiplica-por-qué-un-error-de-i²c-tiene-que-dejar-el-periférico-limpio)
+- [N1.20 — Una errata de silicio cambia el primer evento de la máquina I²C](#n120--una-errata-de-silicio-cambia-el-primer-evento-de-la-máquina-i²c)
 
 ---
 
@@ -3842,5 +3843,55 @@ es la firma documentada de un esclavo colgado, un estado que **solo** puede prov
 maestro — pero se leyó como evidencia de cable flojo porque esa era la hipótesis en
 curso. La tabla de cuatro filas del diagrama de conexiones existe para que la próxima vez
 la lectura no dependa de qué hipótesis se tenía en la cabeza.
+
+---
+
+## N1.20 — Una errata de silicio cambia el primer evento de la máquina I²C
+
+### Síntoma y evidencia
+
+El camino polling funcionaba, pero la primera transferencia por IRQ podía detenerse y dejar trazas incoherentes alrededor de `TXIS`. La causa no estaba en prioridad NVIC ni en velocidad: ES0431 Rev. 9 §2.11.5 (`I2C2-190208`) documenta **“Transmission stalled after first byte”** y prescribe precargar el primer byte en `TXDR` antes de generar `START`.
+
+La evidencia independiente está en `vendor/STM32CubeG4/Release_Notes.html`: ST describe la actualización del HAL como “prefetch data before starting the transmission” para implementar ese workaround. `HAL_I2C_Mem_Read_IT()` hace:
+
+```c
+hi2c->Instance->TXDR = I2C_MEM_ADD_LSB(MemAddress);
+I2C_TransferConfig(..., I2C_GENERATE_START_WRITE);
+```
+
+### Secuencia corregida
+
+Para lectura de registro de 8 bits:
+
+```text
+software: TXDR = reg
+software: CR2 = SADD | NBYTES=1 | START
+hardware: dirección-W, ACK, reg, ACK
+IRQ:      TC
+software: CR2 = SADD | NBYTES=n | RD_WRN | AUTOEND | START
+IRQ:      RXNE × n
+IRQ:      STOPF
+```
+
+`TXIS` deja de ser evento nominal. Si aparece, el handler no vuelve a escribir `reg`: eso duplicaría el puntero. Solicita abort y conserva la traza.
+
+### Cierre concurrente
+
+La ISR de control tiene prioridad 1 y puede preemptar I2C prioridad 3. Por eso `i2c1_nb_abort()` no espera: marca solicitud, deshabilita `TXIE/TCIE`, conserva `RXIE/STOPIE`, pide STOP y retorna. `STOPF` es quien autoriza el cierre. Una sección crítica de pocas instrucciones protege la decisión y escritura del repeated START; otra reclama el commit terminal con `closing`.
+
+El orden de cierre es:
+
+1. reclamar cierre;
+2. deshabilitar fuentes IRQ;
+3. capturar diagnóstico;
+4. drenar `RXDR`, vaciar `TXDR`, limpiar flags y `CR2`;
+5. `DMB`;
+6. incrementar `seq` o `errors` y publicar `DONE` o `ERR` sin preempción.
+
+Así ningún consumidor observa resultado listo mientras periférico todavía puede modificar buffer o generar una IRQ tardía.
+
+### Estado
+
+Los tres targets compilan con GCC ARM 15.2.1 y `objdump` confirma `TXDR` antes de `CR2.START`. Falta prueba física: primera lectura aislada y throughput de un segundo.
 
 ---

@@ -272,8 +272,14 @@ static void i2c_abort(void) {
         uint32_t guard = I2C_WAIT_LOOPS;
         while (((I2C1->ISR & I2C_ISR_STOPF) == 0U) && (--guard != 0U)) { }
     }
+    if ((I2C1->ISR & I2C_ISR_RXNE) != 0U) (void)I2C1->RXDR;
+    /* HAL-equivalent TXDR flush. A prefetched register byte remains pending
+     * after an address NACK unless TXE is set by software. */
+    if ((I2C1->ISR & I2C_ISR_TXIS) != 0U) I2C1->TXDR = 0U;
+    if ((I2C1->ISR & I2C_ISR_TXE) == 0U) I2C1->ISR |= I2C_ISR_TXE;
     I2C1->ICR = I2C_ICR_STOPCF | I2C_ICR_NACKCF
-              | I2C_ICR_BERRCF | I2C_ICR_ARLOCF;
+              | I2C_ICR_BERRCF | I2C_ICR_ARLOCF | I2C_ICR_OVRCF;
+    if ((I2C1->ISR & I2C_ISR_BUSY) == 0U) I2C1->CR2 = 0U;
 }
 
 i2c_status_t i2c1_read_regs(uint8_t addr7, uint8_t reg, uint8_t *buf, uint8_t n) {
@@ -297,19 +303,22 @@ i2c_status_t i2c1_read_regs(uint8_t addr7, uint8_t reg, uint8_t *buf, uint8_t n)
      *   RD_WRN    = 0        (write)
      *   AUTOEND   = 0        (NO STOP: haremos repeated-START)
      * Luego START dispara el arranque + envío de dirección. */
-    I2C1->CR2 = ((uint32_t)addr7 << (I2C_CR2_SADD_Pos + 1U))
-              | (1U << I2C_CR2_NBYTES_Pos);
-    I2C1->CR2 |= I2C_CR2_START;
-
-    /* TXIS = 1 cuando TXDR está libre para el dato (tras el ACK de dirección).
-     * Si el esclavo no hace ACK, sube NACKF en su lugar. */
-    st = i2c_wait(I2C_ISR_TXIS, I2C_ERR_TIMEOUT_TXIS, I2C_ERR_NACK_ADDR);
-    if (st != I2C_OK) { i2c_abort(); return st; }
+    /* ES0431 Rev 9 §2.11.5 / workaround I2C2-190208: TXDR must contain the
+     * first byte before START, otherwise transmission can stall after the
+     * first byte. STM32CubeG4 HAL uses this same ordering. */
     I2C1->TXDR = reg;
+    I2C1->CR2 = ((uint32_t)addr7 << (I2C_CR2_SADD_Pos + 1U))
+              | (1U << I2C_CR2_NBYTES_Pos)
+              | I2C_CR2_START;
 
     /* TC = 1 cuando NBYTES se envió y AUTOEND=0: el bus queda en hold
      * esperando repeated-START o STOP. */
-    st = i2c_wait(I2C_ISR_TC, I2C_ERR_TIMEOUT_TC, I2C_ERR_NACK_DATA);
+    st = i2c_wait(I2C_ISR_TC, I2C_ERR_TIMEOUT_TC, I2C_ERR_NACK_ADDR);
+    if ((st == I2C_ERR_NACK_ADDR) && ((I2C1->ISR & I2C_ISR_TXE) != 0U)) {
+        /* TXE=1 means the prefetched byte reached the shift register after
+         * the address ACK; this NACK therefore belongs to the data byte. */
+        st = I2C_ERR_NACK_DATA;
+    }
     if (st != I2C_OK) { i2c_abort(); return st; }
 
     /* ---- Fase 2: repeated-START + lectura (AUTOEND manda el STOP) ----
@@ -458,15 +467,12 @@ void i2c1_dump_regs(void) {
  */
 
 /*
- * Fase dentro de la transferencia. Sirve para UNA cosa: decir de qué fue el
- * NACK. NACKF mientras se escribe el puntero de registro significa "nadie en
- * esa dirección"; después de haberlo escrito significa "contestó y luego
- * rechazó el dato". Esa distinción es la que hace útil al camino de polling y
- * no se pierde aquí.
+ * Transfer phase. During register write, TXE distinguishes address NACK from
+ * data NACK because the prefetched byte moves to the shift register only after
+ * the address ACK. During repeated START, any NACK belongs to read address.
  */
 typedef enum {
-    NB_PH_ADDR_W = 0,   /* START mandado, esperando TXIS              */
-    NB_PH_REG,          /* puntero de registro escrito, esperando TC  */
+    NB_PH_REG = 0,      /* puntero precargado, esperando TC           */
     NB_PH_RX,           /* repeated-START hecho, recibiendo           */
 } nb_phase_t;
 
@@ -492,21 +498,21 @@ static volatile uint8_t nb_log_n;
 
 static const char *nb_phase_str(nb_phase_t ph) {
     switch (ph) {
-        case NB_PH_ADDR_W: return "ADDR_W (esperando TXIS)";
-        case NB_PH_REG:    return "REG (esperando TC)";
+        case NB_PH_REG: return "REG (precargado, esperando TC)";
         case NB_PH_RX:     return "RX (recibiendo)";
         default:           return "??";
     }
 }
 
 /* Sin inicializador: los estáticos arrancan en cero, que es exactamente
- * IDLE / I2C_OK / NB_PH_ADDR_W / contadores a 0. */
+ * IDLE / I2C_OK / NB_PH_REG / contadores a 0. */
 static struct {
     volatile i2c_nb_state_t state;
     volatile i2c_status_t   status;
     volatile uint32_t       seq;
     volatile uint32_t       errors;
     volatile uint32_t       err_isr;
+    volatile uint32_t       active_err_isr;
     volatile nb_phase_t     err_phase;
     volatile i2c_status_t   err_status;
     /* Traza de la última transferencia. No es adorno: sin ella, "STOP sin
@@ -527,16 +533,16 @@ static struct {
     volatile uint8_t        reg;
     volatile uint8_t        n;
     volatile uint8_t        idx;
+    volatile uint8_t        abort_pending;
+    volatile uint8_t        closing;
     volatile uint8_t        buf[I2C_NB_MAXBYTES];
 } nb;
 
 void i2c1_nb_init(void) {
-    /* Fuentes de evento que la máquina de estados necesita. Dejarlas armadas en
-     * reposo no genera IRQ espurias: TXIS solo sube tras el ACK de dirección de
-     * una escritura, y RXNE/TC/STOPF solo dentro de una transferencia. El
-     * periférico en reposo tiene TXE=1, que NO es TXIS. */
-    I2C1->CR1 |= I2C_CR1_TXIE | I2C_CR1_RXIE | I2C_CR1_TCIE
-               | I2C_CR1_STOPIE | I2C_CR1_NACKIE | I2C_CR1_ERRIE;
+    /* Sources stay disabled while idle. read_regs_start() arms them only after
+     * the complete software context and prefetched TX byte are ready. */
+    I2C1->CR1 &= ~(I2C_CR1_TXIE | I2C_CR1_RXIE | I2C_CR1_TCIE
+                 | I2C_CR1_STOPIE | I2C_CR1_NACKIE | I2C_CR1_ERRIE);
 
     /* Prioridad 3 contra la 1 de la ISR de control: el control SIEMPRE preempta
      * (y 0 queda reservada para faults). Es seguro porque el maestro estira SCL
@@ -557,76 +563,89 @@ void i2c1_nb_init(void) {
  * que llega DESPUÉS de un abort no vuelve a contar el error ni pisa el estado.
  */
 static void nb_finish(void) {
-    if (nb.state != I2C_NB_BUSY) return;
+    /* Claim terminal commit atomically against higher-priority control ISR. */
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    if ((nb.state != I2C_NB_BUSY) || (nb.closing != 0U)) {
+        __set_PRIMASK(primask);
+        return;
+    }
+    nb.closing = 1U;
+    __set_PRIMASK(primask);
 
-    /* Barrera antes de publicar el estado: el consumidor corre en una ISR de
-     * prioridad más alta y en cuanto vea DONE va a leer nb.buf. */
-    __DMB();
+    /* No further peripheral IRQ may observe or mutate a terminal transfer. */
+    I2C1->CR1 &= ~(I2C_CR1_TXIE | I2C_CR1_RXIE | I2C_CR1_TCIE
+                 | I2C_CR1_STOPIE | I2C_CR1_NACKIE | I2C_CR1_ERRIE);
 
-    if (nb.status == I2C_OK) {
-        nb.seq++;
-        nb.state = I2C_NB_DONE;
-    } else {
+    if (nb.status != I2C_OK) {
         /* La foto del fallo se toma AQUÍ, no en cada sitio que pone un status:
          * un único punto de cierre es también un único punto de captura, y así
          * no hay forma de añadir un camino de error que se olvide de dejar
          * rastro. err_isr puede venir ya escrito por el handler de errores; el
          * de aquí es el estado en el momento del cierre, que es el que importa
          * para saber dónde nos quedamos. */
-        nb.err_isr    = I2C1->ISR;
+        nb.err_isr    = (nb.active_err_isr != 0U)
+                      ? nb.active_err_isr : I2C1->ISR;
         nb.err_phase  = nb.phase;
         nb.err_idx    = nb.idx;
         nb.err_status = nb.status;
-        nb.errors++;
-        nb.state = I2C_NB_ERR;
-
-        /* ── Y AHORA lo importante: dejar el periférico usable. ──
-         *
-         * Esto faltaba y era la causa de la cascada. Un cierre con error puede
-         * ocurrir con la transacción a medias: BUSY = 1, un byte todavía en
-         * TXDR, CR2 con NBYTES sin agotar. Nada de eso se limpia solo. Las
-         * consecuencias, las dos observadas en el banco:
-         *
-         *   1. `read_regs_start()` mira ISR.BUSY y devuelve I2C_ERR_BUSY —
-         *      para siempre. Es el «[loop] error #100: BUSY» literal: no eran
-         *      cien fallos distintos, era un fallo y noventa y nueve negativas
-         *      a arrancar.
-         *   2. El byte que quedó en TXDR sale SOLO en la siguiente
-         *      transacción, sin pedir TXIS. La máquina de estados nunca se
-         *      enteró de haberlo mandado: de ahí las trazas con TXIS = 0 y
-         *      bytes = 1/2, que no son un fallo nuevo sino el eco del anterior.
-         *
-         * RM0440 Rev 9 §39.4.6 dice qué borra exactamente PE = 0: I2C_CR2,
-         * I2C_ISR (dejando TXE = 1, o sea TXDR vaciado) y los flags. NO toca
-         * TIMINGR ni la configuración de CR1, así que los TXIE/RXIE/TCIE/... de
-         * i2c1_nb_init() sobreviven al ciclo y no hay que rearmarlos.
-         *
-         * El pending del NVIC sí hay que bajarlo a mano: si el flag que causó
-         * esta IRQ ya había latcheado una segunda entrada, esa entrada llegaría
-         * después del reset a leer flags que ya no existen. */
-
-        /* Antes del reset, intentar cerrar en el aire con un STOP de verdad.
-         * PE = 0 suelta SCL y SDA sin condición de STOP: si el esclavo estaba a
-         * mitad de byte se queda conduciendo su bit y clava el bus —
-         * exactamente el estado que hay que recuperar a mano en el arranque. Un
-         * STOP legítimo son ~10 µs a 100 kHz; la guardia son ~300 µs, factor 30
-         * y sigue siendo invisible. Si no sale, el bus ya está roto y el reset
-         * es lo mejor que queda. */
-        if ((I2C1->ISR & I2C_ISR_BUSY) != 0U) {
-            I2C1->CR2 |= I2C_CR2_STOP;
-            uint32_t guard = 5000U;
-            while (((I2C1->ISR & I2C_ISR_BUSY) != 0U) && (--guard != 0U)) { }
-        }
-
-        i2c1_reset_peripheral();
-        NVIC_ClearPendingIRQ(I2C1_EV_IRQn);
-        NVIC_ClearPendingIRQ(I2C1_ER_IRQn);
     }
+
+    /* Drain/flush data before publishing terminal state. */
+    if ((I2C1->ISR & I2C_ISR_RXNE) != 0U) (void)I2C1->RXDR;
+    if ((I2C1->ISR & I2C_ISR_TXIS) != 0U) I2C1->TXDR = 0U;
+    if ((I2C1->ISR & I2C_ISR_TXE) == 0U) I2C1->ISR |= I2C_ISR_TXE;
+    I2C1->ICR = I2C_ICR_STOPCF | I2C_ICR_NACKCF
+              | I2C_ICR_BERRCF | I2C_ICR_ARLOCF | I2C_ICR_OVRCF;
+    I2C1->CR2 = 0U;
+    NVIC_ClearPendingIRQ(I2C1_EV_IRQn);
+    NVIC_ClearPendingIRQ(I2C1_ER_IRQn);
+
+    /* Publish counter and terminal state as one non-preemptible commit. */
+    __DMB();
+    primask = __get_PRIMASK();
+    __disable_irq();
+    if (nb.status == I2C_OK) nb.seq++;
+    else                     nb.errors++;
+    nb.state = (nb.status == I2C_OK) ? I2C_NB_DONE : I2C_NB_ERR;
+    __set_PRIMASK(primask);
+}
+
+/* Abort is asynchronous: retain RX/STOP handling until hardware finishes the
+ * STOP, then nb_finish() publishes ERR. No polling belongs in control ISR. */
+static void nb_request_abort(i2c_status_t status) {
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    if ((nb.state != I2C_NB_BUSY) || (nb.closing != 0U)) {
+        __set_PRIMASK(primask);
+        return;
+    }
+
+    /* STOP already won the race; let current/pending event handler close OK. */
+    if ((I2C1->ISR & I2C_ISR_STOPF) != 0U) {
+        __set_PRIMASK(primask);
+        NVIC_SetPendingIRQ(I2C1_EV_IRQn);
+        return;
+    }
+
+    nb.status = status;
+    if (nb.active_err_isr == 0U) nb.active_err_isr = I2C1->ISR;
+    nb.abort_pending = 1U;
+
+    /* Prevent stale TXIS/TC from advancing the transfer while STOP is pending. */
+    I2C1->CR1 &= ~(I2C_CR1_TXIE | I2C_CR1_TCIE | I2C_CR1_NACKIE);
+    I2C1->CR1 |= I2C_CR1_RXIE | I2C_CR1_STOPIE | I2C_CR1_ERRIE;
+    if ((I2C1->ISR & I2C_ISR_BUSY) != 0U) I2C1->CR2 |= I2C_CR2_STOP;
+    __DMB();
+    __set_PRIMASK(primask);
+
+    /* Handles the case where STOPF/BUSY changed before sources were updated. */
+    NVIC_SetPendingIRQ(I2C1_EV_IRQn);
 }
 
 i2c_status_t i2c1_read_regs_start(uint8_t addr7, uint8_t reg, uint8_t n) {
     if ((n == 0U) || (n > I2C_NB_MAXBYTES)) return I2C_ERR_ARG;
-    if (nb.state == I2C_NB_BUSY)            return I2C_ERR_BUSY;
+    if (nb.state != I2C_NB_IDLE)            return I2C_ERR_BUSY;
 
     /* Una sola mirada al bus, sin esperar: si está ocupado, el llamador
      * reintenta en su próximo ciclo. Girar aquí sería reintroducir justo la
@@ -637,7 +656,10 @@ i2c_status_t i2c1_read_regs_start(uint8_t addr7, uint8_t reg, uint8_t n) {
     nb.reg    = reg;
     nb.n      = n;
     nb.idx    = 0U;
-    nb.phase  = NB_PH_ADDR_W;
+    nb.abort_pending = 0U;
+    nb.closing = 0U;
+    nb.active_err_isr = 0U;
+    nb.phase  = NB_PH_REG;
     nb.status = I2C_OK;
     nb.ev     = 0U;
     nb.irqs   = 0U;
@@ -652,8 +674,11 @@ i2c_status_t i2c1_read_regs_start(uint8_t addr7, uint8_t reg, uint8_t n) {
     I2C1->ICR = I2C_ICR_NACKCF | I2C_ICR_STOPCF
               | I2C_ICR_BERRCF | I2C_ICR_ARLOCF | I2C_ICR_OVRCF;
 
-    /* Fase 1: puntero de registro, 1 byte, AUTOEND=0 para retener el bus de
-     * cara al repeated-START. Misma secuencia que el camino de polling. */
+    /* ES0431 §2.11.5: prefetch first byte before START. This removes TXIS from
+     * the expected event sequence; first normal event is TC. */
+    I2C1->TXDR = reg;
+    I2C1->CR1 |= I2C_CR1_TXIE | I2C_CR1_RXIE | I2C_CR1_TCIE
+               | I2C_CR1_STOPIE | I2C_CR1_NACKIE | I2C_CR1_ERRIE;
     I2C1->CR2 = ((uint32_t)addr7 << (I2C_CR2_SADD_Pos + 1U))
               | (1U << I2C_CR2_NBYTES_Pos)
               | I2C_CR2_START;
@@ -690,21 +715,53 @@ void I2C1_EV_IRQHandler(void) {
         nb_log_n++;
     }
 
+    /* EV has lower vector number than ER and may run first when both pend.
+     * Detect bus faults here too, before STOPF could publish false success. */
+    if ((isr & (I2C_ISR_BERR | I2C_ISR_ARLO | I2C_ISR_OVR)) != 0U) {
+        nb.ev |= NB_EV_ERR;
+        nb.status = I2C_ERR_BUS;
+        nb.active_err_isr = isr;
+        I2C1->ICR = I2C_ICR_BERRCF | I2C_ICR_ARLOCF | I2C_ICR_OVRCF;
+        nb_request_abort(I2C_ERR_BUS);
+        return;
+    }
+
+    /* Abort may be requested by the higher-priority control ISR. Drain a byte
+     * already received, but never advance the nominal state machine. */
+    if (nb.abort_pending != 0U) {
+        if ((isr & I2C_ISR_RXNE) != 0U) (void)I2C1->RXDR;
+        if ((isr & I2C_ISR_STOPF) != 0U) I2C1->ICR = I2C_ICR_STOPCF;
+        if (((isr & I2C_ISR_STOPF) != 0U)
+                || ((I2C1->ISR & I2C_ISR_BUSY) == 0U)) {
+            nb_finish();
+        }
+        return;
+    }
+
     /* NACK. El hardware manda el STOP por su cuenta incluso con AUTOEND=0
      * (§39.4.9: «When a NACK is received, the TXIS flag is not set and a STOP
      * condition is automatically sent»), así que aquí solo anotamos la causa y
      * dejamos que STOPF cierre. Un único punto de cierre, sin caminos gemelos. */
     if ((isr & I2C_ISR_NACKF) != 0U) {
         nb.ev |= NB_EV_NACKF;
+        nb.active_err_isr = isr;
         I2C1->ICR = I2C_ICR_NACKCF;
-        nb.status = (nb.phase == NB_PH_REG) ? I2C_ERR_NACK_DATA
-                                            : I2C_ERR_NACK_ADDR;
+        /* TXE=0: prefetched byte never reached shift register, so address was
+         * NACKed. TXE=1: address ACKed and data byte was NACKed. */
+        nb.status = (nb.phase == NB_PH_RX)
+                  ? I2C_ERR_NACK_ADDR
+                  : (((isr & I2C_ISR_TXE) != 0U) ? I2C_ERR_NACK_DATA
+                                                  : I2C_ERR_NACK_ADDR);
     }
 
     if ((isr & I2C_ISR_TXIS) != 0U) {
+        /* With NBYTES=1 and TXDR prefetched, TXIS is impossible on the nominal
+         * path. Never write nb.reg here: that would duplicate the register byte. */
         nb.ev |= NB_EV_TXIS;
-        I2C1->TXDR = nb.reg;          /* escribir TXDR es lo que baja TXIS */
-        nb.phase   = NB_PH_REG;
+        nb.status = I2C_ERR_BUS;
+        nb.active_err_isr = isr;
+        nb_request_abort(I2C_ERR_BUS);
+        return;
     }
 
     if ((isr & I2C_ISR_TC) != 0U) {
@@ -713,14 +770,21 @@ void I2C1_EV_IRQHandler(void) {
          * va en la MISMA escritura que el resto del campo: dos escrituras
          * dejan al periférico una ventana con AUTOEND=1 y START=0 sobre un
          * contador de bytes ya agotado. Es la secuencia del HAL de ST. */
-        nb.phase = NB_PH_RX;          /* antes del write: la IRQ del primer
-                                       * RXNE puede entrar en la instrucción
-                                       * siguiente al START */
-        I2C1->CR2 = ((uint32_t)nb.addr7 << (I2C_CR2_SADD_Pos + 1U))
-                  | ((uint32_t)nb.n << I2C_CR2_NBYTES_Pos)
-                  | I2C_CR2_RD_WRN
-                  | I2C_CR2_AUTOEND
-                  | I2C_CR2_START;
+        /* Control ISR may request abort while this lower-priority handler is
+         * active. Protect check + repeated START as one indivisible action. */
+        uint32_t primask = __get_PRIMASK();
+        __disable_irq();
+        if (nb.abort_pending == 0U) {
+            nb.phase = NB_PH_RX;
+            I2C1->CR2 = ((uint32_t)nb.addr7 << (I2C_CR2_SADD_Pos + 1U))
+                      | ((uint32_t)nb.n << I2C_CR2_NBYTES_Pos)
+                      | I2C_CR2_RD_WRN
+                      | I2C_CR2_AUTOEND
+                      | I2C_CR2_START;
+        }
+        __set_PRIMASK(primask);
+
+        if (nb.abort_pending != 0U) return;
 
         nb.ev    |= NB_EV_TC;
         nb.isr_tc = isr;
@@ -742,9 +806,9 @@ void I2C1_EV_IRQHandler(void) {
      * evita perderlo. */
     if ((isr & I2C_ISR_STOPF) != 0U) {
         nb.ev |= NB_EV_STOPF;
-        I2C1->ICR = I2C_ICR_STOPCF;
         if ((nb.status == I2C_OK) && (nb.idx < nb.n)) {
             nb.status = I2C_ERR_INCOMPLETE;
+            nb.active_err_isr = isr;
         }
         nb_finish();
     }
@@ -760,18 +824,22 @@ uint8_t i2c1_nb_log(uint32_t *isr_out, uint32_t *cr2_out, uint8_t max) {
 }
 
 void I2C1_ER_IRQHandler(void) {
+    if (nb.state != I2C_NB_BUSY) {
+        I2C1->ICR = I2C_ICR_BERRCF | I2C_ICR_ARLOCF | I2C_ICR_OVRCF;
+        return;
+    }
+
+    uint32_t isr = I2C1->ISR;
+
     /* BERR (START/STOP fuera de sitio), ARLO (arbitraje perdido) y OVR. La
      * trama está perdida. */
-    nb.status  = I2C_ERR_BUS;
     nb.ev     |= NB_EV_ERR;
+    nb.status = I2C_ERR_BUS;
+    nb.active_err_isr = isr;
     I2C1->ICR  = I2C_ICR_BERRCF | I2C_ICR_ARLOCF | I2C_ICR_OVRCF;
 
-    /* A diferencia del NACK, aquí el hardware NO manda STOP solo: lo pedimos y
-     * cerramos sin esperarlo. Si el bus está clavado el STOP no saldrá, el
-     * STOPF tardío se encontrará el estado ya fuera de BUSY y nb_finish() lo
-     * ignorará. */
-    I2C1->CR2 |= I2C_CR2_STOP;
-    nb_finish();
+    /* Unlike NACK, bus errors do not guarantee an automatic STOP. */
+    nb_request_abort(I2C_ERR_BUS);
 }
 
 void i2c1_nb_abort(void) {
@@ -779,13 +847,20 @@ void i2c1_nb_abort(void) {
 
     /* TIMEOUT_STOPF es literal: la transacción no llegó a su STOP dentro del
      * plazo que fijó el consumidor. */
-    if (nb.status == I2C_OK) nb.status = I2C_ERR_TIMEOUT_STOPF;
-
-    I2C1->CR2 |= I2C_CR2_STOP;
-    nb_finish();
+    i2c_status_t status = (nb.status == I2C_OK)
+                        ? I2C_ERR_TIMEOUT_STOPF : nb.status;
+    nb_request_abort(status);
 }
 
-i2c_nb_state_t i2c1_nb_state(void) { return nb.state; }
+i2c_nb_state_t i2c1_nb_state(void) {
+    /* Foreground recovery may reset PE while an asynchronous abort is waiting
+     * for STOPF. Once BUSY clears, let event handler complete software state. */
+    if ((nb.state == I2C_NB_BUSY) && (nb.abort_pending != 0U)
+            && ((I2C1->ISR & I2C_ISR_BUSY) == 0U)) {
+        NVIC_SetPendingIRQ(I2C1_EV_IRQn);
+    }
+    return nb.state;
+}
 uint32_t       i2c1_nb_seq(void)     { return nb.seq; }
 uint32_t       i2c1_nb_errors(void)  { return nb.errors; }
 uint32_t       i2c1_nb_err_isr(void) { return nb.err_isr; }
@@ -827,4 +902,3 @@ i2c_status_t i2c1_nb_take(uint8_t *buf, uint8_t n) {
     nb.state = I2C_NB_IDLE;
     return I2C_OK;
 }
-
