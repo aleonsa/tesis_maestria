@@ -1,7 +1,9 @@
-# Resumen de los últimos cambios (al 2026-10-11)
+# Resumen de los últimos cambios (al 2026-10-12)
 
-Cubre el trabajo posterior al commit `dee0967` (2026-08-23) que estaba pendiente de commit:
-redacción del Cap. 1 de la tesis (2026-08-17) y la sesión 15 de firmware (2026-08-24).
+Cubre el trabajo posterior al commit `dee0967` (2026-08-23): redacción del Cap. 1 de la
+tesis (2026-08-17), la sesión 15 de firmware (2026-08-24), la sesión 16 (2026-10-11),
+donde el I²C por IRQ quedó validado en banco y el toolchain migró a la PC local, y la
+sesión 17 (2026-10-12), donde el observador PLL tipo II quedó validado en banco.
 
 ---
 
@@ -64,20 +66,75 @@ STM32CubeG4 confirman que el HAL ya aplica esa precarga.
 - Prueba de arranque reducida a una sola lectura IRQ aislada, que imprime la traza de eventos.
 - `nb_report_failure()` compara contra el contador previo en lugar de contra cero.
 
-**Verificación hecha:** los tres targets (`blink`, `pwm_adc`, `as5600`) compilan sin warnings
-(GCC ARM 15.2.1). `objdump` confirma el store a `TXDR` antes de `CR2.START`.
-`as5600.elf`: 15 644 B.
+---
 
-**Pendiente en banco:**
-1. Flashear `03_as5600`.
-2. Confirmar `[shot] 0: OK` y secuencia sin `TXIS`.
-3. Medir `[perf] N lecturas/s` con `errores=0`, `abortadas=0`.
+## 3. Firmware — Sesión 16: validación en banco + migración a PC local (2026-10-11)
+
+Documentación: `PROGRESO_HARDWARE.md` sesión 16, `FIELD_NOTES.md` N1.21, `firmware/README.md`
+actualizado con el workflow local.
+
+**Migración Pi → PC local.** Ya no se usa `sync_to_pi.sh` ni SSH: la PC propia conecta el
+B-G431B-ESC1 directo por USB. Herramientas ya estaban (openocd 0.12, arm-none-eabi-gcc 13.2.1,
+cmake, udev, grupo dialout); lo único que faltaba era el clone de `STM32CubeG4`, ahora en
+`tesis_maestria/vendor/STM32CubeG4`. Flash local usa
+`reset_config srst_only connect_assert_srst` (default del banco desde hoy).
+
+**El bug del día era el cable.** Error -71 al enumerar + boot-loop del target (159 banners en
+30 s, tramas UART cortadas a mitad de línea) + disconnects espontáneos = un solo culpable:
+VBUS marginal por cable micro-USB degradado. Bisect con cable nuevo: un solo boot, USB estable.
+
+**Pendientes de la sesión 15 — CERRADOS en banco:**
+
+```
+[scan]   ACK en 0x36   <-- AS5600
+[as5600] STATUS=0x20  MD=1 ML=0 MH=0
+[shot] 0: OK  raw=4089     | IRQ: TXIS=0 TC=1 RXNE=1 STOPF=1 | entradas=4
+[perf] 2139 lecturas/s (teorico ~2200)  no-arrancadas=0  errores=0  abortadas=0
+```
+
+Giro manual del rotor: `raw` monótono 0..4095 con un solo salto por vuelta.
 
 ---
 
-## 3. Qué sigue
+## 4. Firmware — Sesión 17: observador PLL tipo II validado (2026-10-12)
 
-- Validar en banco el I²C por IRQ (arriba) y luego extrapolación de θ dentro de la ISR.
-- Offset θ_e ↔ fase A (alineación con eje d).
-- Verificar las 7 citas nuevas del bib.
-- Cap. 6 Conclusiones y capítulo de hardware.
+Archivos nuevos: `firmware/lib/theta_pll.{c,h}`, `firmware/apps/04_theta_pll/`,
+`python_scripts/plot_theta.py`. Documentación: `PROGRESO_HARDWARE.md` sesión 17,
+`FIELD_NOTES.md` N1.22.
+
+**Problema**: la ISR corre a 50 kHz pero el bus entrega muestra nueva cada ~468 µs → en
+~23 de 24 ciclos no hay dato fresco; ZOH mete θ a saltos y derivarla da ~24 rad/s de ruido.
+
+**Solución**: observador PLL tipo II en Q32 puro — extrapolación `θ̂ += ω̂` cada tick,
+corrección `θ̂ += Kp·e`, `ω̂ += Ki·e` por muestra (ωn = 2π·100, ζ = 1). θ_e = 7·θ̂_mec con el
+overflow como mod 2π eléctrico. Compensación de latencia proporcional a ω̂ (30 ticks =
+600 µs), no constante en cuentas. Validación con TIM2 a 50 kHz sin motor.
+
+**Resultados en banco** (rotor a mano, 180 s): error máx θ̂−raw = **0.27° mec**, ISR completa
+**2.11 µs** de 20 µs, corr/s = 2000, i2c_err = 0. Gráfica:
+`firmware/apps/04_theta_pll/doc/validacion_pll_2026-10-12.png`.
+
+---
+
+**Pares de polos — cerrado**: banco (2804 12N14P) = 7 pares; simulación (Anaheim
+BLY-344S) = 4 pares, donde `p.P = 8` cuenta polos. Corregido el comentario erróneo de
+`openloop.h`; tabla definitiva en `PLANNING_HARDWARE.md` §2.
+
+---
+
+## 5. Qué sigue
+
+Detalle completo en `PROGRESO_HARDWARE.md` sesión 17.
+
+**Sin fuente:**
+1. Presupuesto completo de ISR: portar Clarke + M²PC + ADALINE a C y medir con DWT (riesgo
+   técnico mayor que queda; hoy el PLL usa 2.11 µs de 20 µs).
+2. Verificar las 7 citas nuevas del bib; Cap. 6 y capítulo de hardware.
+
+**Con fuente** (Vbus 12 V, límite 300–500 mA, motor en J7):
+1. **Cerrar la paradoja de medición de corriente de la sesión 12** (sigue abierta; el barrido
+   amp 0/170/510 ya está programado en `02_pwm_adc` y nunca se corrió). Bloqueante.
+2. Calibración de ganancia raw→A con multímetro (`CAL_TARGET_PHASE`).
+3. Offset θ_e ↔ fase A + verificación del sentido de giro.
+4. PLL integrado en la ISR JEOS, validado en open-loop contra el θ_e impuesto.
+5. Fase 2: identificación de Rs, Ls, λ_pm y forma de la BEMF.

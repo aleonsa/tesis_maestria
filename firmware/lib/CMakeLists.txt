@@ -14,6 +14,7 @@ add_library(stm32g4_lib STATIC
     uart.c
     i2c.c
     as5600.c
+    theta_pll.c
 )
 
 target_include_directories(stm32g4_lib PUBLIC

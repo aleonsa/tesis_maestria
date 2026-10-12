@@ -48,8 +48,32 @@ La BEMF medida se obtiene del observador (no del sensor directamente — no hay 
 - **Sensor**: **AS5600 integrado al motor** (imán diametral y montaje mecánico ya resueltos por fabricante). I²C, 12 bits, tasa interna ~7 kHz → extrapolación en software. ✅ integrado al motor.
 - **Placa**: B-G431B-ESC1 (STM32G431CBU6 @170 MHz, CORDIC, FMAC, 3-shunt, ST-LINK integrado, Vbus 11–25 V). ✅ recibida.
 - **Osciloscopio**: ✅ adquirido.
-- **Programador**: Raspberry Pi (acceso SSH desde Mac), USB al ST-LINK de la placa.
+- **Programador**: PC local, USB directo al ST-LINK de la placa (desde 2026-10-11; antes Raspberry Pi vía SSH desde la Mac del trabajo).
 - **Ts objetivo**: 33 μs (30 kHz). Coordenadas αβ.
+
+### Pares de polos — registro definitivo (2026-10-12)
+
+El proyecto usa **dos motores distintos** y la letra `P` significa cosas distintas en cada
+código. Esta tabla manda; cualquier otro comentario que la contradiga es un error.
+
+| | Motor de **simulación** | Motor del **banco** |
+|---|---|---|
+| Modelo | Anaheim BLY-344S-240V-3000 (paper de Coronado) | 2804 12N14P con AS5600 integrado |
+| Polos (imanes) | 8 | 14 |
+| **Pares de polos p** | **4** | **7** |
+| Dónde se usa | `fcs_m2pc_v2/`, Cap. 5 de la tesis | `firmware/` |
+| Cómo aparece en código | `p.P = 8` → cuenta **polos**; el código usa `P/2` | `THETA_PLL_POLE_PAIRS = 7` → cuenta **pares** |
+| Evidencia | Datos del fabricante; `pmsm.p = 4` en el script de Coronado | Especificación 12N14P + medición en banco (sesión 12): a f_e = 2 Hz el rotor da una vuelta en 3.5 s → f_m = 0.286 Hz → p = 7 |
+
+Convención para todo código nuevo: nombrar explícito `POLE_PAIRS` / `p` (pares), nunca una `P`
+suelta. En la tesis, $p$ = pares de polos (`Notacion.tex`), $\theta_e = p\,\theta_m$.
+
+Restos históricos conocidos (no afectan resultados vigentes):
+- `matlab_scripts/*.m` (legado, anterior a `fcs_m2pc_v2/`): `p.P = 4` comentado como "Número de
+  polos". Es el origen del error corregido el 2026-07-07; no se usa para la tesis.
+- `presentation/sections/04_results.tex`: la tabla dice "Polos & 4"; físicamente el BLY-344S
+  tiene 4 **pares** (8 polos). Hay que revisar con qué corrida se hizo esa presentación antes de
+  corregirla.
 - **Rango de operación**: < 1500 rpm mecánicas (límite por latencia del AS5600).
 
 **Conector confirmado por UM2516 Fig. 10 y Tabla 4**:

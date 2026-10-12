@@ -39,9 +39,12 @@
  *   5 Hz eléctrico → 429497
  *   10 Hz eléctrico → 858993
  *
- * Para BLDC 2804 con P=8 (4 pole pairs):
- *   f_mecánico = f_eléctrico / 4
- *   2 Hz eléctrico → 0.5 Hz mecánico = 30 RPM mecánico = una vuelta cada 2 s
+ * Para el BLDC 2804 del banco (12N14P → 7 pares de polos, medido en la
+ * sesión 12: 3.5 s por vuelta a 2 Hz eléctrico):
+ *   f_mecánico = f_eléctrico / 7
+ *   2 Hz eléctrico → 0.286 Hz mecánico = 17 RPM mecánico = una vuelta cada 3.5 s
+ * (El "4 pares de polos" es del Anaheim BLY-344S de la simulación, no de
+ * este motor. Ver PLANNING_HARDWARE §2.)
  */
 #define OPENLOOP_DELTA_1HZ_ELEC   85899U
 #define OPENLOOP_DELTA_2HZ_ELEC   171799U

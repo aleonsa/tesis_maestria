@@ -41,6 +41,8 @@
 - [N1.18 — La lectura que no cabe en la ISR: I²C no bloqueante](#n118--la-lectura-que-no-cabe-en-la-isr-i²c-no-bloqueante)
 - [N1.19 — El fallo que se multiplica: por qué un error de I²C tiene que dejar el periférico limpio](#n119--el-fallo-que-se-multiplica-por-qué-un-error-de-i²c-tiene-que-dejar-el-periférico-limpio)
 - [N1.20 — Una errata de silicio cambia el primer evento de la máquina I²C](#n120--una-errata-de-silicio-cambia-el-primer-evento-de-la-máquina-i²c)
+- [N1.21 — La trama cortada a mitad de línea: resets externos y el riel VBUS](#n121--la-trama-cortada-a-mitad-de-línea-resets-externos-y-el-riel-vbus)
+- [N1.22 — El observador mínimo que acierta: PLL tipo II para θ entre muestras](#n122--el-observador-mínimo-que-acierta-pll-tipo-ii-para-θ-entre-muestras)
 
 ---
 
@@ -3231,10 +3233,13 @@ debería?», y responderla de memoria es cómo se pierde una sesión entera pers
 fantasma de software que era hardware, o al revés.
 
 ```
-   Mac ──rsync──► Raspberry Pi ──USB──► ST-LINK integrado ──SWD──► STM32G431CBU6
-                       │                      │
-                       │                      └── VCP = /dev/ttyACM0  (USART2, 115200 8N1)
-                       └── openocd + arm-none-eabi-gcc
+   PC local ──USB──► ST-LINK integrado ──SWD──► STM32G431CBU6
+        │                 │
+        │                 └── VCP = /dev/ttyACM0  (USART2, 115200 8N1)
+        └── openocd + arm-none-eabi-gcc + cmake, todo local
+
+   (antes de 2026-10-11: Mac ──rsync──► Raspberry Pi ──USB──► ST-LINK;
+    la Pi se usaba porque la PC del trabajo bloqueaba el USB)
 
    ┌───────────────────────── B-G431B-ESC1 ─────────────────────────┐
    │                                                                │
@@ -3892,6 +3897,183 @@ Así ningún consumidor observa resultado listo mientras periférico todavía pu
 
 ### Estado
 
-Los tres targets compilan con GCC ARM 15.2.1 y `objdump` confirma `TXDR` antes de `CR2.START`. Falta prueba física: primera lectura aislada y throughput de un segundo.
+Los tres targets compilan con GCC ARM 15.2.1 y `objdump` confirma `TXDR` antes de `CR2.START`.
+**Validado en banco el 2026-10-11** (sesión 16): `[shot] 0: OK` con la secuencia nominal de
+4 eventos y sin `TXIS`, 2 139 lecturas/s con `errores=0 abortadas=0`, y trazas de NACK de
+libro durante las horas en que el sensor estuvo desconectado.
+
+---
+
+## N1.21 — La trama cortada a mitad de línea: resets externos y el riel VBUS
+
+### Panorama
+
+El banco volvió a la vida tras la migración del toolchain de la Pi a la PC local, y lo primero
+que dio no fue un dato: fue ruido. El log de arranque de `03_as5600` salía como confeti —
+`[b`, `[bo`, `[boot] STM3`— fragmentos del banner cortados en puntos distintos en cada línea,
+entremezclados con bytes basura.
+
+La tentación es culpar al baud rate o al cable serie. Pero la UART va por el VCP del ST-LINK:
+los bytes viajan por USB ya digitales. Un error de baud produce basura sistemática (cada byte
+mal muestreado de la misma manera), no **líneas limpias cortadas a la mitad**. Una línea que
+empieza bien y muere a la mitad es un transmisor que dejó de existir a la mitad: el MCU se
+reinició a mitad del `printf`.
+
+La firma de un boot-loop no es un mensaje de error. Es un mensaje de arranque repetido
+decenas de veces: 159 banners `[boot]` en 30 segundos.
+
+### Tres síntomas, una causa
+
+La sesión produjo tres síntomas que parecían independientes:
+
+| Síntoma | Quién lo sufre |
+|---|---|
+| `can't set config #1, error -71` al enumerar, en varios puertos | El enlace USB |
+| Boot-loop del target (~5 resets/s, a veces a los 2 caracteres del banner) | El STM32G431 |
+| `USB disconnect` espontáneo, cada vez más frecuente | El ST-LINK |
+
+Un solo fallo físico los produce los tres: **el riel de 5 V del USB (VBUS) marginal**. En la
+B-G431B-ESC1 todo cuelga de VBUS: si VBUS cae un instante, el chip del ST-LINK pierde energía
+(disconnect), el regulador de 3.3 V que alimenta al target colapsa (brownout → BOR →
+boot-loop), y la señal de datos se degrada (EPROTO al enumerar).
+
+El culpable era el cable micro-USB. El mismo cable que había trabajado meses con la Pi, en
+degradación gradual: primero fallaba en unos puertos y no en otros, luego aguantaba minutos,
+luego segundos. El bisect fue trivial una vez planteado: mismo banco, mismo firmware, **solo
+cambio de cable** → un solo boot, secuencia completa, USB estable toda la sesión.
+
+### Detalle — por qué el boot-loop cortaba el banner en puntos distintos
+
+El brownout no es un reset programado: es el riel de 3.3 V cayendo por debajo del umbral del
+BOR en un momento que depende del consumo instantáneo. El arranque de la app sube el PLL a
+170 MHz (el pico de consumo del arranque) y luego imprime el banner. Con el riel marginal, la
+caída ocurre en cualquier punto de esa ventana: de ahí los fragmentos de longitud variable.
+
+Corolario útil: la **posición del corte en el banner es un osciloscopio de pobre**. Si el
+corte siempre cae en el mismo punto, sospecha software (un crash determinista); si varía,
+sospecha potencia.
+
+### Detalle — "Unable to reset target" y connect-under-reset
+
+El primer intento de flash desde la PC dio `examination failed` y `Unable to reset target`.
+Con un target potencialmente en boot-loop, el debugger compite contra los resets: cada vez
+que intenta examinar el core, el chip puede estar a mitad de un arranque. La receta es
+conectar bajo reset — el ST-LINK mantiene NRST bajo mientras engancha el core:
+
+```bash
+openocd -f interface/stlink.cfg -f target/stm32g4x.cfg \
+    -c "reset_config srst_only connect_assert_srst" \
+    -c "program build/apps/<app>/<app>.elf verify reset exit"
+```
+
+Queda como default del banco: no cuesta nada cuando el target está sano y salva la sesión
+cuando no lo está.
+
+### Por qué importa
+
+**1. En un banco nuevo (o movido), valida el riel antes que el firmware.** La tabla de
+diagnóstico del bus I²C empieza por «líneas en reposo»; esta nota añade el nivel cero por
+debajo: un solo `[boot]` por arranque. Cualquier dato capturado mientras el target se
+reinicia es ruido, y depurar software sobre un riel que colapsa es depurar un fantasma.
+
+**2. El sesgo de la hipótesis en curso, otra vez.** En N1.19 el usuario insistió en que era
+software y tenía razón; aquí el patrón se invirtió: síntomas que gritaban «software raro»
+(el firmware recién tocado por una errata de silicio) eran un cable. La defensa es la misma
+en ambos sentidos: **bisección sobre el banco, no sobre la intuición**.
+
+**3. Un cable no muere de golpe.** El patrón «funciona en un puerto sí y en otro no», «funciona
+un rato y luego se cae», «empeora a lo largo del día» es degradación física, no un problema de
+configuración. Los puertos que fallaban (`usb 3-1`, `usb 6-1`) y el que funcionaba (`usb 1-1`)
+compartían el mismo cable: la marginalidad la ponía el cable; el puerto solo movía el margen.
+
+**4. Migración de toolchain documentada.** El setup Mac→rsync→Pi existía por una restricción
+de la PC del trabajo que ya no aplica. Trabajar directo desde la PC local elimina el rsync y
+el SSH del camino crítico: build → flash → monitor en una sola máquina, con el mismo
+`openocd`, el mismo `cmake` y el clone de `STM32CubeG4` en `tesis_maestria/vendor/`.
+
+---
+## N1.22 — El observador mínimo que acierta: PLL tipo II para θ entre muestras
+
+### Panorama
+
+El lazo de control necesita θ a 50 kHz; el AS5600 por I²C entrega una muestra cada ~468 µs.
+En ~23 de cada 24 ciclos de la ISR no hay dato nuevo. Las dos salidas ingenuas fallan por
+extremos opuestos: sostener la última lectura (zero-order hold) mete la posición **a saltos**
+al control, y derivarla para sacar velocidad amplifica la cuantización de 12 bits hasta
+~24 rad/s de ruido. Falta una pieza que *infiera* θ entre muestras sin inventar ruido.
+
+Esa pieza es un observador de tracking de dos estados — θ̂ (posición) y ω̂ (velocidad):
+
+```
+cada tick de la ISR (20 µs):    θ̂ += ω̂              ← extrapolación pura
+cada muestra nueva (~468 µs):   e  = wrap(θ_med − θ̂)
+                                θ̂ += Kp·e            ← corrección
+                                ω̂ += Ki·e
+```
+
+Entre muestras el observador vuela solo con la velocidad estimada; cuando llega el dato,
+el error corrige posición (Kp) y velocidad (Ki). El lazo cerrado de esa estructura es un
+oscilador enganchado a la fase de la señal medida — de ahí el nombre PLL.
+
+### Por qué tipo II y no "algo más avanzado"
+
+La pregunta correcta no es "¿cuál es el mejor observador?" sino "¿cuál es el observador
+**mínimo** que acierta en nuestro régimen?". La señal de entrada es una **rampa** (θ crece
+lineal a velocidad constante). El teorema del valor final aplicado al lazo dice:
+
+- **Tipo I** (solo Kp): error estacionario constante ante rampa — θ̂ se atrasa. No sirve.
+- **Tipo II** (Kp + Ki): error estacionario **cero** ante rampa. Es el mínimo que acierta.
+- **Tipo III** (agrega estado de aceleración): error cero también ante aceleración
+  constante. Se justificaría si la mecánica cambiara de velocidad apreciablemente entre
+  muestras; el 2804 con carga tiene constantes mecánicas de decenas de ms contra 0.47 ms
+  entre muestras. Queda como upgrade documentado, mismo código más un estado.
+
+Y la fila incómoda de la tabla: el **filtro de Kalman estacionario** para el modelo
+"velocidad constante + ruido" converge a ganancias fijas que son *exactamente* Kp y Ki del
+tipo II — el α-β filter de toda la vida. Un EKF compra ganancias adaptativas y fusión de
+sensores; no tenemos ni ruido no estacionario ni segundo sensor. Los observadores con modelo
+del motor (Luenberger, SMO) son territorio sensorless: tenemos encoder, e importar el modelo
+solo traería sensibilidad a R, L y λ de regalo.
+
+### Detalle — el wrap es gratis si eliges bien la aritmética
+
+Con θ en Q32 (2³² = 1 vuelta), el error envuelto en ±π es una resta unsigned reinterpretada
+como signed:
+
+```c
+int32_t e = (int32_t)(meas_q32 - theta_hat_q32);
+```
+
+El desbordamiento del uint32 implementa el mod 2π; el cast reinterpreta el resultado en
+[−2³¹, 2³¹) = ±media vuelta. Sin ramas, sin `if (e > π) e -= 2π`. La misma convención hace
+que θ eléctrico sea `P · θ̂_mec` con el overflow como mod 2π eléctrico, y que la extrapolación
+`θ̂ += ω̂` nunca acumule error de redondeo: el acumulador ES la representación exacta.
+
+### Detalle — la latencia se compensa con ω̂, no con un número mágico
+
+La muestra describe al rotor ~600 µs en el pasado (transacción I²C + refresco interno del
+sensor). Un adelanto **constante** en cuentas solo es correcto a una velocidad; el adelanto
+correcto es proporcional a la velocidad estimada, que el observador ya tiene:
+
+```
+θ_salida = θ̂_e + P · ω̂ · N_ticks          (N_ticks = 600 µs / 20 µs = 30)
+```
+
+Sin esta corrección, el ADALINE aprendería una BEMF rotada ~19° eléctricos a 80 rad/s
+mecánicos — indistinguible de un offset de fase A mal puesto, y mucho más difícil de cazar.
+
+### Validación (2026-10-12)
+
+Rotor girado a mano de forma arbitraria (arranques, frenadas, cambios de sentido), 180 s:
+error máximo θ̂ − raw = **0.27° mecánicos**, ω̂ limpio, ISR completa 2.11 µs de los 20 µs del
+tick. Gráfica en `firmware/apps/04_theta_pll/doc/validacion_pll_2026-10-12.png`.
+
+### Por qué importa
+
+El sensing de posición queda cerrado con un componente que es: barato (~10 MACs por tick),
+determinista (punto fijo, sin ramas en el camino crítico), y **defendible en una sola
+diapositiva** — la contribución de la tesis vive en el ADALINE, y la infraestructura debe ser
+aburrida a propósito. Si el banco algún día muestra error sistemático bajo aceleración, el
+escalón a tipo III está anotado aquí y no hay que rediseñar nada.
 
 ---

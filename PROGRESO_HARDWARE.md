@@ -5,6 +5,111 @@
 
 ---
 
+## Sesión 17 — 2026-10-12 — Observador PLL tipo II validado en banco
+
+**Hito**: θ̂ continuo a 50 kHz con error máximo de 0.27° mecánicos contra el encoder, ISR completa en 2.11 µs (10 % del presupuesto), cero errores I²C en 180 s de prueba con el rotor girado a mano. El sensing de posición queda cerrado.
+
+### El problema que resuelve
+
+La ISR de control corre a 50 kHz; el bus entrega muestra nueva cada ~468 µs (2 139 lecturas/s medidos en la sesión 16). En ~23 de cada 24 ciclos **no hay dato fresco**: sostener la última lectura mete θ a saltos al lazo y derivarla amplifica la cuantización a ~24 rad/s de ruido (N1.18).
+
+### Implementado
+
+- **`lib/theta_pll.{c,h}`** — observador PLL tipo II (≡ filtro α-β ≡ Kalman estacionario del modelo velocidad-constante), 100 % punto fijo Q32:
+  - Cada tick (50 kHz): extrapolación `θ̂ += ω̂`.
+  - Cada muestra nueva: corrección `e = wrap(θ_med − θ̂)`; `θ̂ += Kp·e`; `ω̂ += Ki·e`. El wrap se hace con resta unsigned + cast signed, sin ramas.
+  - Ganancias: ωn = 2π·100 rad/s, ζ = 1 → Kp = 0.588, Ki = 3.695e-3 (constantes Q30 plegadas en compilación).
+  - θ eléctrico = 7·θ̂_mec: el overflow del uint32 implementa el mod 2π eléctrico.
+  - **Compensación de latencia proporcional a ω̂** (`θ̂_e + P·ω̂·30 ticks`, 600 µs): mejora sobre el "adelanto constante en cuentas" del plan de la sesión 13, que solo era exacto a una velocidad.
+- **`apps/04_theta_pll`** — TIM2 a 50 kHz (prio 1, como la ISR de control final) bombea el I2C no bloqueante (prio 3) con el patrón start/take. Sonda de scope en PB6. Deadline del bus en ticks con abort desde ISR y reset solo desde foreground. Stream a 100 Hz para el plotter + estado a 1 Hz.
+- **`python_scripts/plot_theta.py`** — plotter serie en tiempo real (pyserial + matplotlib), parsea tanto el formato de `03_as5600` como el stream `S t=... th=... om=...` de esta app; guarda CSV.
+
+### Validación en banco (rotor a mano, movimiento arbitrario, 180 s)
+
+```
+corr/s=2000   i2c_err=0   isr_max=2.11 us
+error θ̂ − raw:  mean +0.001°   max |e| = 0.27° mec
+ω̂ limpio en reposo y en movimiento; 1 solo boot en toda la corrida
+```
+
+Gráfica: `firmware/apps/04_theta_pll/doc/validacion_pll_2026-10-12.png` (θ̂ y raw desenvuelto indistinguibles; el offset de 720° del análisis es artefacto de la referencia de desenvuelto, no error del lazo).
+
+### Decisiones
+
+- **PLL tipo II y no algo "más avanzado"**: la entrada es una rampa (θ a velocidad constante) y el tipo II es el observador mínimo con error estacionario cero ante rampa; el Kalman estacionario del mismo modelo es matemáticamente idéntico; EKF/SMO/Luenberger con modelo del motor importarían sensibilidad paramétrica sin beneficio (tenemos encoder). Tipo III queda como upgrade si el banco muestra error por aceleración. Discusión completa en FIELD_NOTES N1.22.
+- **Pares de polos, cerrado de forma definitiva**: banco = 2804 12N14P = **7 pares**; simulación = Anaheim BLY-344S = **4 pares** (`p.P = 8` en MATLAB cuenta polos). El comentario de `openloop.h` que atribuía 4 pares al 2804 se corrigió. Tabla de referencia en PLANNING_HARDWARE §2.
+
+### Para las sesiones siguientes
+
+**Sin fuente (se puede avanzar ya):**
+
+- **Presupuesto completo de ISR**: portar Clarke + M²PC + ADALINE a C en punto fijo y medir con DWT dentro de una ISR de 50 kHz con datos sintéticos. Hoy extrapolación+pump+corrección = 2.11 µs de 20 µs. Es el riesgo técnico más grande que queda: si no cabe, hay que rediseñar (CORDIC, Ts mayor) antes de seguir.
+
+**Con fuente** (Vbus 12 V, límite de corriente 300–500 mA, motor en J7), en este orden:
+
+1. **Cerrar la paradoja de medición de corriente (sesión 12, sigue ABIERTA).** El barrido amp = 0/170/510 ya está programado en `02_pwm_adc` (`DIAG_AMP_SWEEP_ENABLE=1`, 30 s por amplitud) y nunca se corrió. Si los picos escalan ~0/18/53 raw → medición sana; si son iguales → medición rota (hipótesis A: TRGO en el valle del PWM; B: OPAMP sin tiempo de asentamiento con SMP = 6.5 ciclos; C: ruido). **Bloqueante**: el FCS-MPC predice corrientes; sin medición confiable no hay control.
+2. **Calibración de ganancia raw → A** con multímetro en serie (`CAL_TARGET_PHASE` 0/1/2, ya armado). Validar K teórico = 59.6 raw/A; si difiere > 10 %, calibrar fase por fase.
+3. **Offset θ_e ↔ fase A y sentido de giro**: open-loop con θ_e fijo y corriente baja alinea el rotor al eje de la fase A; el raw del encoder en ese punto es el offset. Repetir en varias posiciones (7 alineaciones por vuelta mecánica) y promediar. Verificar además que θ_e del encoder **crece** con la secuencia de fases positiva; si decrece, invertir signo.
+4. **PLL en movimiento real**: integrar `theta_pll` en la ISR JEOS de `02_pwm_adc`, girar en open-loop y comparar θ_e(PLL, con offset) contra θ_e(open-loop): deben avanzar juntos con un desfase constante (el ángulo de carga). Valida offset, sentido y PLL a velocidad sostenida, y mide la ISR real con ADC + open-loop + PLL.
+5. **Fase 2 — identificación** (PLANNING §4): Rs por inyección DC, Ls por escalón, λ_pm y forma de la BEMF girando el motor (dato clave para la tesis: ¿cuán no-senoidal es la BEMF del 12N14P? decide si el ADALINE es "necesario" o "demostrativo").
+
+---
+
+## Sesión 16 — 2026-10-11 — Migración a PC local + validación en banco de la errata I²C
+
+**Hito**: el workaround de silicio de la sesión 15 queda **validado en banco**: primera lectura IRQ limpia, secuencia nominal sin `TXIS`, 2139 lecturas/s con cero errores. El toolchain migra de la Pi a la PC local. El caos del día fue un cable micro-USB muriendo, no firmware.
+
+### Migración Pi → PC local
+
+El setup Mac→rsync→Pi existía porque la PC del trabajo bloqueaba USB. Con la PC personal se trabaja directo. Lo que hizo falta:
+
+- `openocd` 0.12, `arm-none-eabi-gcc` 13.2.1, `cmake` — **ya instalados**.
+- Regla udev `49-stlinkv2.rules` (0483:3748/374b, modo 0666) — **ya existía**; usuario en grupo `dialout`.
+- Clone de `STM32CubeG4` en `tesis_maestria/vendor/STM32CubeG4` (depth 1, submódulo `cmsis_device_g4`) — era lo único que faltaba; el path lo espera `firmware/CMakeLists.txt` como `../vendor/STM32CubeG4`.
+- Build local OK: los tres targets compilan; solo los stubs `nosys` esperados.
+- Flash con `reset_config srst_only connect_assert_srst`: sin él el primer intento dio "examination failed / Unable to reset target" (posiblemente agravado por el cable; el connect-under-reset queda como default del banco).
+- El binario local difiere en tamaño del documentado (18 040 B vs 15 644 B de `as5600.elf`): es GCC 13.2.1 vs 15.2.1, no un cambio de código.
+
+### La saga del cable USB (3 síntomas, 1 causa)
+
+Síntomas aparentemente independientes durante la sesión:
+
+1. Error `-71` (EPROTO) al enumerar, en tres puertos distintos; un puerto (`usb 1-1`) sí funcionaba.
+2. **Boot-loop del target**: 159 banners `[boot]` en 30 s, tramas UART cortadas a mitad de línea. Sin watchdog ni `SystemReset` en el firmware: resets externos.
+3. Disconnects USB espontáneos, cada vez más frecuentes.
+
+Causa única: **VBUS marginal por cable micro-USB degradado**. Si VBUS cae: el ST-LINK pierde energía (USB disconnect), el regulador 3.3V del target colapsa (brownout → boot-loop), y la señal de datos se degrada (EPROTO). El bisect fue: mismo banco, solo cambio de cable → un solo boot, secuencia completa, USB estable.
+
+Lección completa en FIELD_NOTES N1.21.
+
+### Validación en banco del workaround de la errata (pendientes de sesión 15, CERRADOS)
+
+```
+[scan]   ACK en 0x36   <-- AS5600
+[as5600] STATUS=0x20  MD=1 ML=0 MH=0
+[shot] 0: OK  raw=4089
+[shot] IRQ: TXIS=0 TC=1 RXNE=1 STOPF=1 | entradas=4
+[perf] 2139 lecturas/s  (teorico ~2200 a 100kHz)
+[perf] no-arrancadas=0
+[perf] errores=0  abortadas=0  ultimo raw=4089
+```
+
+- ✅ `[shot] 0: OK` — primera lectura IRQ aislada, camino de 4 eventos nominal, **sin `TXIS`**.
+- ✅ Throughput: **2139 lecturas/s** = 97 % del teórico a 100 kHz, `errores=0`, `abortadas=0`. El bus limita frente al refresco interno de ~7 kHz del AS5600, como se predijo.
+- ✅ Giro manual del rotor: `raw` recorre 0..4095 monótono con un solo salto por vuelta (verificado por el usuario en stream en vivo).
+- ✅ Bonus: 9 306 NACKs consecutivos sin sensor conectado dejaron el bus impecable — la recuperación de error de la sesión 14 también quedó ejercida.
+
+### Para la sesión siguiente
+
+El plan de la sesión 13 sigue vigente, ya sin el paso 1:
+
+1. **Observador PLL tipo II** para θ/ω en punto fijo (θ como acumulador Q32, coherente con `OPENLOOP_DELTA_Q32`). La ISR corre a 50 kHz y el bus entrega muestra nueva a ~2.1 kHz: la mayoría de los ciclos no hay dato fresco y hay que extrapolar. El PLL filtra el ruido de cuantificación y da la extrapolación gratis.
+2. **App `04_theta_pll`** a 50 kHz por timer, sin PWM/ADC/motor, validada girando el rotor a mano.
+3. **Compensación de latencia**: ~450 µs de transacción + ~150 µs de refresco ≈ 19° eléctricos a 80 rad/s mecánicos con P=7 — adelanto constante en cuentas.
+4. Luego: offset θ_e ↔ fase A (necesita Vbus y motor) y presupuesto completo de ISR.
+
+---
+
 ## Sesión 15 — 2026-08-24 — Workaround oficial para bloqueo I²C por IRQ
 
 **Hito**: identificada causa de silicio y corregida la secuencia polling/IRQ. Compila; pendiente validar en banco.
