@@ -80,6 +80,7 @@ static void systick_init(uint32_t ticks_per_irq) {
 static volatile int32_t  g_iq_ref_q8;             /* la escribe main (rampa) */
 static volatile int32_t  g_pub_id_sum, g_pub_iq_sum;
 static volatile uint32_t g_pub_corr, g_pub_i2c_err, g_pub_cyc_max;
+static volatile uint32_t g_pub_cyc_sense, g_pub_cyc_m2pc;   /* máximos por tramo */
 static volatile uint8_t  g_need_i2c_reset;
 static volatile uint8_t  g_tripped;
 static volatile int32_t  g_trip_ia, g_trip_ib;
@@ -139,7 +140,11 @@ static void control_step(void) {
         .e_alpha = e_alpha,     .e_beta = e_beta,
         .theta_e_q32 = theta_e,
     };
+    const uint32_t cyc1 = DWT->CYCCNT;
     m2pc_step(&in);
+    const uint32_t cyc2 = DWT->CYCCNT;
+    if ((cyc1 - cyc0) > g_pub_cyc_sense) g_pub_cyc_sense = cyc1 - cyc0;
+    if ((cyc2 - cyc1) > g_pub_cyc_m2pc)  g_pub_cyc_m2pc  = cyc2 - cyc1;
 
     /* 7. Monitor: i_dq medidos (Park), medias por ventana. */
     static int32_t  id_acc, iq_acc;
@@ -240,11 +245,16 @@ int main(void) {
         if ((g_ticks - t_stat) >= 1000U) {
             t_stat = g_ticks;
             const uint32_t corr = g_pub_corr;
-            printf("[m2pc] corr/s=%lu  i2c_err=%lu  overruns=%lu  paso_max=%lu.%02lu us\r\n",
+            printf("[m2pc] corr/s=%lu  i2c_err=%lu  overruns=%lu  paso_max=%lu.%02lu us "
+                   "(sensado %lu.%02lu, m2pc %lu.%02lu)\r\n",
                    (unsigned long)(corr - corr_prev), (unsigned long)g_pub_i2c_err,
                    (unsigned long)m2pc_overruns(),
                    (unsigned long)(g_pub_cyc_max / 170U),
-                   (unsigned long)((g_pub_cyc_max % 170U) * 100U / 170U));
+                   (unsigned long)((g_pub_cyc_max % 170U) * 100U / 170U),
+                   (unsigned long)(g_pub_cyc_sense / 170U),
+                   (unsigned long)((g_pub_cyc_sense % 170U) * 100U / 170U),
+                   (unsigned long)(g_pub_cyc_m2pc / 170U),
+                   (unsigned long)((g_pub_cyc_m2pc % 170U) * 100U / 170U));
             corr_prev = corr;
         }
 

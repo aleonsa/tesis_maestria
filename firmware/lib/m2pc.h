@@ -23,17 +23,20 @@
  *
  *   i(k+1) = i(k) + (Ts/L) · ( ū(k) − e(k) − R·i(k) )
  *
- * donde ū es la tensión MEDIA sobre el intervalo entre muestras. Con PWM
- * center-aligned, muestreo en el pico y actualización de los CCR en el valle
- * (UEV), ese intervalo tiene dos mitades: la primera aplica todavía el comando
- * anterior u(k−1) y la segunda el nuevo u(k):
+ * RETARDO DE UN PERIODO (Cortés 2012)
  *
- *   ū(k) = ½·u(k−1) + ½·u(k)
+ *   Se muestrea en el pico del PWM; el comando que se calcula entra en los
+ *   CCR en la UEV, que pwm_enable() coloca en el pico siguiente. Así el
+ *   comando elegido en el paso k se aplica durante [k+1, k+2]. El paso
+ *   predice primero i(k+1) con el comando ya en curso (conocido) y después
+ *   i(k+2) con cada candidato; el costo se evalúa sobre i(k+2). Presupuesto:
+ *   el periodo completo (20 µs). `m2pc_overruns()` cuenta las veces que el
+ *   paso se pasó del siguiente pico (debe ser 0).
  *
- * u(k−1) es conocido, así que entra en el término constante; la búsqueda
- * optimiza u(k). Es un retardo de medio periodo, modelado exacto en vez del
- * retardo entero clásico (Cortés 2012) — pero exige que el paso termine antes
- * del valle (10 µs). `m2pc_overruns()` cuenta cuántas veces no fue así.
+ *   Se intentó antes un modelo de medio periodo (CCR latcheados en el valle,
+ *   ū = ½u(k−1) + ½u(k)): menos retardo, pero exige paso < 10 µs y los 66
+ *   candidatos cuestan 9.5 µs desde flash. Queda como opción futura con el
+ *   paso en CCM-SRAM.
  *
  * CÁLCULO EFICIENTE
  *
@@ -51,7 +54,7 @@
  *   - BEMF con la física del banco: e = λ·ω_e·[−sin θ_e; cos θ_e] (flujo sobre
  *     d, BEMF sobre +q). La "forma" sinusoidal de MATLAB lleva el signo opuesto
  *     por convención interna de su planta.
- *   - Retardo de medio periodo (arriba) en vez de aplicación instantánea.
+ *   - Retardo de un periodo compensado (arriba) en vez de aplicación instantánea.
  *
  * UNIDADES: ver motor_params.h. Aquí las corrientes entran en Q8 LSB (LSB
  * × 256): la medida se desplaza gratis y la referencia gana resolución (un

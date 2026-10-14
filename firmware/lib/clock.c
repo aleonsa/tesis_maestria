@@ -35,7 +35,12 @@ void clock_init_170mhz_hse(void) {
      * RM0440 Table 9 (Number of wait states vs CPU clock frequency).
      * Si subimos SYSCLK con WS insuficientes, el CPU lee basura → cuelgue.
      */
-    FLASH->ACR = (FLASH->ACR & ~FLASH_ACR_LATENCY) | FLASH_ACR_LATENCY_4WS;
+    /* 4 WS a 170 MHz, y PREFETCH activo: sin él, el código en línea recta
+     * (p. ej. la rejilla desenrollada del M2PC) paga los wait states en cada
+     * fetch. Las cachés I/D vienen activas por reset (ICEN/DCEN) y se
+     * conservan. Medido 2026-10-14: ver PROGRESO sesión 20. */
+    FLASH->ACR = (FLASH->ACR & ~FLASH_ACR_LATENCY) | FLASH_ACR_LATENCY_4WS
+               | FLASH_ACR_PRFTEN;
 
     /*
      * Paso 4 — Encender HSE y esperar a que se estabilice.

@@ -178,10 +178,17 @@ void pwm_init(void) {
     /* ARR = 1700 → f_PWM = 170 MHz / (2 * 1700) = 50.000 kHz exactos. */
     TIM1->ARR = PWM_ARR;
 
-    /* RCR = 1 → update event cada 2 over/underflows = 1 vez por periodo PWM.
-     * (FIELD_NOTES N1.6: si RCR=0, habría 2 trigger events por periodo, lo
-     * que dispararía el ADC al doble de la frecuencia deseada.) */
-    TIM1->RCR = 1U;
+    /* RCR = 0 AQUÍ, y 1 en pwm_enable() después de CEN. Es lo que fija la
+     * UEV en el PICO (sesión 20):
+     *   - El UG de abajo carga el contador de repeticiones con RCR. Con 0, el
+     *     primer overflow lo encuentra en 0 → UEV en el overflow (pico) y
+     *     recarga con el RCR que haya ENTONCES: el 1 que escribe pwm_enable
+     *     justo tras CEN. Desde ahí: underflow 1→0, overflow → UEV. Pico.
+     *   - Con RCR=1 antes del UG (como estaba): overflow 1→0, underflow →
+     *     UEV. Valle. Es lo que decía el RM ("written before launching →
+     *     underflow") y lo que medía el detector de overruns del M2PC.
+     * RCR=1 final → una UEV por periodo (los CCR se latchean una vez). */
+    TIM1->RCR = 0U;
 
 
     /* ------------------ Paso 4: Canales 1, 2, 3 ------------------ */
@@ -326,6 +333,21 @@ void pwm_set_duties(uint16_t duty_a, uint16_t duty_b, uint16_t duty_c) {
 void pwm_enable(void) {
     TIM1->BDTR |= TIM_BDTR_MOE;
     TIM1->CR1  |= TIM_CR1_CEN;
+
+    /* UEV en el PICO, no en el valle. RM0440 Rev 9 §29.3.5, center-aligned
+     * con RCR impar: "if the RCR was written before launching the counter,
+     * the UEV occurs on the underflow. If the RCR was written after
+     * launching the counter, the UEV occurs on the overflow." Reescribir RCR
+     * ya con CEN=1 mueve el evento al overflow.
+     *
+     * Por qué importa (2026-10-14, sesión 20): los CCR tienen preload y se
+     * latchean en la UEV. Con la UEV en el valle, un comando calculado tras
+     * la muestra del pico entra a mitad del intervalo (modelo de medio
+     * retardo, exige paso < 10 µs). Con la UEV en el pico, el comando entra
+     * al inicio del periodo siguiente: retardo entero clásico (Cortés 2012),
+     * con 20 µs de presupuesto. La verificación está en m2pc_step: limpia
+     * UIF al entrar y comprueba al salir que no haya aparecido. */
+    TIM1->RCR = 1U;
 }
 
 
