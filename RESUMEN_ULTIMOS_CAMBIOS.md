@@ -149,7 +149,11 @@ Detalle completo en `PROGRESO_HARDWARE.md` sesión 17.
    open-loop giraba en secuencia negativa desde mayo (corregido) y una prueba de sentido en
    05 que acertaba por casualidad (reescrita). `cordic` y `as5600_nb_tick` en `lib/`.
    FIELD_NOTES N1.24.
-4. **Portar el FCS-M2PC** (luego ADALINE) a C sobre el esqueleto de 06 y medir el presupuesto.
-5. Fase 2: identificación de Rs, Ls, λ_pm y forma de la BEMF.
+4. ~~Portar el FCS-M2PC~~ **HECHO Y EN LAZO CERRADO (sesión 20, app `07_m2pc`)**: 66
+   candidatos a 50 kHz con retardo entero (UEV movida al pico), `overruns = 0`, paso 13 µs.
+   PI de velocidad a 300 rpm ± 5 %. Logger a 1 kHz → **λ = 3.46 mWb identificado, BEMF casi
+   sinusoidal (armónicos < 2.5 %)** → el ADALINE será "demostrativo" (regla del PLANNING).
+5. Recalibración de offset de corriente en línea (deriva de 1.3 LSB medida); identificación
+   a 600–900 rpm; ADALINE offline (Python) y luego en línea; afinar PI; rizo de par vs baseline.
 6. Deuda: glitch esporádico de fase C (una muestra en 12 000), race de `adc_get_vbus_raw`,
-   pasar el controlador a `-O2`.
+   M2PC en CCM-SRAM para recuperar el medio periodo.

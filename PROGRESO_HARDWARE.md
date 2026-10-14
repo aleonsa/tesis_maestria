@@ -5,9 +5,41 @@
 
 ---
 
-## Sesión 20 — 2026-10-14 — FCS-M²PC portado a C en punto fijo (SIN PROBAR)
+## Sesión 20 — 2026-10-14 — FCS-M²PC en lazo cerrado: primer giro, lazo de velocidad y BEMF identificada
 
-**Hito**: el controlador de corriente de la tesis (Coronado 2025, Alg. 3; `fcs_m2pc_v2/control/fcs_m2pc.m`) existe en firmware: `lib/m2pc.{c,h}`, `lib/motor_params.h`, `apps/07_m2pc`. Compila en `-O2`. **No se ha flasheado**: queda pendiente la revisión paso a paso y el primer cierre de lazo.
+**Hito**: el controlador de corriente de la tesis (Coronado 2025, Alg. 3) corre en el banco a 50 kHz con `overruns = 0`, el lazo de velocidad lo mantiene a 300 rpm, y del log a 1 kHz sale la BEMF real del motor: **λ = 3.46 mWb** (−1 % del planning), forma casi sinusoidal (armónicos < 2.5 %), e_d ≈ 0.
+
+### Resultados de banco (en orden cronológico)
+
+1. **Primer cierre de lazo** (iq* = 200 mA, sin lazo de velocidad): el motor gira, cero disparos. Pero `overruns ≈ 50 000/s`: el paso tarda 13 µs y el modelo de medio periodo exigía < 10 µs.
+2. **Presupuesto medido por tramos**: sensado 3.0 µs, M²PC 9.5 µs — 24 ciclos por candidato (dos saltos tomados por iteración + 4 WS de flash), no los 10 estimados. Desenrollar empeora (958 instrucciones no caben en caché: 10.7 µs). Prefetch de flash activado (`clock.c`): 9.8 → 9.5 µs.
+3. **Cambio a retardo entero (Cortés 2012)**: los CCR deben latchearse en el pico. La UEV se mueve al pico arrancando con `RCR = 0` antes del `UG` y escribiendo `RCR = 1` tras `CEN` (RM0440 §29.3.5, "written after launching"); el detector `UIF` de `m2pc_step` lo verificó: `overruns` 50 000/s → **0**. El modelo predice i(k+1) con el comando en curso y i(k+2) con cada candidato. Con eso el seguimiento mejoró: iq 95 → 160 mA (ref 200), id 90 → 40.
+4. **Sin carga, control de corriente puro = runaway** hasta el límite de tensión (1390 rpm): física, no bug. Y con iq* = 0 el motor arranca igual (~100 rpm): resolución de 30 mA/LSB (un sesgo de 0.7 LSB es invisible para el costo).
+5. **Lazo de velocidad** (PI de `pi_speed_controller.m`, 1 kHz, anti-windup; Kp 2 mA/rpm, Ki 20 mA/(rpm·s), |iq| ≤ 300 mA): **300 rpm ± 5 %** con iq* entre −20 y +70 mA. Ripple de velocidad a la frecuencia eléctrica (~35 Hz), que el lazo de 3 Hz no persigue.
+6. **Logger a 1 kHz** (921600 baud): medias de ventana de i_αβ y u_αβ, θ_e y ω̂. `python_scripts/analyze_m2pc_log.py` reconstruye e = u − R·i − L·di/dt y la proyecta en dq:
+
+```
+λ identificado = 3.456 mWb (nominal 3.5, −1.2 %)   e_d = +3.5 mV ≈ 0   e_q = 754 mV
+armónicos de e_α/(λω) [% del fundamental]: h2=2.5 h3=1.9 h4=0.4 h5=1.1 h6=0.1 h7=1.2
+```
+
+   Gráfica: `firmware/apps/07_m2pc/doc/bemf_300rpm_2026-10-14.png`. e_d ≈ 0 confirma por tercera vía (independiente de 05 y 06) que el offset y el signo del encoder son correctos.
+
+7. **Deriva del offset de corriente**: u_β tenía −118 mV de media con i_β medida ≈ 0 → el lazo regula a cero la corriente *medida* mientras circula un DC real de ~40 mA (1.3 LSB). El offset calibrado al arranque deriva con la temperatura del OPAMP. Para el análisis se quita el DC de e (una BEMF no tiene DC). **Deuda**: recalibración de offset en línea (pat92fr usa las muestras del valle, donde la corriente por el shunt es cero).
+
+### Consecuencia para la narrativa de la tesis
+
+PLANNING §Fase 2 fijó la regla: "si los armónicos > 1° son < 3 % del fundamental, el ADALINE va a ser demostrativo más que necesario — esto debe quedar escrito". Con h2…h7 < 2.5 % **estamos en ese caso**. Matiz: a 300 rpm el dead-time (≈ 0.3 V contra 0.76 V de BEMF) deforma los cruces por cero (visible en la figura ~150° y ~200°); hay que repetir la identificación a 600–900 rpm antes de dar el número por definitivo.
+
+### Código (todo en el commit de la sesión)
+
+`lib/m2pc.{c,h}` (retardo entero, detector UIF), `lib/motor_params.h`, `lib/pwm.c` (UEV en el pico), `lib/clock.c` (prefetch), `apps/07_m2pc` (PI + logger), `python_scripts/analyze_m2pc_log.py`. Lib y app en `-O2`.
+
+---
+
+### Notas del port (escritas antes de probar; siguen vigentes)
+
+**Hito original**: el controlador existe en firmware: `lib/m2pc.{c,h}`, `lib/motor_params.h`, `apps/07_m2pc`.
 
 ### Fuentes contrastadas
 
@@ -19,7 +51,7 @@
 | Tema | Simulación | Firmware | Por qué |
 |---|---|---|---|
 | Sector | por BEMF estimada; "arranque" con 8 vectores si ω < umbral | por θ_e del encoder, siempre | tenemos encoder: el sector existe a velocidad cero; se elimina la rama de arranque |
-| Retardo | aplicación instantánea del promedio | **medio periodo**: ū = ½u(k−1) + ½u(k) | PWM center-aligned con muestra en el pico y CCR latcheados en el valle; es la física exacta del modulador. Exige paso < 10 µs: `m2pc_overruns()` lo vigila |
+| Retardo | aplicación instantánea del promedio | **un periodo** (Cortés 2012): i(k+1) con el comando en curso, i(k+2) con el candidato | Se intentó medio periodo (CCR en el valle, ū = ½u(k−1) + ½u(k)): exigía paso < 10 µs y los 66 candidatos cuestan 9.5 µs desde flash. Con la UEV en el pico el presupuesto es 20 µs |
 | BEMF | forma `[sin; −cos]` (convención de la planta MATLAB) | `λ·ω_e·[−sin θ_e; cos θ_e]` (flujo en d, BEMF en +q) | física del banco; coherente con el fasor medido en 06 |
 | Unidades | SI, double | corriente Q8 LSB, tensión mV, θ Q32 | cero conversiones en el camino caliente |
 | Candidatos | 66 evaluaciones con 2 multiplicaciones vectoriales cada una | incrementos por división **precalculados por sector** (independientes de la corriente); rejilla por restas: 10 instrucciones/candidato | ~4.5 µs estimados |
@@ -37,11 +69,13 @@ i_q* = 0 durante 1 s (regula corriente cero: el motor debe quedarse quieto), ram
 
 `m2pc_step`: 168 instrucciones, una llamada (`pwm_set_duties`), sin `sdiv`; bucle interno de 10 instrucciones con `smull/smlal` para el costo en 64 bits. `control_step`: 184 instrucciones.
 
-### Pendiente
+### Para las sesiones siguientes
 
-1. Revisión del código paso a paso con el usuario (pedida explícitamente antes de probar).
-2. Primer encendido: fase i_q* = 0 → motor quieto, i_dq ≈ 0, overruns = 0, paso_max < 10 µs.
-3. Lazo de velocidad (PI) por encima, y después el ADALINE sobre la línea de la BEMF.
+1. **Recalibración de offset de corriente en línea** (deriva de ~1.3 LSB medida). Opción barata: muestras del valle (V7, corriente cero por los shunts) con un segundo trigger, como pat92fr.
+2. **Identificación a 600–900 rpm** (dead-time proporcionalmente menor) y log largo → dataset del ADALINE.
+3. **ADALINE offline** en Python con la base de Fourier de `fcs_m2pc_v2/adaptation`, entrenado con e(θ_e) del log; después en línea sustituyendo la línea de la BEMF en `control_step`.
+4. Afinar el PI de velocidad (ripple ±5 %) y medir rizo de par/corriente vs. el baseline sinusoidal — la comparación central de la tesis.
+5. Opcional: paso del M²PC en CCM-SRAM para recuperar el modelo de medio periodo.
 
 ---
 
