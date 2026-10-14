@@ -155,29 +155,33 @@ uint32_t adc_isqrt32(uint32_t x);
  *
  * Coste: 1 multiplicación 32-bit + 1 shift ≈ 3 ciclos M4.
  *
- * --- K TEÓRICO (superado, conservado para referencia) ---
- *   K = R_shunt × G_PGA × 4096 / V_ref = 0.003 × 16 × 4096 / 3.3 = 59.59 raw/A
- *   1/K = 16.781 mA/raw → Q12 = 68735.
- *   Tolerancias esperadas: R_shunt ±1%, G_PGA ±5%, V_ref ±0.5-2% → ~5-8%.
+ * --- K TEÓRICO ---
+ *   El cálculo original (0.003 × 16 × 4096 / 3.3 = 59.6 raw/A) ignoraba la
+ *   red de la placa: 1.5 kΩ serie + 22 kΩ a 3.3 V + 2.2 kΩ a GND en el nodo
+ *   VINP (MB1419 hoja 5) atenúa el shunt ×4/7 además de polarizarlo a
+ *   128.6 mV. Corregido (2026-10-13, FIELD_NOTES N1.23):
+ *     K = 0.003 × (4/7) × 16 × 4096 / 3.3 = 34.0 raw/A  (~29 mA/raw)
+ *   Es la ganancia total de 9.14 V/V que usan ST MCSDK y SimpleFOC. La red
+ *   interna del PGA es 150k/10k ±15 % (DS12589 Tabla 73), así que ±15 % de
+ *   incertidumbre es esperable sobre ese 34.
  *
- * --- K EMPÍRICO (2026-06-06, en uso) ---
- *   Sweep open-loop amp={170,510} con cross-check DMM true-RMS en serie con
- *   una fase. Dos puntos (raw_rms, I_dmm): (8, 200 mA) y (24, 580 mA).
- *   El firmware con K=59.6 leía ~1.46× BAJO de forma consistente en ambas
- *   amplitudes → error puro de ganancia (no de offset). Probable causa:
- *   shunt real ~2 mΩ (variante de placa), no 3 mΩ.
+ * --- K EMPÍRICO 2026-06-06 (con PGA_GAIN=00011, retirado) ---
+ *   Sweep amp={170,510} con DMM true-RMS en serie: (8 raw, 200 mA) y
+ *   (24 raw, 580 mA) → K ≈ 41.3 raw/A (Q12 = 99123). Ese 21 % sobre el
+ *   teórico NO era tolerancia: con 00011 la R1 del PGA va a VSSA y la
+ *   lectura incluía el rebote de tierra (caída IR del plano, proporcional a
+ *   la corriente). Al pasar a 01011 (sesión 18) las lecturas bajaron 28→23
+ *   raw a amp=510: 41.3 × 23/28 = 33.9 ≈ el teórico. La fase C, que daba
+ *   picos 17-30 % altos con 00011, quedó balanceada con 01011.
  *
- *   Ajuste por el origen (pondera el punto de mejor SNR, amp=510):
- *     1/K = Σ(raw·I)/Σ(raw²) = 15520/640 = 24.25 mA/raw  →  K ≈ 41.3 raw/A
- *   Adoptado: 24.2 mA/raw → Q12 = round(24.2 × 4096) = 99123.
- *   Verificación: raw 8 → 194 mA (DMM 200), raw 24 → 581 mA (DMM 580). ✓
- *
- * ⚠ Calibración global (un solo factor para las 3 fases). La fase C mostró
- *   picos ~30% altos vs A/B aunque su RMS estaba balanceado (sospecha de
- *   spikes de un sample atrapados por el max, no mismatch de ganancia). Si
- *   reaparece asimetría en RMS, refinar ADC_FACTOR_RAW_TO_MA_Q12 por fase.
+ * --- K EN USO (2026-10-13, PGA_GAIN=01011 Kelvin) ---
+ *   K = 34.0 raw/A (teórico del esquemático, coherente con el empírico
+ *   corregido). 1/K = 29.4 mA/raw → Q12 = round(29.4 × 4096) = 120422.
+ *   ⚠ Pendiente revalidar con DMM en modo Kelvin (CAL_TARGET_PHASE en
+ *   main.c). Calibración global para las 3 fases; con Kelvin el RMS está
+ *   balanceado a ±1 raw, no hace falta factor por fase.
  * -------------------------------------------------------------------------- */
-#define ADC_FACTOR_RAW_TO_MA_Q12   99123
+#define ADC_FACTOR_RAW_TO_MA_Q12   120422
 
 static inline int32_t adc_raw_to_ma(int16_t raw_cal) {
     return ((int32_t)raw_cal * ADC_FACTOR_RAW_TO_MA_Q12) >> 12;

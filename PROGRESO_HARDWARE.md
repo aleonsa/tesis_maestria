@@ -5,6 +5,62 @@
 
 ---
 
+## Sesión 18 — 2026-10-13 — La paradoja de corriente, explicada antes de volver al banco
+
+**Hito**: la "paradoja de medición" de la sesión 12 queda **cerrada**: explicada en sus tres capas con esquemático, manual y literatura externa, y reproducida en banco. Dos de las capas ya estaban corregidas en el código desde el 2026-06-06 sin que la bitácora lo registrara. Bonus: la referencia Kelvin del PGA eliminó la anomalía de la fase C y reconcilió el K empírico con el teórico.
+
+### Resultados de banco (Vbus 12 V, motor en J7, barrido 0 → 170 → 510, 30 s c/u)
+
+| amp | PGA `00011` (original) — PICO / RMS raw a/b/c | PGA `01011` (Kelvin) — PICO / RMS raw a/b/c |
+|---|---|---|
+| 0 | 5/5/5 · **1/1/1** | 5/5/5 · **1/1/1** |
+| 170 | 18/18/17 · **9/9/9** | 17/16/17 · **8/8/8** |
+| 510 | 46/44/**53** · **28/26/27** | **38/38/40** · **23/23/22** |
+
+- Offsets calibrados: 2540/2530/2524 (`00011`), 2545/2532/2529 (`01011`) — contra **2553** predicho por la red 22k/2.2k del esquemático. Vbus = 1444 raw = 12.0 V (sin el race de N1.15 esta vez); cae a 1380 con carga.
+- **Escala lineal**: ×3 de amplitud → ×3 de RMS. Paradoja cerrada. amp=0 da RMS 1 = ruido de ±1 LSB: era lo que la sesión 12 veía en *todos* los tramos (trigger en el valle).
+- **Fase C**: con `00011` el pico va 17 % alto (53 vs 46/44; en junio 30 %) con RMS balanceado. Con `01011` queda **38/38/40**: era rebote de tierra, que la referencia Kelvin a Vshunt− cancela.
+- **Ganancia**: con Kelvin las lecturas bajan ~18 % en las tres fases (28→23 a amp=510). El `00011` sumaba la caída IR del plano, un error proporcional a la corriente que inflaba el K empírico de junio: **41.3 × 23/28 = 33.9 ≈ 34.0 teórico**. El 21 % de "tolerancia" era rebote de tierra.
+- **Adoptado**: `OPAMP_PGA_KELVIN=1` (PGA_GAIN=01011) y `ADC_FACTOR_RAW_TO_MA_Q12 = 120422` (K = 34.0 raw/A, 29.4 mA/raw). Pendiente revalidar con DMM en modo Kelvin.
+
+### Corrección de la bitácora
+
+Las sesiones 13-17 dicen que la paradoja "sigue abierta" y que el barrido amp=0/170/510 "nunca se corrió". **Es falso.** El commit `c9bcaa6` ("avances 6jun", 2026-06-06) hizo tres cosas que solo quedaron en comentarios de `adc.c`/`adc.h`/`pwm.c`:
+
+1. TRGO de `MMS=010` (UEV) a `MMS=111` (OC4REF) con `CCR4 = ARR−1`.
+2. Sample time de 6.5 a 47.5 ciclos.
+3. Barrido amp={170, 510} con multímetro true-RMS en serie con una fase: **(8 raw_rms ↔ 200 mA), (24 raw_rms ↔ 580 mA)** → escalan linealmente → medición sana → K empírico = 41.3 raw/A (`ADC_FACTOR_RAW_TO_MA_Q12 = 99123`).
+
+Ese trabajo nunca tuvo entrada en esta bitácora. Lección anotada en N1.23 §4.
+
+### Las tres capas (detalle completo en FIELD_NOTES N1.23)
+
+| Capa | Causa | Evidencia | Estado |
+|---|---|---|---|
+| Señal plana (pico 5-6, RMS 1, no escala) | **Hipótesis A**: con `MMS=010` + `RCR=1` escrito antes de CEN, la UEV cae en el **underflow = valle**, donde conducen los high-side y los shunts low-side ven cero | RM0440 §29.3.5 texto literal; SimpleFOC tuvo el bug idéntico (PR #210); MCSDK y district9prawn usan OC4REF como nosotros | Corregido en código (jun); **por reproducir en banco** |
+| K = 59.6 raw/A "no cuadra" (empírico 41.3) | La red de la placa **atenúa el shunt ×4/7** (1.5k serie, 22k a 3.3 V, 2.2k a GND) | Esquemático MB1419 hoja 5; ST/SimpleFOC/district9prawn usan ganancia total 9.14 = 16·4/7; K teórico corregido = **34 LSB/A**, con ±15 % de la red interna del PGA (DS12589) | Cerrado; empírico manda |
+| Offset DC "misterioso" de 128 mV (Task #9) | La misma red polariza el nodo a **3.3·(1.5k∥2.2k)/(22k+1.5k∥2.2k) = 128.6 mV** → 2.057 V = 2553 raw con ×16 | Medido 128 mV (sesión 11); district9prawn mide 2552 | Cerrado |
+
+Hipótesis B (sample time) descartada como causa de la señal plana, pero válida como corrección: DS12589 exige `TS_OPAMP_VOUT ≥ 200 ns` con salida interna; 6.5 ciclos @ 42.5 MHz = 153 ns la violaba. Hipótesis C (ruido) descartada: pico/RMS = 5 sobre 50 000 muestras es cuantización sobre una constante, no ruido físico.
+
+### Hallazgos adicionales
+
+- **Tabla de pines corregida** (N1.2): PA5 no es "Curr_fdbk3_OPAmp+", es la entrada inversora del OPAMP2 (VINM0 = Vshunt_2−). OPAMP3 usa PB0/PB2. El `[VERIFY]` de `adc.c` queda resuelto: VP_SEL=0 → PA1/PA7/PB0 es correcto.
+- **Modo PGA**: usamos `PGA_GAIN=00011` (R1 a VSSA). ST/SimpleFOC/district9prawn usan `01011` (R1 al pin VINM0 = Vshunt−, referencia Kelvin). Misma ganancia; mejor rechazo de la caída IR del plano. Cambio de un bit, pendiente de probar.
+- **Signo**: la convención del shunt (corriente saliendo del motor = lectura sube) es opuesta a la de control; fijarlo al integrar Clarke.
+- **Ventana a 50 kHz**: MCSDK exige ≈ 1.75 µs de low-side ON antes del muestreo → duty máximo ≈ 82 % con tres shunts; relevante al cerrar lazo.
+- `pat92fr/FOC2` calibra el offset continuamente con las muestras del valle (`RCR=0`, separa por `DIR`). Idea para la integración.
+- Comentarios obsoletos corregidos en `adc.c` (decía standalone / 6.5 ciclos / JEXTSEL=01001) y en el README de la app (decía "regular simultaneous").
+
+### Para las sesiones siguientes (con fuente)
+
+1. **Revalidar K con DMM** en modo Kelvin (`CAL_TARGET_PHASE` 0, 15 s por punto, ~100 s). Esperado ≈ 34 raw/A ± tolerancias de shunt y red externa (ya sin el ±15 % del PGA como excusa: la lectura Kelvin coincidió con el teórico).
+2. **Offset θ_e ↔ fase A y sentido de giro** (ya con corriente medible y confiable).
+3. **PLL integrado en la ISR JEOS** con el motor en open-loop.
+4. Al cerrar lazo: ventana de muestreo (duty ≤ 82 % a 50 kHz con tres shunts) y el race de `adc_get_vbus_raw` (N1.15, sigue latente).
+
+---
+
 ## Sesión 17 — 2026-10-12 — Observador PLL tipo II validado en banco
 
 **Hito**: θ̂ continuo a 50 kHz con error máximo de 0.27° mecánicos contra el encoder, ISR completa en 2.11 µs (10 % del presupuesto), cero errores I²C en 180 s de prueba con el rotor girado a mano. El sensing de posición queda cerrado.

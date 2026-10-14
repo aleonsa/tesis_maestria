@@ -132,8 +132,12 @@ Detalle completo en `PROGRESO_HARDWARE.md` sesión 17.
 2. Verificar las 7 citas nuevas del bib; Cap. 6 y capítulo de hardware.
 
 **Con fuente** (Vbus 12 V, límite 300–500 mA, motor en J7):
-1. **Cerrar la paradoja de medición de corriente de la sesión 12** (sigue abierta; el barrido
-   amp 0/170/510 ya está programado en `02_pwm_adc` y nunca se corrió). Bloqueante.
+1. ~~Paradoja de corriente~~ **CERRADA (sesión 18, 2026-10-13).** Tres capas: TRGO en el
+   valle del PWM (corregido en jun con OC4REF), K ingenuo que ignoraba la atenuación 4/7 de la
+   red de la placa, y el offset de 128 mV que es la polarización por diseño. Reproducido en
+   banco: RMS 1 → 8 → 23 raw para amp 0/170/510, lineal. Adoptada referencia Kelvin del PGA
+   (`01011`): eliminó la anomalía de fase C y reconcilió K empírico y teórico en **34 raw/A**.
+   FIELD_NOTES N1.23. Pendiente menor: revalidar K con DMM en modo Kelvin.
 2. Calibración de ganancia raw→A con multímetro (`CAL_TARGET_PHASE`).
 3. Offset θ_e ↔ fase A + verificación del sentido de giro.
 4. PLL integrado en la ISR JEOS, validado en open-loop contra el θ_e impuesto.

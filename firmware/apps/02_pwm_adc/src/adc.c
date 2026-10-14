@@ -3,21 +3,35 @@
  *
  * Referencias: FIELD_NOTES N1.10–N1.12, RM0440 §21 (ADC) y §25 (OPAMP).
  *
- * Decisiones técnicas (FIELD_NOTES N1.11/N1.12):
- *   - OPAMPs: standalone mode (gain externa, R's del PCB), OPAINTOEN=1.
- *   - Auto-calibración OPAMP de offset (CALON loop, ~40 ms por OPAMP).
+ * Decisiones técnicas (FIELD_NOTES N1.11/N1.12/N1.23):
+ *   - OPAMPs: PGA interno x16 (PGGAIN=00011), VINP0, OPAINTOEN=1 → canales
+ *     internos ADC1_IN13 / ADC2_IN16 / ADC2_IN18. Factory trim (sin auto-cal).
+ *   - La placa polariza y atenúa el nodo VINP (red 1.5k/22k/2.2k, MB1419
+ *     hoja 5): offset 128.6 mV → 2.057 V = 2553 raw; ganancia total
+ *     16·4/7 = 9.14 V/V → ~34 LSB/A teórico (41.3 empírico, ver adc.h).
  *   - ADC: dual mode = injected simultaneous (DUAL=00101).
- *   - JEXTSEL=01001 (TIM1_TRGO), JEXTEN=01 (rising edge).
- *   - Sample time = 6.5 ciclos (SMP=001) → fast con OPAMP como fuente.
+ *   - JEXTSEL=00000 (TIM1_TRGO en la tabla de inyectados), JEXTEN=01 (rising).
+ *     TRGO = OC4REF con CCR4=ARR-1 (pwm.c) → muestreo en el PICO del
+ *     contador, con los low-side conduciendo. Con UEV caía en el valle.
+ *   - Sample time = 47.5 ciclos (SMP=100) ≈ 1.12 µs. DS12589 exige
+ *     TS_OPAMP_VOUT ≥ 200 ns con salida interna; 6.5 ciclos (153 ns) la violaba.
  *   - 12 bits de resolución.
  *   - ADC clock: HCLK/4 = 42.5 MHz (síncrono CKMODE=11).
- *
- * ⚠ TODOs marcados con [VERIFY] requieren confirmación al medir/calibrar.
  */
 
 #include "adc.h"
 #include "openloop.h"
 #include "stm32g431xx.h"
+
+/*
+ * Referencia de la R1 interna del PGA:
+ *   1 → PGA_GAIN=01011, R1 al pin VINM0 = Vshunt_x- (Kelvin al GND del shunt).
+ *       Es lo que usan ST MCSDK y SimpleFOC en esta placa.
+ *   0 → PGA_GAIN=00011, R1 a VSSA del chip (config original del proyecto).
+ * Misma ganancia x16 en ambos; difieren en el rechazo de la caída IR del
+ * plano de GND y, potencialmente, en el offset. FIELD_NOTES N1.23.
+ */
+#define OPAMP_PGA_KELVIN   1
 
 /* --------------------------------------------------------------------------
  * Helpers
@@ -57,19 +71,32 @@ static void opamp_quick_enable(OPAMP_TypeDef *opamp, uint32_t vp_sel) {
      * PGGAIN encoding (RM0440 §25.4.1):
      *   00000=x2, 00001=x4, 00010=x8, 00011=x16, 00100=x32, 00101=x64.
      *
-     * Sesión 11 (2026-05-23): cambio de x2 → x16. Razón: con R_shunt=3 mΩ
-     * y V_ref=3.3 V, x2 da solo 7.4 raw/A — sensibilidad insuficiente para
-     * el rango operativo del banco (0.1-5 A). PGA x16 da 59.6 raw/A.
-     * x32 saturaría el ADC porque el offset DC del front-end es alto.
+     * Sesión 11 (2026-05-23): cambio de x2 → x16. Con x2 la sensibilidad
+     * era insuficiente para el rango del banco. x32 saturaría el ADC: el
+     * nodo VINP viene polarizado a 128.6 mV por la red de la placa (N1.23),
+     * y x16 ya lo pone en 2.057 V. x16 es la ganancia para la que ST diseñó
+     * la placa (MCSDK usa la misma).
+     *
+     * Sensibilidad real con x16: ~34 LSB/A (la red atenúa el shunt x4/7),
+     * no los 59.6 que decía aquí antes. Ver adc.h para el K empírico.
+     *
+     * PGGAIN=00011 referencia la R1 interna a VSSA. ST/SimpleFOC usan 01011
+     * (R1 al pin VINM0 = Vshunt-, Kelvin): misma ganancia, mejor rechazo
+     * de la caída IR del plano de GND. Seleccionable con OPAMP_PGA_KELVIN.
      *
      * Config:
      *   - VPSEL: configurable, selecciona qué pin físico amplifica.
      *   - VMSEL = 10: PGA mode con feedback interno.
      *   - PGGAIN = 00011: gain x16.
      *   - OPAMPINTEN = 1: output al ADC sin pasar por pin físico. */
+#if (OPAMP_PGA_KELVIN == 1)
+    const uint32_t pga_gain = 0xBU;   /* 01011: x16, R1 al pin VINM0 (Vshunt-) */
+#else
+    const uint32_t pga_gain = 0x3U;   /* 00011: x16, R1 a VSSA interna         */
+#endif
     opamp->CSR = (vp_sel << OPAMP_CSR_VPSEL_Pos)
                | (0x2U << OPAMP_CSR_VMSEL_Pos)   /* PGA mode */
-               | (0x3U << OPAMP_CSR_PGGAIN_Pos)  /* gain x16 (PGGAIN=00011) */
+               | (pga_gain << OPAMP_CSR_PGGAIN_Pos)
                | OPAMP_CSR_OPAMPINTEN
                | OPAMP_CSR_OPAMPxEN;
 
@@ -78,19 +105,20 @@ static void opamp_quick_enable(OPAMP_TypeDef *opamp, uint32_t vp_sel) {
 
 
 /* --------------------------------------------------------------------------
- * opamp_init — configura los 3 OPAMPs en standalone mode.
+ * opamp_init — configura los 3 OPAMPs en PGA interno x16.
  *
  * Las conexiones de pines GPIO no son necesarias explícitamente para
  * VINP/VINM (cuando OPAEN=1, el silicio conecta automáticamente las
- * entradas según VP_SEL/VM_SEL).
+ * entradas según VP_SEL/VM_SEL; los pines están en analógico por reset).
  *
  * Para VOUT con OPAINTOEN=1, la salida va directo al ADC SIN pasar por
  * el pin físico, así que tampoco hay que configurar GPIOs de salida.
  *
- * Asunciones [VERIFY con esquemático MB1419 + medición]:
- *   - OPAMP1: VP_SEL=00 (VINP0 = PA1), VM_SEL=00 (VINM0 = PA3).
- *   - OPAMP2: VP_SEL=10 (VINP2 = PA7), VM_SEL=01 (VINM1 = PC5).
- *   - OPAMP3: VP_SEL=01 (VINP1 = PB0), VM_SEL=00 (VINM0 = PB2).
+ * Pines, confirmados con el esquemático MB1419 y la Tabla 74 del DS12589
+ * (2026-10-13, FIELD_NOTES N1.23). VP_SEL=00 = VINP0 en los tres:
+ *   - OPAMP1: VINP0 = PA1 (Curr_fdbk1+), VINM0 = PA3 (Vshunt_1-)
+ *   - OPAMP2: VINP0 = PA7 (Curr_fdbk2+), VINM0 = PA5 (Vshunt_2-)
+ *   - OPAMP3: VINP0 = PB0 (Curr_fdbk3+), VINM0 = PB2 (Vshunt_3-)
  * -------------------------------------------------------------------------- */
 void opamp_init(void) {
     /* Los OPAMPs viven en el bus APB2 a través de SYSCFG. SIN este clock,
@@ -100,12 +128,7 @@ void opamp_init(void) {
     RCC->APB2ENR |= RCC_APB2ENR_SYSCFGEN;
     (void)RCC->APB2ENR;
 
-    /* PGA mode gain x2 — VP_SEL=0 (VINP0) para todos los OPAMPs:
-     *   - OPAMP1 VINP0 = PA1 (Curr_fdbk1_OPAmp+ per UM2516)
-     *   - OPAMP2 VINP0 = PA7 (Curr_fdbk2_OPAmp+ per UM2516)
-     *   - OPAMP3 VINP0 = PB0 (no documentado en UM2516; podría ser
-     *     que la phase 3 use otro pin/topología) [VERIFY]
-     */
+    /* PGA x16 — VP_SEL=0 (VINP0) para los tres: PA1 / PA7 / PB0. */
     opamp_quick_enable(OPAMP1, 0U);
     opamp_quick_enable(OPAMP2, 0U);
     opamp_quick_enable(OPAMP3, 0U);

@@ -43,6 +43,7 @@
 - [N1.20 — Una errata de silicio cambia el primer evento de la máquina I²C](#n120--una-errata-de-silicio-cambia-el-primer-evento-de-la-máquina-i²c)
 - [N1.21 — La trama cortada a mitad de línea: resets externos y el riel VBUS](#n121--la-trama-cortada-a-mitad-de-línea-resets-externos-y-el-riel-vbus)
 - [N1.22 — El observador mínimo que acierta: PLL tipo II para θ entre muestras](#n122--el-observador-mínimo-que-acierta-pll-tipo-ii-para-θ-entre-muestras)
+- [N1.23 — La paradoja de corriente, desarmada: valle del PWM, red de polarización y 34 LSB/A](#n123--la-paradoja-de-corriente-desarmada-valle-del-pwm-red-de-polarización-y-34-lsba)
 
 ---
 
@@ -706,9 +707,10 @@ De la Tabla 4 del UM2516:
 |---|---|---|
 | PA0 | Vbus_sense | ADC: voltaje de bus DC dividido |
 | PA1 | Curr_fdbk1_OPAmp+ | Entrada al OPAMP1 del shunt 1 |
-| PA3 | Curr_fdbk1_OPAmp- | Entrada inversora |
-| PA5 | Curr_fdbk3_OPAmp+ | Shunt 3 |
-| PA7 | Curr_fdbk2_OPAmp+ | Shunt 2 |
+| PA3 | Curr_fdbk1_OPAmp- | Entrada inversora OPAMP1 (VINM0) = Vshunt_1− |
+| PA7 | Curr_fdbk2_OPAmp+ | Shunt 2 (OPAMP2 VINP0) |
+| PA5 | Curr_fdbk2_OPAmp- | Entrada inversora OPAMP2 (VINM0) = Vshunt_2−. ⚠ Esta fila decía "Curr_fdbk3_OPAmp+"; corregido 2026-10-13 con el esquemático MB1419 (ver N1.23) |
+| PB0 / PB2 | Curr_fdbk3_OPAmp+ / − | Shunt 3 (OPAMP3 VINP0 / VINM0) |
 | PB14 | Temperature feedback | ADC: NTC en MOSFET |
 | PB13 | N.C. | No conectado |
 | PB6 | **Sonda de la ISR** (GPIO puro) | pad A+/H1 de J8. ⚠ AF4 aquí está VACÍA: no sirve para I²C ni para ningún AF — ver [N1.16](#n116--bring-up-del-as5600-por-i²c1-el-sentido-de-posición). Como GPIO va perfecto, así que aquí vive el toggle de `ADC1_2_IRQHandler` |
@@ -4075,5 +4077,204 @@ determinista (punto fijo, sin ramas en el camino crítico), y **defendible en un
 diapositiva** — la contribución de la tesis vive en el ADALINE, y la infraestructura debe ser
 aburrida a propósito. Si el banco algún día muestra error sistemático bajo aceleración, el
 escalón a tipo III está anotado aquí y no hay que rediseñar nada.
+
+---
+## N1.23 — La paradoja de corriente, desarmada: valle del PWM, red de polarización y 34 LSB/A
+
+### Panorama
+
+La sesión 12 (2026-05-23) dejó abierta una "paradoja": con el motor girando en open-loop a
+amp=170, las corrientes medidas daban pico 5-6 raw y RMS 1 raw **tanto a 2 Hz como a 10 Hz**,
+con pico/RMS ≈ 5 (una senoide da √2). Y con amp=510 el Vbus caía (había corriente real) pero
+las estadísticas no se movían. Tres hipótesis quedaron escritas: (A) el trigger del ADC caía
+en el valle del PWM, (B) el OPAMP no asentaba en 6.5 ciclos de muestreo, (C) ruido.
+
+Antes de volver al banco (2026-10-13) se hizo lo que no se había hecho: leer el esquemático
+hoja por hoja, buscar qué hace ST en su propio firmware para esta placa, y qué han reportado
+otros con la misma placa. Resultado: **la paradoja tenía tres capas, y las tres ya tienen
+explicación cerrada.** Lo único que falta es reproducir en banco.
+
+### Capa 1 — El trigger caía en el valle (hipótesis A, confirmada)
+
+Con PWM mode 1 (`OCxM = 0110`), RM0440 §29.3.5: "In upcounting, channel is active as long as
+CNT < CCRx". El high-side está **activo alrededor del valle** (CNT ≈ 0) e inactivo alrededor
+del pico (CNT ≈ ARR). Con shunts en el low-side, la corriente de fase **solo se ve en el pico**,
+cuando conducen los tres low-side (vector V0). En el valle los shunts ven cero más el offset.
+
+El firmware original usaba `MMS = 010` (UEV como TRGO) con `RCR = 1` en center-aligned. RM0440
+§29.3.5, texto literal:
+
+> "In Center aligned mode, for odd values of RCR, the update event occurs either on the
+> overflow or on the underflow depending on when the RCR register was written and when the
+> counter was launched: if the RCR was written before launching the counter, the UEV occurs
+> on the underflow."
+
+La secuencia bare-metal típica (`RCR = 1; EGR = UG; CR1 |= CEN`) escribe RCR antes de arrancar
+→ la UEV cae en el **underflow = valle** → el ADC muestreaba con los low-side apagados. Las
+lecturas eran "offset ± 1-2 LSB de ruido de cuantización": exactamente el perfil estadístico
+de pico 5-6 / RMS 1 sobre 50 000 muestras. No era una señal pequeña; era **ninguna señal**.
+
+Es el bug más reportado de esta placa: SimpleFOC lo tuvo idéntico ("causing the DMA to
+trigger in the pwm trough instead of the peak", PR #210) y lo arregló fijando `DIR` y `CNT`
+antes de arrancar el timer. El remedio que adoptó este proyecto el 2026-06-06 (commit
+`c9bcaa6`) es el mismo que usan ST MCSDK y `district9prawn/B-G431B-ESC1-foc-LL`: TRGO desde
+**OC4REF** (`MMS = 111`) con `CCR4 = ARR − 1` y el canal 4 en PWM1 sin salida física. Así el
+flanco de subida de OC4REF cae en CNT = ARR − 1 bajando, a 2 ticks (12 ns) del pico, y es
+**independiente de RCR y de DIR**. MCSDK hace lo mismo con el canal 4 en PWM2 (flanco justo
+antes del pico).
+
+Truco de `pat92fr/FOC2` para después: con `RCR = 0` hay dos UEV por periodo; en la ISR se
+separa por `TIM1->CR1 & TIM_CR1_DIR` — las muestras del pico son corriente, las del valle son
+**offset, y se usan para calibrarlo continuamente** (EWMA). Dos pájaros de un tiro.
+
+### Capa 2 — La ganancia "ingenua" de 59.6 raw/A ignoraba la red de la placa
+
+El esquemático MB1419 (hoja 5, "SHUNT SENSING CIRCUIT") muestra, por fase:
+
+```
+   3.3 V ──[ R64  22 kΩ ]──┐
+                           │
+   Vshunt_x+ ──[ R67 1.5 kΩ ]──●── Curr_fdbkx_OPAmp+  (VINP0 del OPAMP)
+                           │
+                     [ R80 2.2 kΩ ]
+                           │
+                          GND
+
+   Vshunt_x− ──────────────────── Curr_fdbkx_OPAmp−  (VINM0, Kelvin al GND del shunt)
+
+   R54/R55/R56 = 3 mΩ (shunts low-side)
+```
+
+Por superposición en el nodo del OPAMP+:
+
+- **Polarización** (Vshunt = 0): V+ = 3.3 · (1.5k ∥ 2.2k) / (22k + 1.5k ∥ 2.2k) = **128.6 mV**.
+- **Atenuación del shunt**: (22k ∥ 2.2k) / (1.5k + 22k ∥ 2.2k) = 2.0k / 3.5k = **4/7 = 0.571**.
+
+Con PGA ×16: **V_out = 2.057 V + 9.143 · V_shunt = 2.057 V + 27.4 mV/A · I**. En 12 bits:
+**offset ≈ 2553 raw, sensibilidad ≈ 34 LSB/A (~29 mA/LSB)**, rango ≈ +45 A / −75 A.
+
+Esto es exactamente lo que usa todo el mundo: ST MCSDK (`AMPLIFICATION_GAIN 9.14`, shunt
+0.003), SimpleFOC (`LowsideCurrentSense(0.003f, -64.0f/7.0f, ...)`), district9prawn (offset
+medido `0x9F8` = 2552, ganancia 64/7), pat92fr (offsets 2464-2498). ST (foro, moderador
+cedric H) confirma que la placa está diseñada para ganancia 16 y "30 mA de resolución", y que
+subir la ganancia sin cambiar la polarización satura el ADC.
+
+El K = 59.6 raw/A de la sesión 11 asumía que el OPAMP veía el shunt entero. El K empírico del
+2026-06-06 (41.3 raw/A, dos puntos con multímetro true-RMS en serie: 8 raw ↔ 200 mA, 24 raw
+↔ 580 mA) está un 21 % por encima del teórico corregido de 34. La primera explicación fue la
+tolerancia ±15 % de la red interna del PGA (DS12589 Tabla 73); la real salió en el banco ese
+mismo día y está en el apartado del modo PGA: **rebote de tierra** que el modo `00011` sumaba a
+la señal. Con referencia Kelvin, empírico y teórico coinciden en 34.
+
+### Capa 3 — El "offset DC misterioso" era la polarización, por diseño
+
+La sesión 11 midió 318 raw con PGA ×2 → 128 mV en la entrada, y lo anotó como "no esperado
+para input flotante / shunt sin corriente" (Task #9). Son los 128.6 mV de la red 22k/2.2k de
+arriba, puestos ahí por ST a propósito para que la medición sea bipolar: corriente **saliendo**
+del motor hacia GND por el low-side sube la lectura; corriente **entrando** la baja. Con ×16 el
+cero queda en 2.057 V, que deja más rango negativo (−75 A) que positivo (+45 A); la
+"limitación bipolar" de la sesión 11 era esto.
+
+Signo: SimpleFOC usa ganancia negativa y pat92fr pone un "−" porque la convención de control
+es "corriente hacia la fase = positiva", opuesta a la del shunt. Hay que fijar el signo al
+integrar con Clarke.
+
+### Detalle — modo PGA: 00011 vs 01011
+
+RM0440 §25 distingue dos códigos de ×16:
+
+| PGA_GAIN | Qué hace | Quién lo usa |
+|---|---|---|
+| `00011` | ×16, "inverting input not used": R1 interna a VSSA | **este firmware** (`adc.c`) |
+| `01011` | ×16 "with VINM0 pin for input or bias": R1 interna al pin VINM0 | ST MCSDK, SimpleFOC, district9prawn |
+
+En esta placa VINM0 = Vshunt_x− (conexión Kelvin al lado GND del shunt). Con `01011` el
+amplificador se referencia al GND **del shunt** y rechaza la caída IR del plano de tierra bajo
+corrientes grandes; con `00011` se referencia al VSSA del chip. La ganancia nominal es la
+misma. Valor esperado de `OPAMPx_CSR` ≈ `0x2C141` = OPAEN | VM_SEL=10 | PGA_GAIN=01011 |
+OPAINTOEN (leído en banco: `0x139AC141`, los bits altos son el trim de fábrica).
+
+**Medido en banco (2026-10-13)**, mismo barrido con los dos modos:
+
+| amp | `00011` RMS raw a/b/c (pico) | `01011` RMS raw a/b/c (pico) |
+|---|---|---|
+| 170 | 9/9/9 (18/18/17) | 8/8/8 (17/16/17) |
+| 510 | 28/26/27 (46/44/**53**) | 23/23/22 (**38/38/40**) |
+
+Dos efectos del rebote de tierra que `00011` dejaba pasar: (1) la fase C mostraba picos 17-30 %
+altos — desaparecen con Kelvin; (2) las tres fases leían ~18 % **de más**, porque la caída IR
+del plano es proporcional a la corriente y se sumaba a la señal como si fuera ganancia extra.
+Corrigiendo el K empírico de junio por ese factor: 41.3 × 23/28 = **33.9 raw/A**, que es el
+teórico del esquemático. La "tolerancia del ±15 %" no hacía falta para explicar nada: era
+rebote de tierra. Adoptado `01011` y K = 34.0 raw/A.
+
+### Detalle — tiempo de muestreo (hipótesis B, descartada como causa, válida como mejora)
+
+DS12589 Tabla 73: `TS_OPAMP_VOUT ≥ 200 ns` al convertir la salida interna del OPAMP. Los 6.5
+ciclos originales a 42.5 MHz son 153 ns: **violaban el mínimo**. Los 47.5 ciclos actuales
+(1.12 µs) sobran; 12.5 (294 ns) sería el mínimo legal. Pero no era la causa de la señal plana:
+en la comunidad SimpleFOC se barrió de 2.5 a 640.5 ciclos sin cambio en el ruido (σ ≈ 1.4 LSB).
+Con PGA ×16, BW ≈ GBW/16 ≈ 0.8 MHz (GBW 13 MHz typ, 7 mín), τ ≈ 0.2 µs, asentamiento a 12 bits
+≈ 1.6 µs (3 µs con GBW mínimo): el OPAMP sigue la corriente de fase sin problema, pero no
+sigue transitorios de conmutación — por eso MCSDK impone `TNOISE = 1 µs` entre la conmutación
+y el muestreo.
+
+### Detalle — ventana de muestreo a 50 kHz
+
+MCSDK exige ≈ 1.75 µs de low-side ON (`TDEAD + TNOISE/TRISE`) antes del punto de muestreo. Con
+semiperiodo de 10 µs a 50 kHz, el duty máximo con los tres shunts legibles es ≈ 82 %; por
+encima, ST mueve el punto de muestreo y usa solo dos fases (`R3_2_SetADCSampPointSectX`). Con
+amp ≤ 30 % no aplica; al cerrar el lazo FCS-M2PC habrá que tenerlo en cuenta.
+
+### Por qué importa
+
+**1. Tres síntomas, tres causas, ninguna era "ruido".** La tentación en la sesión 12 fue
+atribuirlo a la hipótesis C. Un pico/RMS de 5 con 50 000 muestras no es ruido físico: es
+cuantización sobre una constante, y eso señala a "no hay señal", no a "señal pequeña".
+
+**2. El esquemático se lee antes de calcular ganancias.** N1.11 lo advirtió ("la ganancia
+exacta hay que leerla del esquemático MB1419") y no se hizo; costó un K un 75 % alto y un
+offset "misterioso" durante cinco meses. Dos resistencias en una hoja explican ambos.
+
+**3. Lo que hace el fabricante en su propio firmware es la referencia, no la verdad.** MCSDK
+usa 6.5 ciclos de muestreo porque saca el OPAMP por el pin; nosotros usamos la salida interna
+y el datasheet pide ≥ 200 ns. Copiar sin leer la condición habría dejado la violación.
+
+**4. Los datos de banco van a la bitácora, no a un comentario.** Los dos puntos de calibración
+del 2026-06-06 vivieron cuatro meses en `adc.h` mientras la bitácora decía "sigue abierta".
+
+### Referencias
+
+Documentos (en `papers/`):
+- MB1419-G431CB-B01 esquemático, hoja 5 "SHUNT SENSING CIRCUIT" y hoja de potencia
+  (R54-R56). Versión C01 en ST: https://www.st.com/resource/en/schematic_pack/mb1419-g431cbu6-c01_schematic.pdf
+- RM0440 Rev 9 §29.3.5 (UEV con RCR en center-aligned; PWM mode 1), §29.4 (MMS), §25.4.1
+  (PGA_GAIN), §21.4.19/§21.4.30 (inyectado vs regular, dual injected simultaneous), Tabla 167 (JEXTSEL).
+- DS12589 Tabla 73 (OPAMP: GBW, slew rate, R2/R1 ±15 %, `TS_OPAMP_VOUT`), Tabla 74 (OPAMP → canal ADC).
+- UM2516 Rev 4, Fig. 21 "Sensing section".
+- AN5306 "Operational amplifier (OPAMP) usage in STM32G4 Series":
+  https://www.st.com/resource/en/application_note/an5306-operational-amplifier-opamp-usage-in-stm32g4-series-stmicroelectronics.pdf
+
+Foro ST:
+- Ganancia 16 fija por la polarización (cedric H):
+  https://community.st.com/stm32-mcus-motor-control-34/i-can-t-set-the-opamp-gain-higher-than-16-with-b-g431b-esc1-and-motor-control-workbench-51574
+- Fórmula V_out = G·(4/7·V_shunt + 0.1286) y resolución 30 mA:
+  https://community.st.com/stm32-mcus-motor-control-34/motor-control-with-b-g431b-esc1-unusable-adc-current-sensing-resolution-for-small-currents-38573
+- OPAMP3 → ADC2_IN18 y exclusividad salida interna/pin:
+  https://community.st.com/stm32-mcus-motor-control-34/b-g431b-esc1-current-sensing-clarification-3872
+- UEV con RCR impar, cambio de redacción F1 → L4/G4 (Vincent Onde, Jan Waclawek):
+  https://community.st.com/stm32-mcus-embedded-software-32/timx-rcr-function-description-from-stm32f103-to-stm32l475-change-in-manual-16269
+
+Código de referencia:
+- `district9prawn/B-G431B-ESC1-foc-LL` — FOC en registros LL, PGA `IO0_BIAS` ×16, TRGO=OC4REF
+  con CH4 en TOGGLE, offset `0x9F8`: https://github.com/district9prawn/B-G431B-ESC1-foc-LL
+- `pat92fr/FOC2` — muestras del valle para calibrar offset con EWMA, dummy conversion:
+  https://github.com/pat92fr/FOC2
+- SimpleFOC `b_g431_hal.cpp` / `b_g431_mcu.cpp` y PR #210 (trigger en el valle):
+  https://github.com/simplefoc/Arduino-FOC/pull/210 ; hilo
+  https://community.simplefoc.com/t/b-g431b-esc1-current-control/521
+- Proyecto MCSDK 6.0 generado para esta placa (parámetros reales de ST: `power_stage_parameters.h`,
+  `r3_2_g4xx_pwm_curr_fdbk.c`): https://github.com/RicoKirstein/PrinterBLDCCooler
+- Bare-metal en Rust (OPAMP/ADC por registros): https://github.com/OIEIEIO/stm32-rust-test
 
 ---

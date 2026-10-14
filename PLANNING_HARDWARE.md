@@ -132,8 +132,21 @@ Restos históricos conocidos (no afectan resultados vigentes):
 | `eirbot/eirbot-B-G431B-ESC1-guide` | Pinout, cómo lidiar con la placa |
 | ST `STM32CubeG4` (CMSIS device pack) | Headers y startup |
 | `odriverobotics/ODrive` (F4) | `motor.cpp`, `current_controller.cpp` (calidad profesional) |
-| `simplefoc/Arduino-FOC` | Solo lectura conceptual de Clarke/Park |
+| `simplefoc/Arduino-FOC` | Clarke/Park conceptual; `b_g431_hal.cpp`/`b_g431_mcu.cpp` tienen la config real de OPAMP/ADC para esta placa; PR #210 es el bug del trigger en el valle |
 | Tu `fcs_m2pc_v2/` (MATLAB) | Referencia algorítmica directa para el port a C |
+
+### 3.4 Sensado de corriente en B-G431B-ESC1 (añadido 2026-10-13, ver FIELD_NOTES N1.23)
+
+| Recurso | Qué aporta |
+|---|---|
+| MB1419 hoja 5 "SHUNT SENSING CIRCUIT" | Red 1.5k/22k/2.2k por fase: polarización 128.6 mV, atenuación 4/7. **Leer antes de calcular cualquier ganancia** |
+| `district9prawn/B-G431B-ESC1-foc-LL` | FOC en registros LL (sin HAL), PGA `IO0_BIAS` ×16, TRGO=OC4REF, CORDIC. El más cercano a nuestro estilo |
+| `pat92fr/FOC2` | Calibración continua de offset con las muestras del valle (`RCR=0` + `DIR`) |
+| `RicoKirstein/PrinterBLDCCooler` | Proyecto MCSDK 6.0 generado: parámetros oficiales de ST (`AMPLIFICATION_GAIN 9.14`, `TNOISE`, punto de muestreo `CCR4 = Half−1`, `R3_2_SetADCSampPointSectX`) |
+| Foro ST 51574 / 38573 / 3872 | Ganancia fija 16 por la polarización; fórmula de transferencia; OPAMP3→ADC2_IN18 |
+| Foro ST 16269 | UEV con RCR impar en center-aligned: underflow si RCR se escribe antes de CEN |
+| DS12589 Tabla 73 | `TS_OPAMP_VOUT ≥ 200 ns`, GBW 13 MHz, R2/R1 ±15 % |
+| AN5306 | Uso de OPAMP en G4 (modos PGA, calibración) |
 
 ---
 

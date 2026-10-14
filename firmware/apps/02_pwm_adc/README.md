@@ -7,9 +7,9 @@ App de **Fase 1** del bring-up del banco. Objetivo: generar 6 PWMs complementari
 | Periférico | Pines | Función |
 |---|---|---|
 | TIM1 | PA8/CH1, PA9/CH2, PA10/CH3, PC13/CH1N, PA12/CH2N, PB15/CH3N | PWM 50 kHz center-aligned con dead-time ~500 ns |
-| TIM1 TRGO | (señal interna, no es un pin) | Dispara ADC al pico/valle del contador |
-| ADC1, ADC2 | (en semana 5) | Dual regular simultaneous, JEXTSEL = TIM1_TRGO |
-| OPAMP1/2/3 | (en semana 5) | PGA para corrientes de shunt |
+| TIM1 TRGO | (señal interna, no es un pin) | OC4REF (`MMS=111`, `CCR4=ARR−1`) → dispara el ADC en el **pico** del contador, donde conducen los low-side y los shunts ven la corriente. Con UEV (`MMS=010`) caía en el valle: FIELD_NOTES N1.23 |
+| ADC1, ADC2 | PA1/PA7/PB0 vía OPAMP (canales internos 13/16/18) | Dual **injected** simultaneous, JEXTSEL = TIM1_TRGO, 47.5 ciclos |
+| OPAMP1/2/3 | VINP0 = PA1 / PA7 / PB0 | PGA ×16 interno. Ganancia total con la red de la placa = 9.14 V/V → ~34 LSB/A teórico, 41.3 empírico; offset ≈ 2553 raw |
 | I²C1 | **PB8/SCL**, PB7/SDA | AS5600 (validado 2026-08-10; PB6 NO es SCL) |
 
 ## Plan por semana
