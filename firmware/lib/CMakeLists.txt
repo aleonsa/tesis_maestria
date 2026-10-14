@@ -19,7 +19,13 @@ add_library(stm32g4_lib STATIC
     adc.c
     openloop.c
     cordic.c
+    m2pc.c
 )
+
+# La lib va en -O2 desde el 2026-10-14: el controlador (07_m2pc) necesita que
+# el camino caliente (PLL, I2C, Clarke, CORDIC, M2PC) quepa en medio periodo.
+# Todo acceso a periféricos es volatile; -O2 no cambia la semántica.
+target_compile_options(stm32g4_lib PRIVATE -O2)
 
 # pwm/adc/openloop se promovieron desde apps/02_pwm_adc el 2026-10-13: la app
 # 05_phase_align (y la futura app de control) los necesita, y duplicar

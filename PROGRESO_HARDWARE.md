@@ -5,6 +5,46 @@
 
 ---
 
+## Sesión 20 — 2026-10-14 — FCS-M²PC portado a C en punto fijo (SIN PROBAR)
+
+**Hito**: el controlador de corriente de la tesis (Coronado 2025, Alg. 3; `fcs_m2pc_v2/control/fcs_m2pc.m`) existe en firmware: `lib/m2pc.{c,h}`, `lib/motor_params.h`, `apps/07_m2pc`. Compila en `-O2`. **No se ha flasheado**: queda pendiente la revisión paso a paso y el primer cierre de lazo.
+
+### Fuentes contrastadas
+
+- Paper (§III.B, Alg. 3, Tabla II): sector por posición del rotor (eq. 4), dos vectores adyacentes + nulo, Ts en ρ divisiones, CR(3,ρ) = (ρ+1)(ρ+2)/2 candidatos, modelo Euler (6), costo (3), modulación SVM.
+- MATLAB: idéntico con ρ = 10 (66 candidatos); el sector sale del ángulo de la BEMF (= θ_e + 90° con forma sinusoidal), que coincide con la eq. 4 del paper.
+
+### Decisiones del port (todas documentadas en `m2pc.h`)
+
+| Tema | Simulación | Firmware | Por qué |
+|---|---|---|---|
+| Sector | por BEMF estimada; "arranque" con 8 vectores si ω < umbral | por θ_e del encoder, siempre | tenemos encoder: el sector existe a velocidad cero; se elimina la rama de arranque |
+| Retardo | aplicación instantánea del promedio | **medio periodo**: ū = ½u(k−1) + ½u(k) | PWM center-aligned con muestra en el pico y CCR latcheados en el valle; es la física exacta del modulador. Exige paso < 10 µs: `m2pc_overruns()` lo vigila |
+| BEMF | forma `[sin; −cos]` (convención de la planta MATLAB) | `λ·ω_e·[−sin θ_e; cos θ_e]` (flujo en d, BEMF en +q) | física del banco; coherente con el fasor medido en 06 |
+| Unidades | SI, double | corriente Q8 LSB, tensión mV, θ Q32 | cero conversiones en el camino caliente |
+| Candidatos | 66 evaluaciones con 2 multiplicaciones vectoriales cada una | incrementos por división **precalculados por sector** (independientes de la corriente); rejilla por restas: 10 instrucciones/candidato | ~4.5 µs estimados |
+| Vbus | 240 V constante | 12 V constante (`VBUS_MV`) | TODO: medir (race N1.15) |
+
+### Parámetros (todos en `motor_params.h`, con la derivación de cada constante Q)
+
+R = 2.7 Ω (medido), L = 0.86 mH y λ = 3.5 mWb (**planning, sin identificar — Fase 2**), K = 32.93 raw/A, p = 7, Vbus = 12 V. λ = 3.5 mWb cuadra con el banco: 0.22 V de BEMF a 86 rpm, consistente con el adelanto de 15° de la tensión en 06.
+
+### App `07_m2pc` (arranque seguro)
+
+i_q* = 0 durante 1 s (regula corriente cero: el motor debe quedarse quieto), rampa a 200 mA en 1 s, luego constante. Disparo por sobrecorriente a 1.2 A (MOE = 0). Monitor a 100 Hz: i_dq, referencia, ω̂, sector, (n, m), costo; a 1 Hz: overruns y tiempo del paso.
+
+### Código generado (`-O2`)
+
+`m2pc_step`: 168 instrucciones, una llamada (`pwm_set_duties`), sin `sdiv`; bucle interno de 10 instrucciones con `smull/smlal` para el costo en 64 bits. `control_step`: 184 instrucciones.
+
+### Pendiente
+
+1. Revisión del código paso a paso con el usuario (pedida explícitamente antes de probar).
+2. Primer encendido: fase i_q* = 0 → motor quieto, i_dq ≈ 0, overruns = 0, paso_max < 10 µs.
+3. Lazo de velocidad (PI) por encima, y después el ADALINE sobre la línea de la BEMF.
+
+---
+
 ## Sesión 19 — 2026-10-14 — K calibrado con multímetro: −32.93 ± 0.47 raw/A
 
 **Hito**: la cadena de corriente queda cerrada con un anclaje externo. Teoría del esquemático (34.0), empírico de junio corregido (33.9) y DMM (32.9) convergen al 3 %. De paso, dos bugs del modo de calibración que lo tenían inservible desde mayo.
