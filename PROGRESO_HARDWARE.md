@@ -31,9 +31,57 @@ Adoptado `ADC_FACTOR_RAW_TO_MA_Q12 = 124369` (30.36 mA/raw).
    Lo cazó un stream de diagnóstico (`DIAG_DC_STREAM`) que imprime `CCR1` y el encoder a 1 kHz: CCR1 barría 680…1019 y el rotor giraba cuando "debía" estar en DC.
 2. **Promedio truncado a entero.** Con 12 raw a fondo de escala, 1 raw de truncamiento era 8 % de error en K (primera pasada: K = −38.7 ± 3). Ahora el promedio se imprime con 2 decimales; de ±3 a ±0.47.
 
+### App `06_openloop_sync` — la cadena de sensado completa en la ISR, validada
+
+Nuevo en `lib/`: `cordic.{c,h}` (sin/cos por hardware, 24 iteraciones, polling sin flag: leer
+RDATA bloquea el bus hasta que el resultado está listo) y `as5600_nb_tick()` (el bombeo del
+encoder de 04, promovido). El paso de control, llamado por hook desde la ISR de JEOS:
+
+1. PLL: extrapolar, bombear el encoder, corregir si hay muestra.
+2. θ_e = p·θ̂ − p·OFF: **una resta** de constante (el ×7, la latencia y el mod 2π ya vienen del PLL).
+3. Open-loop: avanza θ_ol y escribe duties.
+4. Clarke con el signo del shunt (`offset − raw`): 3 restas, 1 producto Q15.
+5. Park con CORDIC: 4 productos Q31 (umull+mla en `-Og`).
+6. Monitor: retardo θ_ol − θ_e y medias de i_d, i_q por ventana de 10 ms.
+
+**Prueba definitiva**: en open-loop a velocidad constante, i_d e i_q deben ser DC; si el offset
+o el signo están mal, oscilan a la frecuencia eléctrica. Resultado (10 Hz_e, amp 10 %, 25 s):
+
+```
+om  = +85.7 rpm        lag = θ_ol − θ_e = 105.1° ± 1.9°   (constante)
+i_d = 305 ± 25 mA      i_q = 4 ± 16 mA                     (DC, sin carga no hay par)
+paso_max = 4.74 µs     corr/s = 2000   i2c_err = 0
+```
+
+El 105° es físico: el generador usa `v_a = sin θ_ol`, así que el vector de tensión está en
+θ_ol − 90°; la tensión adelanta al rotor **15°**. Cuadra con V = R·I + E: I sobre d (0.82 V) y
+la BEMF sobre q (~0.39 V a 86 rpm) inclinan V ~25° respecto a d. Con 4.74 µs quedan ~15 µs
+para M2PC + ADALINE (y la app está en `-Og`).
+
+### Dos errores de signo que se cancelaban (destapados por 06)
+
+La primera corrida de 06 dio `lag` barriendo a 20 Hz (θ_e y θ_ol girando en sentidos
+opuestos), el rotor a **−86 rpm**… y sin embargo i_d/i_q casi DC. Solo es posible si el marco
+de Park gira *con* la corriente real: el marco era correcto y lo que giraba al revés era el
+campo. Causa: `openloop.c` ponía la fase B en θ+120° (B **adelanta** a A) = secuencia a-c-b,
+negativa en la convención estándar de Clarke (B atrasa). Corregido a secuencia positiva
+(b = −120° ≡ +171 de 256, c = −240° ≡ +85). Desde la sesión 12 el motor giraba "al revés" y
+nadie podía notarlo sin un marco de referencia medido.
+
+Y la prueba de sentido de `05` tenía dos fallos que se cancelaron: asumía "θ_ol crece ⇒ campo
+positivo" (falso con la secuencia negativa) y el desenvuelto de dos lecturas forzaba el signo
+positivo al reconstruir vueltas. Acertó +1 por casualidad. Reescrita: **integración de deltas**
+leyendo el encoder cada 10 ms (≈12 cuentas por lectura, inequívoco) y un bug más al pasar
+(`uint16_t` envuelve a 65536, no a 4096: ahora `& 0xFFF`). Corrida final: +6860 cuentas de
+7025 esperados, ENCODER_SIGN = +1, alineación en 811 ≡ 2558 (mod 585, +8).
+
+Constantes definitivas del control: `PHASE_A_OFFSET_RAW = 2558` (cualquier posición congruente
+mod 585 es equivalente), `ENCODER_SIGN = +1`, secuencia positiva en el generador.
+
 ### Pendiente observado
 
 - Glitch esporádico en la **fase C**: en un stream de 12 s, `ic` dio una muestra de **2** (debía ser ~2531). Una muestra corrupta, no ruido. Sospecha: lectura de `JDR2` en una ventana rara del dual injected, o el OPAMP3 por el canal interno 18. No bloquea (una muestra en 12 000), pero al cerrar lazo conviene un filtro de mediana o cazarlo con scope.
+- `-Og` en toda la build: para el controlador conviene `-O2` por app (medir antes/después con el DWT).
 
 ---
 
@@ -112,12 +160,14 @@ Resultados (Vbus 12 V, límite 500 mA, dos corridas):
 
 ### Para las sesiones siguientes (con fuente)
 
-1. ~~Revalidar K con DMM~~ → hecho en la sesión 19: −32.93 ± 0.47 raw/A.
-2. **PLL integrado en la ISR JEOS** con el motor en open-loop: θ_e(PLL+offset) contra
-   θ_e(open-loop) deben avanzar juntos con desfase constante (ángulo de carga).
-3. **Clarke con signo** (i = −raw·K) y presupuesto completo de ISR.
-4. Al cerrar lazo: ventana de muestreo (duty ≤ 82 % a 50 kHz con tres shunts), el race de
-   `adc_get_vbus_raw` (N1.15) y el glitch esporádico de la fase C (sesión 19).
+1. ~~Revalidar K con DMM~~ → sesión 19: −32.93 ± 0.47 raw/A.
+2. ~~PLL + Clarke + Park en la ISR con el motor en open-loop~~ → sesión 19, app 06: i_dq DC,
+   lag constante, 4.74 µs.
+3. **Portar el FCS-M2PC** (y luego el ADALINE) de `fcs_m2pc_v2/` a C en punto fijo sobre el
+   esqueleto de 06, y medir el presupuesto completo con el DWT. Es el riesgo técnico mayor.
+4. Fase 2 (identificación): Rs, Ls, λ_pm y forma de la BEMF con el encoder ya alineado.
+5. Al cerrar lazo: ventana de muestreo (duty ≤ 82 % a 50 kHz con tres shunts), el race de
+   `adc_get_vbus_raw` (N1.15) y el glitch esporádico de la fase C.
 
 ---
 

@@ -44,6 +44,7 @@
 - [N1.21 — La trama cortada a mitad de línea: resets externos y el riel VBUS](#n121--la-trama-cortada-a-mitad-de-línea-resets-externos-y-el-riel-vbus)
 - [N1.22 — El observador mínimo que acierta: PLL tipo II para θ entre muestras](#n122--el-observador-mínimo-que-acierta-pll-tipo-ii-para-θ-entre-muestras)
 - [N1.23 — La paradoja de corriente, desarmada: valle del PWM, red de polarización y 34 LSB/A](#n123--la-paradoja-de-corriente-desarmada-valle-del-pwm-red-de-polarización-y-34-lsba)
+- [N1.24 — i_dq constante: la prueba que valida toda la cadena (y cazó dos signos cancelados)](#n124--i_dq-constante-la-prueba-que-valida-toda-la-cadena-y-cazó-dos-signos-cancelados)
 
 ---
 
@@ -4288,5 +4289,75 @@ Código de referencia:
 - Proyecto MCSDK 6.0 generado para esta placa (parámetros reales de ST: `power_stage_parameters.h`,
   `r3_2_g4xx_pwm_curr_fdbk.c`): https://github.com/RicoKirstein/PrinterBLDCCooler
 - Bare-metal en Rust (OPAMP/ADC por registros): https://github.com/OIEIEIO/stm32-rust-test
+
+---
+## N1.24 — i_dq constante: la prueba que valida toda la cadena (y cazó dos signos cancelados)
+
+### Panorama
+
+Antes de escribir una línea del controlador hay que saber que *todo lo que consume* es
+correcto a la vez: θ_e desde el encoder (PLL + offset + signo), i_α/i_β desde los shunts
+(Clarke + signo del shunt) y la rotación de Park. Cada pieza se validó por separado en las
+sesiones 16-19. Pero "cada pieza bien" no implica "el conjunto bien": un error de signo en una
+y otro en otra pueden cancelarse en una prueba y morderte en la siguiente.
+
+Hay una prueba que lo valida todo junto, y es barata: **con el motor girando en open-loop a
+velocidad constante, i_d e i_q tienen que ser constantes.** El vector de corriente gira
+solidario con el rotor; visto desde el marco del rotor, está quieto. Si θ_e tiene el offset
+mal, i_dq se reparte distinto entre d y q pero sigue siendo DC (se ve en el ángulo). Si θ_e
+tiene el **signo** mal, o la frecuencia mal, i_dq **oscila** a la frecuencia eléctrica (o al
+doble). No hay forma de que un error pase desapercibido.
+
+### Lo que pasó
+
+Primera corrida de `06_openloop_sync` (sesión 19): el retardo θ_ol − θ_e barría ±180° a
+20 Hz —θ_e y θ_ol girando en sentidos opuestos—, el rotor a **−86 rpm**… y sin embargo
+i_d ≈ 290 e i_q ≈ −50 mA casi constantes. La lectura ingenua es "el signo del encoder está
+mal". La lectura correcta es la contraria: **el marco de Park gira con la corriente real, así
+que el marco es bueno; lo que gira al revés es el campo aplicado.**
+
+`openloop.c` ponía v_b = sin(θ + 120°): B *adelanta* a A. En la convención estándar de Clarke
+(β = (b − c)/√3 con B atrasando 120°), eso es la secuencia a-c-b: campo girando en sentido
+negativo, rotor detrás. Desde la sesión 12 el motor giraba "al revés", y sin un marco de
+referencia *medido* era indetectable: open-loop no sabe de sentidos.
+
+Y la prueba de sentido de `05_phase_align` había concluido +1 por dos errores que se
+cancelaban: asumía "θ_ol crece ⇒ campo positivo" (falso con esa secuencia) y reconstruía
+vueltas enteras entre solo dos lecturas forzando el signo. Reescrita por integración de deltas
+cada 10 ms (≈12 cuentas por lectura, sin ambigüedad): +6860 de 7025 cuentas esperadas con
+secuencia positiva. Signo +1 — ahora por evidencia.
+
+### Detalle — qué significa el ángulo que queda
+
+Con la secuencia corregida: retardo θ_ol − θ_e = 105.1° ± 1.9°, i_d = 305 ± 25 mA,
+i_q = 4 ± 16 mA, ω̂ = +85.7 rpm. El generador usa v_a = sin θ_ol, así que el vector de tensión
+está en θ_ol − 90°: la **tensión adelanta al rotor 15°**. Y la corriente está casi toda en d.
+Es exactamente el fasor de una máquina sin carga a baja velocidad: V = R·I + E, con I sobre d
+(no hay par que dar: i_q ≈ 0) y la BEMF E sobre q, que inclina V unos grados respecto a d. El
+ángulo de carga que uno "esperaría" ver en i_q no aparece porque no hay carga.
+
+### Detalle — costo del paso completo
+
+4.74 µs medidos con DWT para PLL + bombeo I²C + open-loop + Clarke + CORDIC + Park + monitor,
+compilado en `-Og`. Diseño del paso: θ_e = p·θ̂ − p·OFF es una sola resta de constante (el ×p,
+la latencia y el mod 2π los entrega el PLL); Clarke lleva el signo del shunt dentro de
+`offset − raw`; Park usa el CORDIC en polling sin flag (leer RDATA detiene el bus AHB hasta que
+el resultado existe, RM0440 §17.3.5), 24 iteraciones, error < 2⁻¹⁸. Quedan ~15 µs para el
+M2PC y el ADALINE.
+
+### Por qué importa
+
+**1. La validación de un sistema es una prueba sobre el conjunto, no la suma de pruebas por
+pieza.** Cinco bloques validados uno a uno escondían un campo girando al revés y una prueba de
+sentido que acertaba por casualidad. i_dq constante los desnudó en una corrida.
+
+**2. Cuando dos síntomas se contradicen, el que gana es el que tiene más física detrás.** "Lag
+barre a 20 Hz" y "i_dq es DC" no pueden ser ambos verdad con el mismo error; i_dq constante
+solo admite una explicación, y esa explicación señalaba al generador, no al encoder.
+
+**3. Las convenciones de signo se fijan una vez, por escrito, y se prueban.** Secuencia
+positiva en el generador, β = (b − c)/√3, shunt = −i_fase, encoder +1 con offset 2558. Todas
+en el código y aquí. Cualquier app futura que no cumpla una de ellas se delatará en la misma
+prueba.
 
 ---

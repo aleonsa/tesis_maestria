@@ -24,8 +24,9 @@
  * PRUEBA DE SENTIDO
  *
  * Luego se corre la excitación sinusoidal open-loop a 2 Hz eléctricos (lento,
- * el rotor sigue). θ del generador siempre crece; si el raw del encoder
- * también crece (neto), el signo es +1; si decrece, −1.
+ * el rotor sigue) en secuencia positiva. Se integra el desplazamiento del
+ * encoder leyéndolo cada 10 ms; si el neto es positivo, el encoder cuenta en
+ * el mismo sentido que el ángulo eléctrico → +1; si no, −1.
  *
  * SALIDA (las dos constantes que va a usar el control):
  *
@@ -166,30 +167,40 @@ int main(void) {
     openloop_set_amplitude(170U);             /* 10 % PWM: ~0.7 A pico */
     openloop_set_freq_q32(OPENLOOP_DELTA_2HZ_ELEC);
 
-    uint16_t raw0 = read_encoder_avg(4U);
+    /* Desplazamiento neto por INTEGRACIÓN de deltas: una lectura cada 10 ms
+     * mientras gira. A 2 Hz_e (0.29 rev/s mec) el rotor avanza ~12 cuentas
+     * por lectura, así que cada delta envuelto en ±2048 es inequívoco. Sumar
+     * 600 deltas da el desplazamiento total sin adivinar vueltas enteras.
+     * (La versión anterior leía solo al inicio y al final y "reconstruía" las
+     * vueltas asumiendo el signo — y acertó por casualidad, ver sesión 19.) */
+    uint16_t raw_prev = 0U;
+    (void)as5600_raw_angle(&raw_prev);
+    uint16_t raw0 = raw_prev;
+    int32_t  total = 0;
+
     openloop_start();
-    delay_ms(6000U);
+    for (uint32_t k = 0U; k < 600U; k++) {
+        delay_ms(10U);
+        uint16_t r = raw_prev;
+        if (as5600_raw_angle(&r) == I2C_OK) {
+            int32_t d = (int32_t)((uint32_t)(r - raw_prev) & 0xFFFU);  /* mod 4096 */
+            if (d > 2048) d -= 4096;                                   /* ±media vuelta */
+            total += d;
+            raw_prev = r;
+        }
+    }
     openloop_stop();                          /* restaura duty 50% */
-    uint16_t raw1 = read_encoder_avg(4U);
 
-    /* Delta neto desenvuelto en ±media vuelta: a 2 Hz por 6 s son 12 ciclos
-     * eléctricos = 12/7 vueltas mec ≈ 7000 cuentas, así que el camino corto
-     * es el correcto sin ambigüedad. */
-    int32_t d = (int32_t)(raw1 - raw0);
-    if (d > 2048)  d -= 4096;
-    if (d < -2048) d += 4096;
-    /* Pero el desplazamiento real es ~7000: reconstruir con vueltas enteras
-     * eligiendo el representante congruente de mayor magnitud (el movimiento
-     * real domina sobre el camino corto). */
-    while (d > 0 && d < 3000)  d += 4096;
-    while (d < 0 && d > -3000) d -= 4096;
+    /* El generador produce secuencia POSITIVA (openloop.c): θ_ol creciente
+     * es rotación positiva en el marco αβ. Si el encoder también crece, su
+     * sentido coincide con el eléctrico → +1. */
+    int encoder_sign = (total > 0) ? +1 : -1;
 
-    int encoder_sign = (d > 0) ? +1 : -1;
-
-    printf("[align] raw0=%u  raw1=%u  delta=%+ld cuentas\r\n",
-           (unsigned)raw0, (unsigned)raw1, (long)d);
-    printf("[align] θ del generador CRECIÓ; el encoder %s → ENCODER_SIGN = %+d\r\n",
-           (encoder_sign > 0) ? "también crece" : "decrece", encoder_sign);
+    printf("[align] raw0=%u  raw_fin=%u  desplazamiento neto=%+ld cuentas "
+           "(esperado ~±7000 = 12/7 vueltas mec)\r\n",
+           (unsigned)raw0, (unsigned)raw_prev, (long)total);
+    printf("[align] campo en secuencia positiva; el encoder %s → ENCODER_SIGN = %+d\r\n",
+           (encoder_sign > 0) ? "crece" : "decrece", encoder_sign);
 
     /* ---------------------------------------------------------------
      * Resumen: las dos constantes del control.

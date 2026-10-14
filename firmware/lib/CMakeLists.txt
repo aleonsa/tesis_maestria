@@ -18,6 +18,7 @@ add_library(stm32g4_lib STATIC
     pwm.c
     adc.c
     openloop.c
+    cordic.c
 )
 
 # pwm/adc/openloop se promovieron desde apps/02_pwm_adc el 2026-10-13: la app

@@ -84,8 +84,11 @@ openocd -f interface/stlink.cfg -f target/stm32g4x.cfg \
 | `03_as5600` | 1 | Encoder por I²C1, polling e IRQ; throughput del bus. |
 | `04_theta_pll` | 1 | Observador PLL tipo II de θ/ω a 50 kHz (TIM2), sin motor. |
 | `05_phase_align` | 1 | Offset θ_e ↔ fase A y sentido del encoder (necesita Vbus y motor). |
+| `06_openloop_sync` | 1→2 | Cadena completa en la ISR: PLL + offset + Clarke + Park (CORDIC) con el motor en open-loop. i_dq debe ser DC. Mide el costo del paso. Esqueleto del controlador. |
 
-`lib/` contiene los drivers compartidos: `clock`, `uart`, `i2c`, `as5600`, `theta_pll`, `pwm`, `adc`, `openloop`. La ISR de corriente llama al paso de control por hook (`adc_set_control_hook`).
+`lib/` contiene los drivers compartidos: `clock`, `uart`, `i2c`, `as5600`, `theta_pll`, `pwm`, `adc`, `openloop`, `cordic`. La ISR de corriente llama al paso de control por hook (`adc_set_control_hook`).
+
+Convenciones de signo fijadas (FIELD_NOTES N1.23/N1.24): secuencia positiva en `openloop` (b atrasa 120°), Clarke β = (b − c)/√3, el shunt lee −i_fase (`offset − raw` ya trae el signo), encoder `ENCODER_SIGN = +1` con `PHASE_A_OFFSET_RAW = 2558`.
 
 ## Dependencias
 

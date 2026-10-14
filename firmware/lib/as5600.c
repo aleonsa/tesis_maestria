@@ -51,3 +51,30 @@ i2c_status_t as5600_status(uint8_t *out) {
     *out = s & (AS5600_STATUS_MD | AS5600_STATUS_ML | AS5600_STATUS_MH);
     return I2C_OK;
 }
+
+#define AS5600_NB_ABORT_TICKS   100U
+#define AS5600_NB_STUCK_TICKS   200U
+
+as5600_nb_t as5600_nb_tick(uint16_t *raw) {
+    static uint32_t busy_ticks;
+
+    switch (i2c1_nb_state()) {
+        case I2C_NB_IDLE:
+            if (as5600_raw_angle_start() == I2C_OK) {
+                busy_ticks = 0U;
+            }
+            return AS5600_NB_NONE;
+
+        case I2C_NB_BUSY:
+            busy_ticks++;
+            if (busy_ticks == AS5600_NB_ABORT_TICKS) {
+                i2c1_nb_abort();                 /* asíncrono: legal en ISR */
+            }
+            return (busy_ticks >= AS5600_NB_STUCK_TICKS) ? AS5600_NB_STUCK
+                                                         : AS5600_NB_NONE;
+
+        default:                                 /* DONE o ERR */
+            return (as5600_raw_angle_take(raw) == I2C_OK) ? AS5600_NB_SAMPLE
+                                                          : AS5600_NB_ERROR;
+    }
+}

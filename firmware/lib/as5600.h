@@ -51,4 +51,29 @@ i2c_status_t as5600_status(uint8_t *out);
 i2c_status_t as5600_raw_angle_start(void);
 i2c_status_t as5600_raw_angle_take(uint16_t *out);
 
+/*
+ * Bombeo del camino por IRQ, pensado para llamarse UNA vez por tick de la
+ * ISR de control: mira el estado del driver y arranca, espera o recoge. Es
+ * el esqueleto validado en 04_theta_pll, promovido aquí para el controlador.
+ *
+ *   AS5600_NB_NONE    nada nuevo este tick
+ *   AS5600_NB_SAMPLE  *raw tiene una muestra nueva → alimentar el PLL
+ *   AS5600_NB_ERROR   la transferencia cerró con fallo (ya recogida; se
+ *                     reintenta sola al siguiente tick)
+ *   AS5600_NB_STUCK   el STOP asíncrono no llegó: el llamador debe hacer
+ *                     i2c1_reset_peripheral() + i2c1_nb_abort() desde
+ *                     foreground (nunca desde la ISR, ver i2c.h)
+ *
+ * Plazos en ticks de 20 µs: una lectura legítima tarda ~24; a 100 se pide
+ * abort, a 200 se declara STUCK.
+ */
+typedef enum {
+    AS5600_NB_NONE = 0,
+    AS5600_NB_SAMPLE,
+    AS5600_NB_ERROR,
+    AS5600_NB_STUCK,
+} as5600_nb_t;
+
+as5600_nb_t as5600_nb_tick(uint16_t *raw);
+
 #endif

@@ -1,7 +1,9 @@
 /*
  * openloop.h — Excitación trifásica sinusoidal open-loop (sin lazo cerrado).
  *
- * Genera 3 sinusoides desfasadas 120° y las aplica a CCR1/2/3 del TIM1.
+ * Genera 3 sinusoides en secuencia positiva estándar (b atrasa 120° a a,
+ * c atrasa 240°) y las aplica a CCR1/2/3 del TIM1. θ creciente = campo
+ * girando en sentido positivo del marco αβ de Clarke.
  * Pensado como bring-up para mover el motor por primera vez, validar el
  * orden de fases, y verificar que las corrientes medidas siguen las
  * consignas.

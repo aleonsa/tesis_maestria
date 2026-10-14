@@ -107,8 +107,16 @@ void openloop_step(void) {
 
     /* Top 8 bits → índice de LUT [0..255]. */
     uint8_t idx_a = (uint8_t)(g_theta_q32 >> 24);
-    uint8_t idx_b = (uint8_t)(idx_a + 85U);    /* +120° = 256/3 ≈ 85.33 */
-    uint8_t idx_c = (uint8_t)(idx_a + 170U);   /* +240° = 2 × 85 */
+    /* Secuencia POSITIVA estándar: b ATRASA 120° a a, c atrasa 240°.
+     *   v_a = sin(θ), v_b = sin(θ − 120°), v_c = sin(θ − 240°)
+     * En índice de 256: −120° ≡ +171, −240° ≡ +85.
+     * Hasta el 2026-10-14 era b = +85 (b adelantaba): secuencia a-c-b, el
+     * campo giraba al revés de θ y el rotor con él (encoder decreciente con
+     * θ creciente). Lo destapó 06_openloop_sync: θ_e y θ_ol giraban en
+     * sentidos opuestos. Con secuencia positiva, θ creciente = rotación
+     * positiva en el marco αβ estándar, que es lo que asume Clarke/Park. */
+    uint8_t idx_b = (uint8_t)(idx_a + 171U);
+    uint8_t idx_c = (uint8_t)(idx_a + 85U);
 
     int16_t s_a = sin_lut[idx_a];
     int16_t s_b = sin_lut[idx_b];

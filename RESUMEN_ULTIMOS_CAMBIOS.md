@@ -144,7 +144,12 @@ Detalle completo en `PROGRESO_HARDWARE.md` sesión 17.
    `ENCODER_SIGN = +1`. `pwm/adc/openloop` promovidos a `lib/`; la ISR llama al control
    por hook (`adc_set_control_hook`).
 2. Calibración de ganancia raw→A con multímetro (`CAL_TARGET_PHASE`).
-3. PLL integrado en la ISR JEOS, validado en open-loop contra el θ_e impuesto; Clarke con
-   signo (i = −raw·K); presupuesto completo de ISR.
-4. Fase 2: identificación de Rs, Ls, λ_pm y forma de la BEMF.
-5. Deuda: glitch esporádico de fase C (una muestra en 12 000), race de `adc_get_vbus_raw`.
+3. ~~PLL + Clarke + Park en la ISR~~ **HECHO (sesión 19, app `06_openloop_sync`)**: i_dq DC
+   (305 ± 25 / 4 ± 16 mA), lag constante 105 ± 2°, paso completo 4.74 µs. Destapó que el
+   open-loop giraba en secuencia negativa desde mayo (corregido) y una prueba de sentido en
+   05 que acertaba por casualidad (reescrita). `cordic` y `as5600_nb_tick` en `lib/`.
+   FIELD_NOTES N1.24.
+4. **Portar el FCS-M2PC** (luego ADALINE) a C sobre el esqueleto de 06 y medir el presupuesto.
+5. Fase 2: identificación de Rs, Ls, λ_pm y forma de la BEMF.
+6. Deuda: glitch esporádico de fase C (una muestra en 12 000), race de `adc_get_vbus_raw`,
+   pasar el controlador a `-O2`.
