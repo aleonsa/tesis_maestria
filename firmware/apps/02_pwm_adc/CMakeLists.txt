@@ -4,9 +4,6 @@
 
 add_executable(pwm_adc.elf
     src/main.c
-    src/pwm.c
-    src/adc.c
-    src/openloop.c
     ${STARTUP_SRC}
 )
 

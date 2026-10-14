@@ -94,6 +94,13 @@ extern volatile uint32_t g_isr_count;
 void adc_isr_init(void);
 
 /*
+ * Registra la función que la ISR de JEOS llama cada ciclo (50 kHz) tras leer
+ * las corrientes — el "paso de control". NULL = solo medición.
+ * Llamar antes de habilitar interrupciones (ver adc.c).
+ */
+void adc_set_control_hook(void (*fn)(void));
+
+/*
  * Offsets DC de las 3 fases (raw 12-bit). Se llenan tras adc_calibrate_offsets().
  * Lectura compensada: int16_t i_signed = (int16_t)g_ia_raw - (int16_t)g_offset_a;
  *
@@ -174,14 +181,23 @@ uint32_t adc_isqrt32(uint32_t x);
  *   raw a amp=510: 41.3 × 23/28 = 33.9 ≈ el teórico. La fase C, que daba
  *   picos 17-30 % altos con 00011, quedó balanceada con 01011.
  *
- * --- K EN USO (2026-10-13, PGA_GAIN=01011 Kelvin) ---
- *   K = 34.0 raw/A (teórico del esquemático, coherente con el empírico
- *   corregido). 1/K = 29.4 mA/raw → Q12 = round(29.4 × 4096) = 120422.
- *   ⚠ Pendiente revalidar con DMM en modo Kelvin (CAL_TARGET_PHASE en
- *   main.c). Calibración global para las 3 fases; con Kelvin el RMS está
- *   balanceado a ±1 raw, no hace falta factor por fase.
+ * --- K EN USO (2026-10-14, PGA_GAIN=01011 Kelvin, DMM en serie) ---
+ *   Barrido DC de 8 puntos (duty_A 50→80 %) con multímetro en serie con la
+ *   fase A, promedio de 1024 muestras con 2 decimales:
+ *     K = −32.93 ± 0.47 raw/A, intercepto +0.17 raw, R² = 0.9988.
+ *   −3.1 % respecto al teórico del esquemático (34.0): tolerancias.
+ *   1/|K| = 30.36 mA/raw → Q12 = round(30.36 × 4096) = 124369.
+ *
+ *   SIGNO: el shunt lee −i_fase (convención "corriente entrando al motor =
+ *   positiva"). Con i_A entrando, en el instante de muestreo (V0, los tres
+ *   low-side ON) la inductancia mantiene la corriente hacia el motor, que
+ *   sube desde GND por el shunt A → V_shunt negativo. Es el mismo signo que
+ *   SimpleFOC (ganancia −64/7). Clarke debe negar: i_a = −adc_raw_to_ma(...).
+ *
+ *   Calibración global para las 3 fases: con Kelvin el RMS quedó balanceado
+ *   a ±1 raw entre fases (sesión 18), no hace falta factor por fase.
  * -------------------------------------------------------------------------- */
-#define ADC_FACTOR_RAW_TO_MA_Q12   120422
+#define ADC_FACTOR_RAW_TO_MA_Q12   124369
 
 static inline int32_t adc_raw_to_ma(int16_t raw_cal) {
     return ((int32_t)raw_cal * ADC_FACTOR_RAW_TO_MA_Q12) >> 12;

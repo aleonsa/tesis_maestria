@@ -4175,9 +4175,21 @@ del motor hacia GND por el low-side sube la lectura; corriente **entrando** la b
 cero queda en 2.057 V, que deja más rango negativo (−75 A) que positivo (+45 A); la
 "limitación bipolar" de la sesión 11 era esto.
 
-Signo: SimpleFOC usa ganancia negativa y pat92fr pone un "−" porque la convención de control
-es "corriente hacia la fase = positiva", opuesta a la del shunt. Hay que fijar el signo al
-integrar con Clarke.
+**Signo — por qué el shunt lee −i_fase.** Con i_A entrando al motor (convención de control),
+durante el high-side ON la corriente va Vbus → HS_A → motor y el shunt A no ve nada. En el
+instante de muestreo (V0, los tres low-side ON) la inductancia del motor **mantiene** la
+corriente hacia el motor, y ahora tiene que venir de GND: sube por el shunt A y por el
+low-side A hasta el nodo de fase. Corriente subiendo por el shunt → V_shunt+ < V_shunt− →
+lectura **negativa**. Es lo que SimpleFOC codifica como ganancia −64/7 y pat92fr como un "−".
+Medido en banco (sesión 19): 0.456 A entrando por A → −14.79 raw. Clarke debe negar la
+lectura. Es fácil equivocarse razonando "la corriente baja por el low-side": eso es cierto
+para la corriente que *sale* del motor.
+
+**Calibración final con multímetro (2026-10-14).** Barrido DC de 8 puntos (duty_A 50→80 %) con
+el DMM en serie con la fase A: **K = −32.93 ± 0.47 raw/A**, intercepto +0.17 raw, R² = 0.9988.
+Teórico del esquemático 34.0 (−3.1 %), empírico de junio corregido por Kelvin 33.9. Los tres
+caminos convergen. Dos bugs del modo de calibración que lo invalidaban desde mayo (openloop
+sobrescribiendo los duties DC; promedio truncado a entero) están en PROGRESO sesión 19.
 
 ### Detalle — modo PGA: 00011 vs 01011
 

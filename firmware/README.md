@@ -80,6 +80,12 @@ openocd -f interface/stlink.cfg -f target/stm32g4x.cfg \
 | Folder | Fase del proyecto | Qué prueba |
 |---|---|---|
 | `01_blink` | 0 | Cadena toolchain → flash → LED. SysTick para base de tiempo precisa. |
+| `02_pwm_adc` | 1 | TIM1 PWM 50 kHz + OPAMP/ADC de corriente + ISR JEOS + open-loop. Modos de diagnóstico: barrido de amplitudes, calibración K con DMM (`CAL_TARGET_PHASE`), stream DC. |
+| `03_as5600` | 1 | Encoder por I²C1, polling e IRQ; throughput del bus. |
+| `04_theta_pll` | 1 | Observador PLL tipo II de θ/ω a 50 kHz (TIM2), sin motor. |
+| `05_phase_align` | 1 | Offset θ_e ↔ fase A y sentido del encoder (necesita Vbus y motor). |
+
+`lib/` contiene los drivers compartidos: `clock`, `uart`, `i2c`, `as5600`, `theta_pll`, `pwm`, `adc`, `openloop`. La ISR de corriente llama al paso de control por hook (`adc_set_control_hook`).
 
 ## Dependencias
 

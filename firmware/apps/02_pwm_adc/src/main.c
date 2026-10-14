@@ -18,6 +18,8 @@
 #include "pwm.h"
 #include "adc.h"
 #include "openloop.h"
+#include "i2c.h"
+#include "as5600.h"
 
 /* --------------------------------------------------------------------------
  * Bring-up del motor (Semana 6 sigue):
@@ -32,7 +34,6 @@
  *             girar → swap fases B/C en el cable o cambia los offsets
  *             de idx_b/idx_c en openloop.c.
  * -------------------------------------------------------------------------- */
-#define OPENLOOP_ENABLE        1
 #define OPENLOOP_AMP_TICKS     170U     /* 10% de ARR=1700 → ~0.7 A pico */
 #define OPENLOOP_DELTA_Q32     (OPENLOOP_DELTA_1HZ_ELEC * 10U)   /* 10 Hz eléctrico → 1.43 Hz mec con P=7 = 86 RPM */
 
@@ -44,8 +45,39 @@
  *   CAL_TARGET_PHASE = 1 → calibra fase B (varía CCR2, multímetro en fase B)
  *   CAL_TARGET_PHASE = 2 → calibra fase C (varía CCR3, multímetro en fase C)
  *   CAL_TARGET_PHASE = -1 → sin calibración (operación normal)
+ *
+ * Debe definirse ANTES de OPENLOOP_ENABLE: en modo calibración el openloop
+ * queda deshabilitado, porque si corre, su paso en la ISR sobrescribe los
+ * duties DC del sweep (detectado el 2026-10-13: cal_avg dio ~0 en todos los
+ * puntos — se estaba promediando la excitación sinusoidal, no el punto DC).
  * -------------------------------------------------------------------------- */
-#define CAL_TARGET_PHASE   -1   /* -1 = operación normal (sin sweep) */
+#define CAL_TARGET_PHASE   -1   /* -1 = operación normal (sin sweep); 0/1/2 = calibrar A/B/C */
+
+/* --------------------------------------------------------------------------
+ * DIAG_DC_STREAM (2026-10-13) — depuración de la medición DC.
+ *
+ * La calibración CAL_TARGET_PHASE dio cal_avg ≈ 0 con deriva negativa en
+ * todos los puntos, sin explicación. Este modo aplica un duty DC escalonado
+ * (50% ↔ 65% sobre la fase A, 2 s por nivel) y streamea las 3 corrientes
+ * crudas a 1 kHz, de modo que se ve: ¿hay corriente? ¿signo? ¿componente AC?
+ * ¿dónde caen las muestras respecto al offset?
+ *
+ * ⚠ Con CAL_TARGET_PHASE=-1 el openloop queda HABILITADO y sobrescribe los
+ * duties DC: el stream muestra la senoide (media = offset) y el rotor gira.
+ * Así se descubrió que la corrida CAL previa (cal_avg −4…−15, signo negativo)
+ * era la medición DC correcta: corriente entrando por A sube por el shunt A
+ * en V0 → lectura negativa (signo del shunt = −i_fase, como SimpleFOC −64/7).
+ * Para un stream DC real hay que apagar OPENLOOP_ENABLE a mano.
+ * -------------------------------------------------------------------------- */
+#define DIAG_DC_STREAM     0
+#define DIAG_DC_LO_TICKS   (uint16_t)(PWM_ARR * 50U / 100U)   /* 850  = neutro */
+#define DIAG_DC_HI_TICKS   (uint16_t)(PWM_ARR * 65U / 100U)   /* 1105 = ~0.3 A */
+
+#if (CAL_TARGET_PHASE >= 0)
+#define OPENLOOP_ENABLE    0
+#else
+#define OPENLOOP_ENABLE    1
+#endif
 
 /* --------------------------------------------------------------------------
  * Sesión 13 — diagnóstico de medición de corriente (Task #14).
@@ -78,7 +110,10 @@ static const uint16_t DIAG_AMPS[] = { 0U, 170U, 510U };
 #if (CAL_TARGET_PHASE >= 0)
 /* Sweep: duties (en %, después convertidos a ticks de ARR=1700).
  * El punto i=0 (50%) es referencia: corriente debe ser ~0 A. */
-static const uint16_t CAL_DUTIES_PCT_X10[] = { 500U, 520U, 550U, 600U, 650U, 700U };
+/* Hasta 80 %: con el DMM en serie (burden ~2-3 Ω) la corriente queda en
+ * ~0.4 A; sin DMM serían ~0.65 A, un pulso de 15 s tolerable (Inom 0.5 A).
+ * A 80 % el low-side sigue ON 4 µs alrededor del pico: la conversión cabe. */
+static const uint16_t CAL_DUTIES_PCT_X10[] = { 500U, 520U, 550U, 600U, 650U, 700U, 750U, 800U };
 #define CAL_N_POINTS  (sizeof(CAL_DUTIES_PCT_X10) / sizeof(CAL_DUTIES_PCT_X10[0]))
 
 /* Tiempo por punto del sweep, en ms. */
@@ -106,9 +141,9 @@ static void systick_init(uint32_t ticks_per_irq) {
                   | SysTick_CTRL_ENABLE_Msk;
 }
 
-#if (CAL_TARGET_PHASE >= 0)
-/* Solo se usa dentro del bloque de calibración de ganancia. Wrapped para
- * evitar warning -Wunused-function cuando CAL_TARGET_PHASE = -1. */
+#if (CAL_TARGET_PHASE >= 0) || (DIAG_DC_STREAM == 1)
+/* Solo se usa en calibración de ganancia y en el stream DC. Wrapped para
+ * evitar warning -Wunused-function cuando ninguno está activo. */
 static void delay_ms(uint32_t ms) {
     uint32_t start = g_ticks;
     while ((g_ticks - start) < ms) { }
@@ -179,6 +214,8 @@ int main(void) {
            g_offset_a, g_offset_b, g_offset_c);
 
     openloop_init();
+    /* El paso de control vive en la ISR de JEOS vía hook (lib/adc.c). */
+    adc_set_control_hook(openloop_step);
 #if (OPENLOOP_ENABLE == 1)
     openloop_set_amplitude(OPENLOOP_AMP_TICKS);
     openloop_set_freq_q32(OPENLOOP_DELTA_Q32);
@@ -256,13 +293,20 @@ int main(void) {
                 prev_count = now;
             }
         }
-        uint16_t raw_avg = (uint16_t)(sum / CAL_AVG_SAMPLES);
+        /* Promedio con 2 decimales: truncar a entero tiraba hasta 1 raw de
+         * una señal de ~12 raw a fondo de escala (8 % de error en K).
+         * sum ≤ 1024 × 4095 ≈ 4.2 M → ×100 cabe en uint32 (420 M). */
+        uint32_t raw_avg_x100 = (sum * 100U) / CAL_AVG_SAMPLES;
         uint16_t offset  = (CAL_TARGET_PHASE == 0) ? g_offset_a
                          : (CAL_TARGET_PHASE == 1) ? g_offset_b : g_offset_c;
-        int16_t cal_avg  = (int16_t)raw_avg - (int16_t)offset;
+        int32_t cal_avg_x100 = (int32_t)raw_avg_x100 - (int32_t)offset * 100;
 
-        printf("[cal_gain] punto %lu RESULTADO: raw_avg=%u  cal_avg=%+d  ← ANOTA mA del multimetro\r\n",
-               (unsigned long)(p + 1), raw_avg, cal_avg);
+        printf("[cal_gain] punto %lu RESULTADO: raw_avg=%lu.%02lu  cal_avg=%s%ld.%02ld  ← ANOTA mA del multimetro\r\n",
+               (unsigned long)(p + 1),
+               (unsigned long)(raw_avg_x100 / 100U), (unsigned long)(raw_avg_x100 % 100U),
+               (cal_avg_x100 < 0) ? "-" : "+",
+               (long)((cal_avg_x100 < 0 ? -cal_avg_x100 : cal_avg_x100) / 100),
+               (long)((cal_avg_x100 < 0 ? -cal_avg_x100 : cal_avg_x100) % 100));
 
         /* Mantener el punto otros 13 s para que tomes la lectura tranquilo. */
         delay_ms(13000U);
@@ -271,10 +315,49 @@ int main(void) {
     /* Volver a duty 50% balanceado (corriente = 0). */
     pwm_set_duties(PWM_ARR / 2U, PWM_ARR / 2U, PWM_ARR / 2U);
     printf("\r\n[cal_gain] === SWEEP COMPLETO. Duty 50%% restablecido. ===\r\n");
-    printf("[cal_gain] Pegame los 6 (raw_avg, mA_medidos) para calcular K.\r\n\r\n");
+    printf("[cal_gain] Pegame los %lu (cal_avg, mA_medidos) para calcular K.\r\n\r\n",
+           (unsigned long)CAL_N_POINTS);
 #endif
 
     uint32_t tick = 0;
+
+#if (DIAG_DC_STREAM == 1)
+    (void)tick;
+    /* Encoder para ver si el rotor responde al escalón: evidencia objetiva
+     * de que circula corriente, independiente del ADC. */
+    i2c1_init();
+    printf("\r\n[diag_dc] streaming a 1 kHz; duty A 50%%<->65%% cada 2 s. "
+           "Formato: D <t_ms> <ia> <ib> <ic> <CCR1> <enc_raw>\r\n");
+    {
+        uint32_t t_start = g_ticks;
+        uint32_t t_next  = 0U;
+        uint8_t  nivel   = 0U;
+        for (uint32_t k = 0U; k < 12000U; k++) {   /* 12 s */
+            if ((g_ticks - t_start) >= t_next) {
+                if (nivel == 0U) {
+                    pwm_set_duties(DIAG_DC_HI_TICKS, DIAG_DC_LO_TICKS, DIAG_DC_LO_TICKS);
+                    nivel = 1U;
+                } else {
+                    pwm_set_duties(DIAG_DC_LO_TICKS, DIAG_DC_LO_TICKS, DIAG_DC_LO_TICKS);
+                    nivel = 0U;
+                }
+                t_next += 2000U;
+            }
+            uint16_t enc = 0xFFFFU;
+            if ((k % 10U) == 0U) {            /* encoder a 100 Hz basta */
+                (void)as5600_raw_angle(&enc);
+            }
+            printf("D %lu %u %u %u %lu %u\r\n",
+                   (unsigned long)(g_ticks - t_start),
+                   (unsigned)g_ia_raw, (unsigned)g_ib_raw, (unsigned)g_ic_raw,
+                   (unsigned long)TIM1->CCR1, (unsigned)enc);
+            delay_ms(1U);
+        }
+        pwm_set_duties(DIAG_DC_LO_TICKS, DIAG_DC_LO_TICKS, DIAG_DC_LO_TICKS);
+        printf("[diag_dc] fin. Calcula min/max/mean por nivel.\r\n");
+    }
+    while (1) { }
+#endif
 
 #if (DIAG_AMP_SWEEP_ENABLE == 1)
     /* Override del amp inicial (OPENLOOP_AMP_TICKS de arriba) para arrancar

@@ -20,7 +20,6 @@
  */
 
 #include "adc.h"
-#include "openloop.h"
 #include "stm32g431xx.h"
 
 /*
@@ -478,6 +477,22 @@ void adc_calibrate_offsets(uint16_t n_samples_pow2) {
     cal_state = 0U;  /* idle */
 }
 
+/* --------------------------------------------------------------------------
+ * Hook del lazo de control. La ISR de JEOS lo llama una vez por ciclo (50 kHz)
+ * tras leer las corrientes. Antes era una llamada directa a openloop_step()
+ * con #include cruzado app↔lib; ahora cada app registra su paso:
+ *
+ *   adc_set_control_hook(openloop_step);   // o el FCS-M2PC en el futuro
+ *
+ * Se escribe una sola vez, antes de habilitar el NVIC (o con IRQs cortas);
+ * por eso no es volatile. NULL → la ISR no llama nada (modo solo-medición).
+ * -------------------------------------------------------------------------- */
+static void (*s_control_hook)(void) = 0;
+
+void adc_set_control_hook(void (*fn)(void)) {
+    s_control_hook = fn;
+}
+
 void adc_isr_init(void) {
     /* GPIOB clock probablemente ya habilitado por adc_init (PB14 = Temp),
      * pero lo aseguramos por si el orden cambia más adelante. */
@@ -567,10 +582,11 @@ void ADC1_2_IRQHandler(void) {
         }
     }
 
-    /* Excitación open-loop: avanza theta, calcula sinusoides 120°
-     * desfasadas, actualiza CCR1/2/3. Si openloop no está corriendo
-     * (s_running == 0), retorna en ~3 ciclos. */
-    openloop_step();
+    /* Paso del lazo de control registrado por la app (openloop hoy,
+     * FCS-M2PC mañana). NULL → nada, modo solo-medición. */
+    if (s_control_hook != 0) {
+        s_control_hook();
+    }
 
     /* Limpiar el flag JEOS de ADC2 (write-1-to-clear). Sin esto, al return
      * del handler el flag sigue activo → NVIC reentra inmediatamente. */

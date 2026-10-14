@@ -5,6 +5,38 @@
 
 ---
 
+## Sesión 19 — 2026-10-14 — K calibrado con multímetro: −32.93 ± 0.47 raw/A
+
+**Hito**: la cadena de corriente queda cerrada con un anclaje externo. Teoría del esquemático (34.0), empírico de junio corregido (33.9) y DMM (32.9) convergen al 3 %. De paso, dos bugs del modo de calibración que lo tenían inservible desde mayo.
+
+### Resultado
+
+Barrido DC de 8 puntos (duty_A 50 → 80 %, B/C al 50 %), DMM en serie con la fase A (entrada de corriente DC), promedio de 1024 muestras por punto:
+
+| duty_A | 50 | 52 | 55 | 60 | 65 | 70 | 75 | 80 |
+|---|---|---|---|---|---|---|---|---|
+| DMM [A] | 0.001 | 0.030 | 0.074 | 0.147 | 0.221 | 0.301 | 0.375 | 0.456 |
+| cal_avg [raw] | +0.25 | −1.16 | −2.23 | −4.36 | −7.13 | −9.77 | −12.33 | −14.79 |
+
+Regresión: **K = −32.93 ± 0.47 raw/A**, intercepto +0.17 raw, R² = 0.99879, residuos < 0.35 raw.
+Adoptado `ADC_FACTOR_RAW_TO_MA_Q12 = 124369` (30.36 mA/raw).
+
+- **Signo negativo = física, no error.** Con i_A entrando al motor, en el instante de muestreo (V0) la inductancia mantiene la corriente hacia el motor: sube desde GND por el shunt A → V_shunt < 0. SimpleFOC lo codifica como ganancia −64/7. Clarke debe negar la lectura. Anotado en `adc.h` y N1.23.
+- La corriente a 80 % fue 0.456 A y no los ~0.65 A teóricos: el DMM en serie añade ~2 Ω de burden. No afecta a K (el DMM mide lo que pasa por el shunt).
+- Intercepto ≈ 0 → el offset calibrado al arranque (2545) es exacto.
+
+### Dos bugs del modo de calibración (`CAL_TARGET_PHASE`), corregidos
+
+1. **El openloop sobrescribía los duties DC.** `openloop_start()` corría antes del bloque de calibración y su paso en la ISR reescribía CCR1/2/3 cada 20 µs: los "puntos DC" eran la senoide de 10 Hz, de media cero → `cal_avg ≈ 0` en todos los puntos. Así que el modo nunca había funcionado (la calibración de junio fue con el barrido de amplitudes, no con este). Fix: `OPENLOOP_ENABLE` se deriva de `CAL_TARGET_PHASE`.
+   Lo cazó un stream de diagnóstico (`DIAG_DC_STREAM`) que imprime `CCR1` y el encoder a 1 kHz: CCR1 barría 680…1019 y el rotor giraba cuando "debía" estar en DC.
+2. **Promedio truncado a entero.** Con 12 raw a fondo de escala, 1 raw de truncamiento era 8 % de error en K (primera pasada: K = −38.7 ± 3). Ahora el promedio se imprime con 2 decimales; de ±3 a ±0.47.
+
+### Pendiente observado
+
+- Glitch esporádico en la **fase C**: en un stream de 12 s, `ic` dio una muestra de **2** (debía ser ~2531). Una muestra corrupta, no ruido. Sospecha: lectura de `JDR2` en una ventana rara del dual injected, o el OPAMP3 por el canal interno 18. No bloquea (una muestra en 12 000), pero al cerrar lazo conviene un filtro de mediana o cazarlo con scope.
+
+---
+
 ## Sesión 18 — 2026-10-13 — La paradoja de corriente, explicada antes de volver al banco
 
 **Hito**: la "paradoja de medición" de la sesión 12 queda **cerrada**: explicada en sus tres capas con esquemático, manual y literatura externa, y reproducida en banco. Dos de las capas ya estaban corregidas en el código desde el 2026-06-06 sin que la bitácora lo registrara. Bonus: la referencia Kelvin del PGA eliminó la anomalía de la fase C y reconcilió el K empírico con el teórico.
@@ -52,12 +84,40 @@ Hipótesis B (sample time) descartada como causa de la señal plana, pero válid
 - `pat92fr/FOC2` calibra el offset continuamente con las muestras del valle (`RCR=0`, separa por `DIR`). Idea para la integración.
 - Comentarios obsoletos corregidos en `adc.c` (decía standalone / 6.5 ciclos / JEXTSEL=01001) y en el README de la app (decía "regular simultaneous").
 
+### Alineación θ_e ↔ fase A y sentido de giro — HECHO (app `05_phase_align`)
+
+Refactor previo: `pwm/adc/openloop` promovidos a `lib/` (la app nueva los necesitaba;
+criterio "2+ apps" del README). `adc.c` quedó desacoplado de openloop: la ISR de JEOS
+llama al paso de control por hook (`adc_set_control_hook`).
+
+Resultados (Vbus 12 V, límite 500 mA, dos corridas):
+
+```
+[align] raw alineado = 2558   →  PHASE_A_OFFSET_RAW = 2558
+[align] raw alineado = 3733   →  (3733 − 2558) mod 585 = 5 cuentas
+[align] PASO 2: delta = +5435 cuentas (θ del generador crece) → ENCODER_SIGN = +1
+```
+
+- El vector estático fase A (60 %/45 %/45 % ≈ 0.44 A) alineó el rotor en ~4 s. Con p = 7
+  hay **7 posiciones de equilibrio por vuelta mecánica** (separadas 4096/7 ≈ 585 cuentas);
+  ambas corridas cayeron en posiciones distintas pero congruentes módulo 585 — como debe
+  ser, porque 7·585·2²⁰ = 2³² ≡ 0: cualquiera de las 7 es un θ_e = 0 válido. Dispersión
+  de 5 cuentas (0.4° mec) = cuantización + ruido de lectura.
+- Sentido: +1 (el raw crece con θ_e creciente). No hace falta invertir nada.
+- Observación: a 2 Hz el rotor siguió el campo a ~1.55 Hz de media (delta 5435 de 7025
+  esperados) — slip de arranque open-loop al 10 % de amplitud; esperado, no afecta al signo.
+- Constantes finales del control:
+  `θ_e [Q32] = ENCODER_SIGN · 7 · (uint32_t)(raw − PHASE_A_OFFSET_RAW) · 2²⁰`
+  (equivale a `theta_pll` con offset: θ̂ − OFF·2²⁰, luego ×7).
+
 ### Para las sesiones siguientes (con fuente)
 
-1. **Revalidar K con DMM** en modo Kelvin (`CAL_TARGET_PHASE` 0, 15 s por punto, ~100 s). Esperado ≈ 34 raw/A ± tolerancias de shunt y red externa (ya sin el ±15 % del PGA como excusa: la lectura Kelvin coincidió con el teórico).
-2. **Offset θ_e ↔ fase A y sentido de giro** (ya con corriente medible y confiable).
-3. **PLL integrado en la ISR JEOS** con el motor en open-loop.
-4. Al cerrar lazo: ventana de muestreo (duty ≤ 82 % a 50 kHz con tres shunts) y el race de `adc_get_vbus_raw` (N1.15, sigue latente).
+1. ~~Revalidar K con DMM~~ → hecho en la sesión 19: −32.93 ± 0.47 raw/A.
+2. **PLL integrado en la ISR JEOS** con el motor en open-loop: θ_e(PLL+offset) contra
+   θ_e(open-loop) deben avanzar juntos con desfase constante (ángulo de carga).
+3. **Clarke con signo** (i = −raw·K) y presupuesto completo de ISR.
+4. Al cerrar lazo: ventana de muestreo (duty ≤ 82 % a 50 kHz con tres shunts), el race de
+   `adc_get_vbus_raw` (N1.15) y el glitch esporádico de la fase C (sesión 19).
 
 ---
 
