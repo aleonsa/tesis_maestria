@@ -45,6 +45,7 @@
 - [N1.22 — El observador mínimo que acierta: PLL tipo II para θ entre muestras](#n122--el-observador-mínimo-que-acierta-pll-tipo-ii-para-θ-entre-muestras)
 - [N1.23 — La paradoja de corriente, desarmada: valle del PWM, red de polarización y 34 LSB/A](#n123--la-paradoja-de-corriente-desarmada-valle-del-pwm-red-de-polarización-y-34-lsba)
 - [N1.24 — i_dq constante: la prueba que valida toda la cadena (y cazó dos signos cancelados)](#n124--i_dq-constante-la-prueba-que-valida-toda-la-cadena-y-cazó-dos-signos-cancelados)
+- [N1.25 — Primer lazo cerrado: dónde cae la UEV, cuánto cuesta un ciclo desde flash, y la BEMF leída del propio controlador](#n125--primer-lazo-cerrado-dónde-cae-la-uev-cuánto-cuesta-un-ciclo-desde-flash-y-la-bemf-leída-del-propio-controlador)
 
 ---
 
@@ -4359,5 +4360,93 @@ solo admite una explicación, y esa explicación señalaba al generador, no al e
 positiva en el generador, β = (b − c)/√3, shunt = −i_fase, encoder +1 con offset 2558. Todas
 en el código y aquí. Cualquier app futura que no cumpla una de ellas se delatará en la misma
 prueba.
+
+---
+## N1.25 — Primer lazo cerrado: dónde cae la UEV, cuánto cuesta un ciclo desde flash, y la BEMF leída del propio controlador
+
+### Panorama
+
+El FCS-M²PC (Coronado 2025, Alg. 3) corrió en el banco el mismo día que se portó, y giró el
+motor a la primera. Lo que hizo falta para que funcionara *bien* fueron tres cosas que no están
+en el paper ni en la simulación, porque son del hardware: en qué instante exacto entra el
+comando al modulador, cuánto tarda de verdad un bucle de 66 candidatos en un Cortex-M4 a
+170 MHz, y qué se puede medir del motor sin ningún instrumento más que el propio lazo.
+
+### 1. La UEV no cae donde uno cree (y sí se puede elegir)
+
+Con PWM center-aligned y preload en los CCR, el comando nuevo entra en la **update event**.
+Nosotros muestreamos en el pico (todos los low-side ON). Si la UEV está en el valle, el
+comando calculado tras la muestra entra a los 10 µs, y el intervalo entre muestras queda
+partido: media con el comando viejo, media con el nuevo (ū = ½u(k−1) + ½u(k)). Es un modelo
+exacto y con menos retardo que el clásico, pero exige terminar antes del valle. Si la UEV está
+en el pico, el comando entra justo en la muestra siguiente: retardo de un periodo entero, el
+de Cortés 2012, con todo el periodo para calcular.
+
+RM0440 §29.3.5 dice que con RCR impar la UEV cae en el underflow "si RCR se escribió antes de
+lanzar el contador" y en el overflow "si se escribió después". Leído rápido parece magia;
+leído despacio es contabilidad del contador de repeticiones:
+
+- El `UG` carga el contador de repeticiones con RCR. Cada overflow y cada underflow lo
+  decrementan; la UEV ocurre en el evento que lo encuentra **ya en 0** y lo recarga.
+- `RCR = 1` antes del `UG` → arranca en 1 → overflow (1→0) → underflow: UEV. **Valle.**
+- `RCR = 0` antes del `UG` → arranca en 0 → el primer overflow: UEV, y recarga con el RCR que
+  haya *entonces* (el 1 que se escribe justo tras `CEN`) → underflow (1→0) → overflow: UEV.
+  **Pico**, para siempre.
+
+Se verificó sin osciloscopio: `m2pc_step` limpia `UIF` al entrar y lo lee al salir. Con la UEV
+en el valle y un paso de 13 µs, `UIF` aparecía en cada paso (50 000 "overruns" por segundo);
+con la UEV en el pico, cero. El mismo bit sirve de detector permanente de pasos que se
+pasan del siguiente pico.
+
+### 2. 66 candidatos cuestan 9.5 µs, no 4 — y desenrollar empeora
+
+La cuenta en papel daba 10 instrucciones por candidato (2 restas, `smull`+`smlal`, comparación,
+salto). El DWT midió 24 ciclos. El Cortex-M4 no tiene predictor de saltos: cada salto tomado
+vacía el pipeline y vuelve a buscar en una flash de 4 wait states; el bucle tiene dos por
+iteración. Con el prefetch de flash activado (`FLASH_ACR_PRFTEN`, estaba apagado) se ganó un
+3 %. Desenrollar los dos bucles elimina los saltos pero produce 958 instrucciones en línea
+recta que no caben en la caché de instrucciones: cada fetch paga los wait states y sale peor
+(10.7 µs). La lección es incómoda: **a 170 MHz desde flash, el límite no es la ALU, es el
+fetch**. Las salidas reales son ejecutar el paso desde CCM-SRAM (0 wait states, 10 KB
+dedicados) o reducir ρ; se eligió cambiar de modelo de retardo, que no sacrifica ni ρ ni
+exactitud y cabe con 35 % de margen.
+
+### 3. Sin carga, el control de corriente es un runaway — y el logger es un instrumento
+
+Con i_q* = 200 mA y sin carga el motor aceleró hasta 1390 rpm, donde la BEMF se come el bus:
+no hay par resistente que equilibre 200 mA, así que la velocidad sube hasta que el controlador
+satura. Es física, y es por lo que la simulación de la tesis lleva un PI de velocidad por
+encima. Con el PI (300 rpm) el i_q* en régimen es la fricción: entre −20 y +70 mA.
+
+Lo que convierte el logger en instrumento es que el controlador *ya conoce* u y mide i, θ_e y
+ω̂. Con R y L, e = u − R·i − L·di/dt es la BEMF real, y proyectada en los ejes del encoder:
+
+- e_d ≈ 0 (3 mV sobre 754): la BEMF cae sobre q. Es la tercera confirmación, independiente,
+  del offset y el signo del encoder.
+- e_q / ω_e = **λ = 3.46 mWb**. El planning decía 3.5 sin haberlo medido. 1 % de diferencia.
+- La forma e(θ_e) normalizada, por bins de ángulo, es exactamente lo que el ADALINE tiene que
+  aprender, y sale con armónicos h2…h7 < 2.5 % del fundamental. El 12N14P es casi sinusoidal.
+
+Dos trampas que el análisis desnudó. La BEMF reconstruida tenía un DC en β: no es BEMF, es
+R·i_DC — el offset de corriente calibrado al arranque deriva ~1.3 LSB al calentarse el OPAMP,
+el lazo regula a cero la corriente *medida* y deja circular un DC real. Y los cruces por cero
+de la forma muestran escalones: dead-time, 0.3 V de error contra 0.76 V de BEMF a 300 rpm.
+Ambas se atenúan subiendo la velocidad (la BEMF crece, el dead-time no) y la primera pide
+recalibrar el offset en línea.
+
+### Por qué importa
+
+**1. El modulador es parte del modelo.** "Aplicar u(k)" en la simulación son tres instantes
+distintos en el hardware (muestra, cálculo, latch), y la diferencia entre medio periodo y un
+periodo de retardo se mide en la calidad del seguimiento: 95 → 160 mA sobre 200 al modelar el
+retardo real.
+
+**2. Medir antes de optimizar, y medir por tramos.** Un solo número (13 µs) no decía dónde
+estaba el problema; sensado 3 + M²PC 9.5 sí. Y la "optimización obvia" (desenrollar) empeoró.
+
+**3. El lazo cerrado es el mejor banco de identificación que tenemos.** Sin fuente de BEMF
+externa, sin osciloscopio: λ, la forma de onda y la validez del encoder salieron de 8 s de log
+a 1 kHz. Con la regla escrita en el PLANNING (armónicos < 3 % ⇒ ADALINE demostrativo), este
+dato ya tiene consecuencia en la narrativa de la tesis y hay que escribirla.
 
 ---
