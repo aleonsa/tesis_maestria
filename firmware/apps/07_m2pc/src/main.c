@@ -73,6 +73,12 @@
 #define IQ_MAX_Q8            MA_TO_Q8(IQ_MAX_MA)
 
 #define INV_SQRT3_Q15        18919
+#define ONE_THIRD_Q15        10923
+
+/* CLARKE_FULL = 1: i_α = (2ia − ib − ic)/3, inmune a un offset común a las tres
+ * fases (y a cualquier suma ≠ 0). CLARKE_FULL = 0: i_α = ia, que da por hecho
+ * ia + ib + ic = 0 (comportamiento hasta la sesión 20). */
+#define CLARKE_FULL          1
 
 /* ── Logger: ventanas de 50 muestras (1 kHz) por UART a 921600 ──────────
  * Línea: L t=<ms> th=<θ_e en 1/65536 de vuelta> ia=<Q8> ib=<Q8> ua=<mV>
@@ -108,6 +114,7 @@ static volatile uint32_t g_pub_corr, g_pub_i2c_err, g_pub_cyc_max;
 static volatile uint32_t g_pub_cyc_sense, g_pub_cyc_m2pc;   /* máximos por tramo */
 static volatile uint8_t  g_need_i2c_reset;
 static volatile uint8_t  g_tripped;
+static volatile int32_t  g_pub_zsum_q8;           /* media de ia+ib+ic en 1 s (Q8 LSB) */
 static volatile int32_t  g_trip_ia, g_trip_ib;
 
 /* Ventana del logger. La ISR escribe los campos y al final incrementa seq;
@@ -141,12 +148,28 @@ static void control_step(void) {
     int32_t s, c;
     cordic_sincos_q31(theta_e, &s, &c);
 
-    /* 2. Corrientes en Q8 LSB (el shunt lee −i: offset − raw). */
-    const int32_t ia = ((int32_t)g_offset_a - (int32_t)g_ia_raw) << 8;
-    const int32_t ib = ((int32_t)g_offset_b - (int32_t)g_ib_raw) << 8;
-    const int32_t ic = ((int32_t)g_offset_c - (int32_t)g_ic_raw) << 8;
+    /* 2. Corrientes en Q8 LSB (el shunt lee −i: offset − raw). Offset con
+     * fracción: el entero truncado dejaba hasta 1 LSB (30 mA) de sesgo. */
+    const int32_t ia = g_offset_a_q8 - ((int32_t)g_ia_raw << 8);
+    const int32_t ib = g_offset_b_q8 - ((int32_t)g_ib_raw << 8);
+    const int32_t ic = g_offset_c_q8 - ((int32_t)g_ic_raw << 8);
+#if (CLARKE_FULL == 1)
+    const int32_t i_alpha = (int32_t)(((int64_t)(2 * ia - ib - ic) * ONE_THIRD_Q15) >> 15);
+#else
     const int32_t i_alpha = ia;
+#endif
     const int32_t i_beta  = (int32_t)(((int64_t)(ib - ic) * INV_SQRT3_Q15) >> 15);
+
+    /* Suma de las tres corrientes: la real es 0 (estrella sin neutro), así que
+     * su media es la suma de los errores de offset (modo común). */
+    static int32_t  zs_acc;
+    static uint32_t zs_n;
+    zs_acc += ia + ib + ic;
+    if (++zs_n >= 50000U) {
+        g_pub_zsum_q8 = zs_acc / 50000;
+        zs_acc = 0;
+        zs_n = 0U;
+    }
 
     /* 3. Protección. Tras disparar, el paso no vuelve a tocar el PWM. */
     if (g_tripped != 0U) return;
@@ -236,6 +259,12 @@ int main(void) {
     adc_calibrate_offsets(4096U);
     printf("[calib] offsets: i_a=%u  i_b=%u  i_c=%u\r\n",
            g_offset_a, g_offset_b, g_offset_c);
+    printf("[calib] offsets Q8 (LSB x256): a=%ld b=%ld c=%ld  -> %ld.%03ld  %ld.%03ld  %ld.%03ld LSB\r\n",
+           (long)g_offset_a_q8, (long)g_offset_b_q8, (long)g_offset_c_q8,
+           (long)(g_offset_a_q8 >> 8), (long)((g_offset_a_q8 & 255) * 1000 / 256),
+           (long)(g_offset_b_q8 >> 8), (long)((g_offset_b_q8 & 255) * 1000 / 256),
+           (long)(g_offset_c_q8 >> 8), (long)((g_offset_c_q8 & 255) * 1000 / 256));
+    printf("[calib] clarke=%s\r\n", CLARKE_FULL ? "completo" : "i_alpha=ia");
 
     CoreDebug->DEMCR |= CoreDebug_DEMCR_TRCENA_Msk;
     DWT->CYCCNT = 0U;
@@ -337,6 +366,9 @@ int main(void) {
                    (unsigned long)(g_pub_cyc_m2pc / 170U),
                    (unsigned long)((g_pub_cyc_m2pc % 170U) * 100U / 170U));
             corr_prev = corr;
+            printf("[off] a=%ld b=%ld c=%ld (Q8)  media(ia+ib+ic)=%ld (Q8 LSB)\r\n",
+                   (long)g_offset_a_q8, (long)g_offset_b_q8, (long)g_offset_c_q8,
+                   (long)g_pub_zsum_q8);
         }
 
         if (g_need_i2c_reset != 0U) {

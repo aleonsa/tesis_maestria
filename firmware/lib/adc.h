@@ -112,6 +112,15 @@ extern uint16_t g_offset_b;
 extern uint16_t g_offset_c;
 
 /*
+ * Los mismos offsets con fracción: LSB × 256 (Q8), promedio redondeado.
+ * g_offset_x es este valor redondeado al entero. Usar el Q8 en el control
+ * (restar con (g_offset_x_q8 − (raw << 8))); mismas reglas de escritura.
+ */
+extern int32_t g_offset_a_q8;
+extern int32_t g_offset_b_q8;
+extern int32_t g_offset_c_q8;
+
+/*
  * adc_calibrate_offsets — promedia las N muestras siguientes de la ISR y
  * guarda el resultado en g_offset_a/b/c.
  *

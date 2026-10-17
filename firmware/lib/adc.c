@@ -445,6 +445,9 @@ uint32_t adc_isqrt32(uint32_t x) {
 uint16_t g_offset_a = 0U;
 uint16_t g_offset_b = 0U;
 uint16_t g_offset_c = 0U;
+int32_t  g_offset_a_q8 = 0;
+int32_t  g_offset_b_q8 = 0;
+int32_t  g_offset_c_q8 = 0;
 
 static volatile uint8_t  cal_state    = 0U;  /* 0=idle, 1=running, 2=done */
 static volatile uint16_t cal_remain   = 0U;  /* muestras restantes; 0 → terminó */
@@ -469,10 +472,16 @@ void adc_calibrate_offsets(uint16_t n_samples_pow2) {
     /* Espera bloqueante hasta que la ISR termine. ~N * 20 μs. */
     while (cal_state != 2U) { __asm__ volatile("nop"); }
 
-    /* División por shift right (potencia de 2). 100% entero. */
-    g_offset_a = (uint16_t)(cal_acc_a >> shift);
-    g_offset_b = (uint16_t)(cal_acc_b >> shift);
-    g_offset_c = (uint16_t)(cal_acc_c >> shift);
+    /* Promedio en Q8 (LSB × 256), redondeado: acc·256 no cabe en 32 bits
+     * para N grande, de ahí el uint64. El entero es el Q8 redondeado (antes
+     * se truncaba: hasta 1 LSB = 30 mA de sesgo). */
+    const uint64_t half = (1ULL << shift) >> 1U;
+    g_offset_a_q8 = (int32_t)((((uint64_t)cal_acc_a << 8) + half) >> shift);
+    g_offset_b_q8 = (int32_t)((((uint64_t)cal_acc_b << 8) + half) >> shift);
+    g_offset_c_q8 = (int32_t)((((uint64_t)cal_acc_c << 8) + half) >> shift);
+    g_offset_a = (uint16_t)((g_offset_a_q8 + 128) >> 8);
+    g_offset_b = (uint16_t)((g_offset_b_q8 + 128) >> 8);
+    g_offset_c = (uint16_t)((g_offset_c_q8 + 128) >> 8);
 
     cal_state = 0U;  /* idle */
 }

@@ -68,6 +68,8 @@ def main():
     ap.add_argument("--t0", type=float, default=None, help="inicio de régimen [s]")
     ap.add_argument("--t1", type=float, default=None)
     ap.add_argument("--bins", type=int, default=72)
+    ap.add_argument("--win", type=float, default=30.0,
+                    help="ventana [s] para el DC de e_αβ en el tiempo (0 = no imprimir)")
     ap.add_argument("--png", default="/tmp/opencode/bemf_analisis.png")
     args = ap.parse_args()
 
@@ -90,6 +92,14 @@ def main():
     # regula a cero la corriente MEDIDA y queda un DC real que el modelo ve
     # como tensión. Se quita por eje y se reporta como estimación de la deriva.
     e_dc = e.mean(axis=0)
+    if args.win > 0 and (t[-1] - t[0]) >= args.win:
+        print(f"DC de e_αβ por ventanas de {args.win:.0f} s (mV → LSB de offset = mV/R·K):")
+        for t_a in np.arange(t[0], t[-1] - args.win + 1e-9, args.win):
+            w = (t >= t_a) & (t < t_a + args.win)
+            d = e[w].mean(axis=0)
+            print(f"  t={t_a:7.1f} s  α={d[0]*1e3:+7.1f}  β={d[1]*1e3:+7.1f} mV   "
+                  f"({d[0]/R_OHM*K_RAW_PER_A:+.2f} / {d[1]/R_OHM*K_RAW_PER_A:+.2f} LSB)  "
+                  f"rpm={rpm[w].mean():.0f}")
     e    = e - e_dc
     print(f"DC quitado de e_αβ: {e_dc[0]*1e3:+.0f} / {e_dc[1]*1e3:+.0f} mV  "
           f"→ deriva de offset ≈ {e_dc[0]/R_OHM*1e3:+.0f} / {e_dc[1]/R_OHM*1e3:+.0f} mA "
