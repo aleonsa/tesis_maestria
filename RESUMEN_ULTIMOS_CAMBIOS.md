@@ -1,4 +1,4 @@
-# Resumen de los últimos cambios (al 2026-10-12)
+# Resumen de los últimos cambios (al 2026-10-17)
 
 Cubre el trabajo posterior al commit `dee0967` (2026-08-23): redacción del Cap. 1 de la
 tesis (2026-08-17), la sesión 15 de firmware (2026-08-24), la sesión 16 (2026-10-11),
@@ -153,7 +153,14 @@ Detalle completo en `PROGRESO_HARDWARE.md` sesión 17.
    candidatos a 50 kHz con retardo entero (UEV movida al pico), `overruns = 0`, paso 13 µs.
    PI de velocidad a 300 rpm ± 5 %. Logger a 1 kHz → **λ = 3.46 mWb identificado, BEMF casi
    sinusoidal (armónicos < 2.5 %)** → el ADALINE será "demostrativo" (regla del PLANNING).
-5. Recalibración de offset de corriente en línea (deriva de 1.3 LSB medida); identificación
-   a 600–900 rpm; ADALINE offline (Python) y luego en línea; afinar PI; rizo de par vs baseline.
-6. Deuda: glitch esporádico de fase C (una muestra en 12 000), race de `adc_get_vbus_raw`,
+5. ~~Recalibración de offset de corriente en línea~~ **HECHO (sesión 21, 2026-10-16/17)**:
+   la mitad de la "deriva" era truncamiento (`uint16_t`; ahora Q8 + Clarke completo); la otra
+   mitad no es térmica-monótona (±1 LSB entre arranques, ±2 LSB dentro de una corrida). El
+   ADC dispara también en el **valle del PWM** (TIM1 CH6 interno + `MMS2`, `tim1_trgo2`), donde
+   los shunts ven corriente cero: offset medido en continuo, filtrado en bloques de 2¹⁶.
+   Validado contra el invariante ia+ib+ic = 0: de ±2 LSB de deriva a **+0.48 ± 0.38 LSB**.
+   `paso_max` sin cambio (13.1 µs). FIELD_NOTES N1.26.
+6. Identificación a 600–900 rpm; ADALINE offline (Python) y luego en línea; afinar PI; rizo
+   de par vs baseline.
+7. Deuda: glitch esporádico de fase C (una muestra en 12 000), race de `adc_get_vbus_raw`,
    M2PC en CCM-SRAM para recuperar el medio periodo.

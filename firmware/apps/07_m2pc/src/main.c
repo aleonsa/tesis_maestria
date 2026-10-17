@@ -80,6 +80,14 @@
  * ia + ib + ic = 0 (comportamiento hasta la sesión 20). */
 #define CLARKE_FULL          1
 
+/* OFFSET_ONLINE = 1: el control resta el offset medido en el valle del PWM
+ * (adc_valley_offset_enable), que sigue la deriva térmica del OPAMP; la
+ * calibración de arranque solo cubre hasta que llega el primer bloque.
+ * OFFSET_ONLINE = 0: calibración de arranque fija; el valle solo se reporta
+ * en la línea [off], para comparar ambos sin tocar el lazo. */
+#define OFFSET_ONLINE        1
+#define VALLEY_CCR_MIN       500U   /* ≈3 µs de high-side ON antes y después del valle */
+
 /* ── Logger: ventanas de 50 muestras (1 kHz) por UART a 921600 ──────────
  * Línea: L t=<ms> th=<θ_e en 1/65536 de vuelta> ia=<Q8> ib=<Q8> ua=<mV>
  *        ub=<mV> w=<rpm×10>
@@ -150,9 +158,19 @@ static void control_step(void) {
 
     /* 2. Corrientes en Q8 LSB (el shunt lee −i: offset − raw). Offset con
      * fracción: el entero truncado dejaba hasta 1 LSB (30 mA) de sesgo. */
-    const int32_t ia = g_offset_a_q8 - ((int32_t)g_ia_raw << 8);
-    const int32_t ib = g_offset_b_q8 - ((int32_t)g_ib_raw << 8);
-    const int32_t ic = g_offset_c_q8 - ((int32_t)g_ic_raw << 8);
+#if (OFFSET_ONLINE == 1)
+    const uint8_t online = (g_valley_blocks != 0U);
+    const int32_t off_a = online ? g_offset_valley_a_q8 : g_offset_a_q8;
+    const int32_t off_b = online ? g_offset_valley_b_q8 : g_offset_b_q8;
+    const int32_t off_c = online ? g_offset_valley_c_q8 : g_offset_c_q8;
+#else
+    const int32_t off_a = g_offset_a_q8;
+    const int32_t off_b = g_offset_b_q8;
+    const int32_t off_c = g_offset_c_q8;
+#endif
+    const int32_t ia = off_a - ((int32_t)g_ia_raw << 8);
+    const int32_t ib = off_b - ((int32_t)g_ib_raw << 8);
+    const int32_t ic = off_c - ((int32_t)g_ic_raw << 8);
 #if (CLARKE_FULL == 1)
     const int32_t i_alpha = (int32_t)(((int64_t)(2 * ia - ib - ic) * ONE_THIRD_Q15) >> 15);
 #else
@@ -286,9 +304,13 @@ int main(void) {
 
     g_iq_ref_q8 = 0;
     adc_set_control_hook(control_step);
+    adc_valley_offset_enable(VALLEY_CCR_MIN);
+    pwm_valley_trigger_enable();
+    printf("[valle] disparo en el valle activo, ccr_min=%u, offset en linea=%s\r\n",
+           (unsigned)VALLEY_CCR_MIN, OFFSET_ONLINE ? "SI" : "no (solo reporte)");
     const uint32_t t0 = g_ticks;
 
-    uint32_t t_ctrl = 0U, t_stat = 0U, corr_prev = 0U, log_seq = 0U;
+    uint32_t t_ctrl = 0U, t_stat = 0U, corr_prev = 0U, log_seq = 0U, valley_prev = 0U;
     int32_t  pi_int_q8 = 0;
 
     while (1) {
@@ -366,9 +388,14 @@ int main(void) {
                    (unsigned long)(g_pub_cyc_m2pc / 170U),
                    (unsigned long)((g_pub_cyc_m2pc % 170U) * 100U / 170U));
             corr_prev = corr;
-            printf("[off] a=%ld b=%ld c=%ld (Q8)  media(ia+ib+ic)=%ld (Q8 LSB)\r\n",
+            printf("[off] cal a=%ld b=%ld c=%ld  valle a=%ld b=%ld c=%ld (Q8)  "
+                   "media(ia+ib+ic)=%ld  valle/s=%lu skip=%lu bloques=%lu\r\n",
                    (long)g_offset_a_q8, (long)g_offset_b_q8, (long)g_offset_c_q8,
-                   (long)g_pub_zsum_q8);
+                   (long)g_offset_valley_a_q8, (long)g_offset_valley_b_q8,
+                   (long)g_offset_valley_c_q8, (long)g_pub_zsum_q8,
+                   (unsigned long)(g_valley_count - valley_prev),
+                   (unsigned long)g_valley_skipped, (unsigned long)g_valley_blocks);
+            valley_prev = g_valley_count;
         }
 
         if (g_need_i2c_reset != 0U) {

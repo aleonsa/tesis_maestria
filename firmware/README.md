@@ -85,7 +85,7 @@ openocd -f interface/stlink.cfg -f target/stm32g4x.cfg \
 | `04_theta_pll` | 1 | Observador PLL tipo II de θ/ω a 50 kHz (TIM2), sin motor. |
 | `05_phase_align` | 1 | Offset θ_e ↔ fase A y sentido del encoder (necesita Vbus y motor). |
 | `06_openloop_sync` | 1→2 | Cadena completa en la ISR: PLL + offset + Clarke + Park (CORDIC) con el motor en open-loop. i_dq debe ser DC. Mide el costo del paso. Esqueleto del controlador. |
-| `07_m2pc` | 3→5 | **FCS-M²PC en lazo cerrado** (`lib/m2pc`) + PI de velocidad a 1 kHz + logger a 1 kHz (921600 baud). `python_scripts/analyze_m2pc_log.py` reconstruye la BEMF del log. `-O2`. |
+| `07_m2pc` | 3→5 | **FCS-M²PC en lazo cerrado** (`lib/m2pc`) + PI de velocidad a 1 kHz + logger a 1 kHz (921600 baud). `python_scripts/analyze_m2pc_log.py` reconstruye la BEMF del log. Offset de corriente en línea desde el valle del PWM (`pwm_valley_trigger_enable`, N1.26). `-O2`. |
 
 `lib/` contiene los drivers compartidos: `clock`, `uart`, `i2c`, `as5600`, `theta_pll`, `pwm`, `adc`, `openloop`, `cordic`, `m2pc`, `motor_params.h` (todos los parámetros físicos y constantes Q derivadas). La ISR de corriente llama al paso de control por hook (`adc_set_control_hook`). La lib compila en `-O2`.
 

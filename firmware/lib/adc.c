@@ -20,6 +20,9 @@
  */
 
 #include "adc.h"
+
+/* RM0440 Tabla 67, columna "ADC1/2 Injected": 8 = tim1_trgo2. */
+#define ADC_JEXTSEL_TIM1_TRGO2   8U
 #include "stm32g431xx.h"
 
 /*
@@ -229,10 +232,13 @@ void adc_init(void) {
      * ADC1 inyectado: 1 canal (i_a en OPAMP1 = ch 13). JL = 0.
      * ADC2 inyectado: 2 canales (i_b en ch 16, i_c en ch 18). JL = 1. */
 
-    /* ADC1.JSQR: JL=0 (1 canal), JEXTSEL=01001 (TIM1_TRGO), JEXTEN=01 (rising),
-     *            JSQ1 = canal 13 (OPAMP1). */
+    /* ADC1.JSQR: JL=0 (1 canal), JEXTSEL=01000 (TIM1_TRGO2), JEXTEN=01 (rising),
+     *            JSQ1 = canal 13 (OPAMP1).
+     * RM0440 Tabla 67 (inyectados ADC1/2): 0 = tim1_trgo, 8 = tim1_trgo2.
+     * Sesión 21: TRGO2 en vez de TRGO. Con MMS2=0111 (pwm_init) es el mismo
+     * OC4REF; pwm_valley_trigger_enable() le suma el flanco del valle. */
     ADC1->JSQR = (0U << ADC_JSQR_JL_Pos)
-               | (0x0U << ADC_JSQR_JEXTSEL_Pos)  /* RM0440 Tabla 167: 00000 = TIM1_TRGO para JEXTSEL (NO 01001 que es para EXTSEL regular) */
+               | (ADC_JEXTSEL_TIM1_TRGO2 << ADC_JSQR_JEXTSEL_Pos)
                | (0x1U << ADC_JSQR_JEXTEN_Pos)
                | (ADC_CHAN_OPAMP1 << ADC_JSQR_JSQ1_Pos);
 
@@ -242,7 +248,7 @@ void adc_init(void) {
      * Aunque RM0440 dice "don't care", por buena práctica programamos el
      * mismo trigger en ambos. */
     ADC2->JSQR = (1U << ADC_JSQR_JL_Pos)
-               | (0x0U << ADC_JSQR_JEXTSEL_Pos)  /* RM0440 Tabla 167: 00000 = TIM1_TRGO para JEXTSEL (NO 01001 que es para EXTSEL regular) */
+               | (ADC_JEXTSEL_TIM1_TRGO2 << ADC_JSQR_JEXTSEL_Pos)
                | (0x1U << ADC_JSQR_JEXTEN_Pos)
                | (ADC_CHAN_OPAMP2 << ADC_JSQR_JSQ1_Pos)
                | (ADC_CHAN_OPAMP3 << ADC_JSQR_JSQ2_Pos);
@@ -523,6 +529,33 @@ void adc_isr_init(void) {
     NVIC_EnableIRQ(ADC1_2_IRQn);
 }
 
+/* --------------------------------------------------------------------------
+ * Offset en línea desde el valle (sesión 21). Ver pwm_valley_trigger_enable.
+ * -------------------------------------------------------------------------- */
+#define ADC_VALLEY_BLOCK_LOG2   16U
+#define ADC_VALLEY_BLOCK        (1UL << ADC_VALLEY_BLOCK_LOG2)   /* 65536 × 4095 < 2^32 */
+
+volatile int32_t  g_offset_valley_a_q8 = 0;
+volatile int32_t  g_offset_valley_b_q8 = 0;
+volatile int32_t  g_offset_valley_c_q8 = 0;
+volatile uint32_t g_valley_count   = 0U;
+volatile uint32_t g_valley_skipped = 0U;
+volatile uint32_t g_valley_blocks  = 0U;
+
+static volatile uint8_t  s_valley_enabled = 0U;
+static uint16_t          s_valley_ccr_min = 0U;
+static uint16_t          s_ccr_peak_a, s_ccr_peak_b, s_ccr_peak_c;
+static uint32_t          val_acc_a, val_acc_b, val_acc_c;
+static uint32_t          val_n;
+
+void adc_valley_offset_enable(uint16_t ccr_min) {
+    s_valley_ccr_min = ccr_min;
+    val_acc_a = 0U; val_acc_b = 0U; val_acc_c = 0U;
+    val_n = 0U;
+    g_valley_blocks = 0U;
+    s_valley_enabled = 1U;
+}
+
 void ADC1_2_IRQHandler(void) {
     /* Sonda HIGH — borde de subida = entrada al handler. */
     GPIOB->BSRR = (1U << ISR_PROBE_PIN);
@@ -532,6 +565,62 @@ void ADC1_2_IRQHandler(void) {
     uint16_t ia = (uint16_t)(ADC1->JDR1 & 0xFFFFU);
     uint16_t ib = (uint16_t)(ADC2->JDR1 & 0xFFFFU);
     uint16_t ic = (uint16_t)(ADC2->JDR2 & 0xFFFFU);
+
+    /* JEOS se limpia AQUÍ, no al salir: con el disparo del valle activo, el
+     * JEOS del valle llega mientras el paso de control del pico (13 µs)
+     * sigue corriendo. Limpiarlo al final lo borraría y el valle se
+     * perdería; limpiándolo ya, el NVIC lo deja pendiente y reentra
+     * en cuanto este handler termina (tail-chaining). */
+    ADC2->ISR = ADC_ISR_JEOS;
+
+    /* Pico o valle. El disparo del pico ocurre en CNT = ARR−1 bajando y su
+     * JEOS llega ~1.5 µs después, con el contador aún bajando; el del valle
+     * se atiende como muy tarde al terminar el control (~15 µs < 20 µs),
+     * con el contador subiendo. DIR = 1 es "cuenta hacia abajo". */
+    if (((TIM1->CR1 & TIM_CR1_DIR) == 0U) && (s_valley_enabled != 0U)) {
+        g_valley_count++;
+        /* Válido solo si los tres high-side llevan encendidos lo bastante
+         * como para que la conversión (i_c es la última, ~2.6 µs tras el
+         * valle) caiga dentro de su ventana: CCRx activo ≥ s_valley_ccr_min.
+         * Los CCR activos son los del snapshot del pico (s_ccr_peak_*): lo
+         * que el control escribió después es preload para el pico que viene. */
+        if ((s_ccr_peak_a >= s_valley_ccr_min) &&
+            (s_ccr_peak_b >= s_valley_ccr_min) &&
+            (s_ccr_peak_c >= s_valley_ccr_min)) {
+            val_acc_a += ia;
+            val_acc_b += ib;
+            val_acc_c += ic;
+            if (++val_n >= ADC_VALLEY_BLOCK) {
+                /* Bloque de 2^16 muestras → Q8 = acc >> 8. EWMA entre
+                 * bloques con α = 1/4: τ ≈ 4 bloques ≈ 5 s a 300 rpm. */
+                const int32_t ba = (int32_t)(val_acc_a >> (ADC_VALLEY_BLOCK_LOG2 - 8U));
+                const int32_t bb = (int32_t)(val_acc_b >> (ADC_VALLEY_BLOCK_LOG2 - 8U));
+                const int32_t bc = (int32_t)(val_acc_c >> (ADC_VALLEY_BLOCK_LOG2 - 8U));
+                if (g_valley_blocks == 0U) {
+                    g_offset_valley_a_q8 = ba;
+                    g_offset_valley_b_q8 = bb;
+                    g_offset_valley_c_q8 = bc;
+                } else {
+                    g_offset_valley_a_q8 += (ba - g_offset_valley_a_q8) >> 2;
+                    g_offset_valley_b_q8 += (bb - g_offset_valley_b_q8) >> 2;
+                    g_offset_valley_c_q8 += (bc - g_offset_valley_c_q8) >> 2;
+                }
+                g_valley_blocks++;
+                val_acc_a = 0U; val_acc_b = 0U; val_acc_c = 0U;
+                val_n = 0U;
+            }
+        } else {
+            g_valley_skipped++;
+        }
+        GPIOB->BSRR = (1U << (ISR_PROBE_PIN + 16U));
+        return;
+    }
+
+    /* Duties activos en este periodo (preload == activo hasta que el
+     * control escriba los nuevos). Los usa la rama del valle. */
+    s_ccr_peak_a = TIM1->CCR1;
+    s_ccr_peak_b = TIM1->CCR2;
+    s_ccr_peak_c = TIM1->CCR3;
 
     g_ia_raw = ia;
     g_ib_raw = ib;
@@ -596,10 +685,6 @@ void ADC1_2_IRQHandler(void) {
     if (s_control_hook != 0) {
         s_control_hook();
     }
-
-    /* Limpiar el flag JEOS de ADC2 (write-1-to-clear). Sin esto, al return
-     * del handler el flag sigue activo → NVIC reentra inmediatamente. */
-    ADC2->ISR = ADC_ISR_JEOS;
 
     /* Sonda LOW — borde de bajada = salida del handler. */
     GPIOB->BSRR = (1U << (ISR_PROBE_PIN + 16U));

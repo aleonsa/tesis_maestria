@@ -291,8 +291,14 @@ void pwm_init(void) {
      * mode 1 + RCR=1 la UEV caía en el underflow (counter=0 = valle del PWM
      * = high-side ON = shunts en cero), por eso las stats de corriente no
      * escalaban con la amplitud. OC4REF + CCR4=ARR-1 fuerza el trigger al
-     * pico (counter≈ARR = low-side ON = shunts con corriente real). */
-    TIM1->CR2 = (0x7U << TIM_CR2_MMS_Pos);
+     * pico (counter≈ARR = low-side ON = shunts con corriente real).
+     *
+     * Sesión 21 — el ADC escucha TRGO2 (adc.c, JEXTSEL=8) y no TRGO. Con
+     * MMS2=0111 TRGO2 es el mismo OC4REF: mismo instante de disparo que
+     * antes. pwm_valley_trigger_enable() lo cambia a OC4REF ∪ OC6REF para
+     * añadir un disparo en el valle. TRGO (MMS=111) se deja igual. */
+    TIM1->CR2 = (0x7U << TIM_CR2_MMS_Pos)
+              | (0x7U << TIM_CR2_MMS2_Pos);
 
 
     /* ------------------ Paso 7: Cargar shadow registers ------------------ */
@@ -318,6 +324,27 @@ void pwm_set_duties(uint16_t duty_a, uint16_t duty_b, uint16_t duty_c) {
     TIM1->CCR1 = duty_a;
     TIM1->CCR2 = duty_b;
     TIM1->CCR3 = duty_c;
+}
+
+/* --------------------------------------------------------------------------
+ * pwm_valley_trigger_enable — segundo disparo del ADC en el valle (sesión 21).
+ *
+ * En el valle (CNT = 0) conducen los tres high-side y los shunts del low-side
+ * no ven corriente: el ADC lee el offset puro de cada canal, en caliente y
+ * conmutando. Es la medida directa del offset que la calibración de arranque
+ * (motor quieto, 50 %) no puede seguir cuando el OPAMP se calienta.
+ *
+ * Mecanismo: el canal interno CH6 (sin pin, CC6E = 0) en PWM mode 1 con
+ * CCR6 = 1. RM0440 §29.6.8 (OCxM = 0110): "in downcounting, inactive as long
+ * as CNT > CCR else active" → OC6REF sube en CNT = 1 bajando, un tick antes
+ * del valle, y baja en CNT = 1 subiendo. MMS2 = 1100 (§29.6.2): "OC4REF or
+ * OC6REF rising edges generate pulses on TRGO2" → pico y valle, 100 kHz.
+ * -------------------------------------------------------------------------- */
+void pwm_valley_trigger_enable(void) {
+    TIM1->CCR6  = 1U;
+    TIM1->CCMR3 = (0x6U << TIM_CCMR3_OC6M_Pos);   /* PWM mode 1, solo REF */
+    TIM1->CR2   = (TIM1->CR2 & ~TIM_CR2_MMS2_Msk)
+                | (0xCU << TIM_CR2_MMS2_Pos);
 }
 
 

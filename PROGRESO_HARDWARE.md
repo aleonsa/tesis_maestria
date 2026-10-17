@@ -5,6 +5,31 @@
 
 ---
 
+## Sesión 21 — 2026-10-16/17 — Offset de corriente en línea: el valle del PWM como cero de corriente
+
+**Hito**: el offset de los tres canales de corriente se mide en continuo, 50 000 veces por segundo, en el valle del PWM (high-side ON, shunts sin corriente). La media de ia+ib+ic —que es cero físicamente— pasa de derivar ±2 LSB en 10 min a quedarse en **+0.48 ± 0.38 LSB**. FIELD_NOTES N1.26.
+
+### Resultados de banco (en orden cronológico)
+
+1. **Paso 0 — offsets en Q8 + Clarke completo** (`lib/adc`, `07_m2pc`). El `uint16_t` truncado escondía hasta 1 LSB por fase; con fracción, el DC de β al arrancar bajó de −1.35 a −0.7 LSB. Clarke completo (i_α = (2ia−ib−ic)/3) elimina el offset común de α. Diagnóstico nuevo a 1 Hz: media de ia+ib+ic.
+2. **La deriva no es térmica-monótona.** Cuatro calibraciones de arranque en dos días se mueven ±1 LSB sin relación limpia con la temperatura del motor (c: +1.0 ayer al calentarse, −0.7 hoy). Dentro de una corrida, la suma de corrientes se pasea 0 → +1.5 → 0 → −2 LSB. El OPAMP es interno al die.
+3. **Balance de tensión descartado** como estimador: su DC (−0.7 LSB en β) no sigue al offset; lo domina el dead-time.
+4. **Disparo del valle** (`pwm_valley_trigger_enable`, `adc_valley_offset_enable`): TIM1 CH6 interno con `CCR6 = 1`, `MMS2 = 1100` (OC4REF ∪ OC6REF → TRGO2), ADC inyectado en `tim1_trgo2`. ISR a 100 kHz separada por `CR1.DIR`; JEOS se limpia al entrar (el del valle llega durante el control del pico). Validez: los tres CCR activos ≥ 500 ticks (1.6 % descartado a 300 rpm). Bloques de 2¹⁶ muestras + EWMA 1/4 (τ ≈ 5 s). `paso_max` 13.07 µs, `overruns = 0`.
+5. **Validación cruzada** (modo solo reporte, 3 min): Σ(valle − cal) sigue a −media(ia+ib+ic) en todo el tramo (+1.46/−1.09 … +2.44/−1.96 LSB) mientras el offset se mueve 1 LSB/min.
+6. **Offset en línea activo** (5 min a 300 rpm, `OFFSET_ONLINE = 1`): media(ia+ib+ic) = +0.48 ± 0.38 LSB sin tendencia; DC de e_αβ constante (−0.5/−0.8 LSB, ±0.03) → lo que queda es dead-time/modelo. λ = 3.43 mWb, h2 0.8 %, h3 2.5 %. Gráfica: `firmware/apps/07_m2pc/doc/bemf_s21_valle_on.png`.
+
+### Código
+
+`lib/adc.{c,h}` (offsets Q8, rama del valle en la ISR, `tim1_trgo2`), `lib/pwm.{c,h}` (`MMS2`, `pwm_valley_trigger_enable`), `apps/07_m2pc` (`CLARKE_FULL`, `OFFSET_ONLINE`, línea `[off]`), `python_scripts/analyze_m2pc_log.py` (`--win`: DC de e_αβ por ventanas). Logs en `datos_axel/m2pc_s21_*.log` (local, no versionados).
+
+### Pendiente al cerrar sesión 21
+
+- Las apps 02–06 ahora disparan el ADC por `tim1_trgo2` (misma señal, otro mux): no re-probadas en banco.
+- Sesgo fijo de +0.5 LSB en la suma (0.15 LSB por fase): por debajo de la resolución, no se persigue.
+- Sigue la lista de la sesión 20: identificación a 600–900 rpm, ADALINE offline, PI y rizo de par vs. baseline, escritura.
+
+---
+
 ## Sesión 20 — 2026-10-14 — FCS-M²PC en lazo cerrado: primer giro, lazo de velocidad y BEMF identificada
 
 **Hito**: el controlador de corriente de la tesis (Coronado 2025, Alg. 3) corre en el banco a 50 kHz con `overruns = 0`, el lazo de velocidad lo mantiene a 300 rpm, y del log a 1 kHz sale la BEMF real del motor: **λ = 3.46 mWb** (−1 % del planning), forma casi sinusoidal (armónicos < 2.5 %), e_d ≈ 0.

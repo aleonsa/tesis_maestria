@@ -52,6 +52,15 @@ void pwm_init(void);
 void pwm_set_duties(uint16_t duty_a, uint16_t duty_b, uint16_t duty_c);
 
 /*
+ * pwm_valley_trigger_enable — añade un disparo del ADC en el valle del PWM
+ * (CNT = 0, high-side ON) además del disparo en el pico. La ISR de JEOS pasa
+ * a 100 kHz y separa ambos por la dirección del contador (adc.c). Llamar
+ * después de pwm_init(); el valle se usa para seguir el offset de corriente
+ * en línea (adc_valley_offset_enable).
+ */
+void pwm_valley_trigger_enable(void);
+
+/*
  * pwm_enable — habilita las 6 salidas (MOE = 1, CEN = 1).
  *
  * STUB por ahora.

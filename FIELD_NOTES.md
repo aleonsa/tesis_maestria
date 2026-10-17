@@ -4450,3 +4450,117 @@ a 1 kHz. Con la regla escrita en el PLANNING (armónicos < 3 % ⇒ ADALINE demos
 dato ya tiene consecuencia en la narrativa de la tesis y hay que escribirla.
 
 ---
+
+## N1.26 — El offset de corriente no es un número: se mide en el valle, cada 20 µs
+
+### Panorama
+
+La sesión 20 dejó una deuda: u_β tenía −118 mV de media con i_β medida ≈ 0, "deriva de offset
+de ~1.3 LSB". La hipótesis de trabajo era *térmica y lenta*: calibrar al arrancar, recalibrar
+de vez en cuando. Dos días de banco la desmontaron en tres pasos, y la solución que quedó es
+estructural: el ADC muestrea también en el valle del PWM, donde los shunts ven corriente cero,
+y el offset es una señal más, no una constante.
+
+### 1. La mitad era truncamiento
+
+`g_offset_x` era `uint16_t` = `acc >> 12`: el promedio de 4096 muestras, truncado. Hasta 1 LSB
+(30 mA) de sesgo por fase, fijo, invisible desde dentro. Guardado en Q8 (`g_offset_x_q8`) y
+restado con fracción en `control_step`, el DC de β al arrancar bajó de −1.35 a −0.7 LSB. A la
+vez, Clarke completo (i_α = (2ia − ib − ic)/3 en vez de i_α = ia): un offset común a las tres
+fases ya no entra en α. Y un diagnóstico nuevo, gratis: la media de ia + ib + ic. La real es
+cero (estrella sin neutro); lo que se mida es la suma de los tres errores de offset.
+
+### 2. La otra mitad no era "térmica y lenta"
+
+Cuatro calibraciones de arranque en dos días (Q8, en LSB):
+
+| | a | b | c |
+|---|---|---|---|
+| ayer, tibio | 2546.82 | 2534.52 | 2531.05 |
+| ayer, caliente | 2545.54 | 2534.52 | 2532.07 |
+| hoy, frío real | 2547.46 | 2534.55 | 2530.62 |
+| hoy, +10 min a 300 rpm | 2547.57 | 2534.18 | 2529.92 |
+
+Ayer c subió 1.0 al calentarse; hoy bajó 0.7. No hay función de la temperatura del motor que
+dé eso. Y dentro de una corrida, la media de ia + ib + ic con la calibración fija se pasea:
+0 → +1.5 → 0 → −2 LSB en 10 minutos. El OPAMP está *dentro* del STM32: su offset depende del
+die (que se calienta solo por correr a 170 MHz), del instante tras el reset, y de cosas que no
+controlamos. Un número calibrado una vez no describe esto. Hay que medirlo mientras opera.
+
+(Entre medias se probó el "balance de tensión" como estimador —en régimen ū = R·ī, luego el DC
+de u delata el DC real de i— y se descartó: tras un reset en caliente el DC de β se movió al
+revés de lo que predecía el cambio de offset, y en la corrida fría de 10 min su DC se quedó
+quieto en −0.7 LSB mientras el offset se movía 2. Lo que domina ese DC es el dead-time y las
+asimetrías del puente, no el offset.)
+
+### 3. El valle es un cero de corriente, dos veces por periodo
+
+N1.23 lo dejó escrito al revés como problema: en el valle (CNT = 0) conducen los tres high-side
+y los shunts del low-side no ven corriente. Es el truco de pat92fr. Lo que faltaba era un
+segundo disparo del ADC sin tocar el del pico ni el `RCR = 0 → 1` de N1.25.
+
+- **TIM1 CH6**, canal interno sin pin, PWM mode 1 con `CCR6 = 1`: RM0440 §29.6.8, "in
+  downcounting, inactive as long as CNT > CCR else active" → OC6REF sube en CNT = 1 bajando,
+  un tick antes del valle.
+- **`MMS2 = 1100`** (§29.6.2): "OC4REF or OC6REF rising edges generate pulses on TRGO2". Pico
+  y valle, 100 kHz.
+- El ADC inyectado pasa de `tim1_trgo` a **`tim1_trgo2`** (`JEXTSEL = 8`, Tabla 67). En
+  `pwm_init` queda `MMS2 = 0111` (solo OC4REF): mismo instante que antes, solo cambia el mux.
+  Las apps 02–06 no se han vuelto a probar con esto; la señal es la misma.
+- La ISR de JEOS distingue por **`CR1.DIR`**: el JEOS del pico llega ~1.5 µs tras el pico con
+  el contador bajando; el del valle se atiende cuando termina el control (~15 µs < 20 µs), con
+  el contador subiendo.
+- **JEOS se limpia al entrar, no al salir.** El JEOS del valle llega a los ~11 µs, en mitad del
+  paso de control de 13 µs. Limpiarlo al final (como estaba) lo borraría; limpiándolo al
+  principio el NVIC lo deja pendiente y encadena el segundo handler al terminar el primero.
+- **Validez**: solo si los tres CCR *activos* (snapshot en el pico; lo que el control escribe
+  después es preload) son ≥ 500 ticks ≈ 3 µs, para que i_c —el último en convertirse, ~2.6 µs
+  tras el valle— caiga con el high-side aún encendido. A 300 rpm se descarta el 1.6 %.
+- **Filtro**: bloques de 2¹⁶ muestras válidas (≈1.3 s) → Q8 = acc >> 8; EWMA 1/4 entre
+  bloques (τ ≈ 5 s). Sin división y sin problema de precisión (un EWMA directo en Q8 con
+  α = 2⁻¹⁸ perdería los incrementos).
+
+Coste: `paso_max` 13.07 µs, igual que antes (el handler del valle no entra en esa medida y es
+~0.5 µs). `overruns = 0`.
+
+### 4. Dos medidas independientes que coinciden
+
+Primero en modo "solo reporte" (el control sigue con la calibración fija; el valle se imprime):
+
+| t (s) | Σ(valle − cal) | media(ia + ib + ic) |
+|---|---|---|
+| 15 | +1.46 | −1.09 |
+| 120 | +1.23 | −1.07 |
+| 150 | +2.32 | −2.12 |
+| 165 | +2.44 | −1.96 |
+| 186 | +2.12 | −1.77 |
+
+Lo que el valle dice que le sobra a la calibración es, con signo cambiado, lo que la suma de
+corrientes del pico dice que le falta. Son dos instantes distintos del PWM, dos caminos de
+cálculo distintos, y se siguen el uno al otro mientras el offset se mueve 1 LSB por minuto.
+
+Después con el offset del valle en el control (`OFFSET_ONLINE = 1`), 5 min a 300 rpm:
+media(ia + ib + ic) = **+0.48 ± 0.38 LSB**, acotada, sin tendencia (antes: deriva libre de
+±2 LSB). El DC de e_αβ por ventanas de 60 s: −0.5 / −0.8 LSB **constante ±0.03** (antes
+variaba ±0.3): lo que queda ahí ya no es offset, es el sesgo fijo del dead-time y el modelo.
+λ = 3.43 mWb, armónicos h2 0.8 %, h3 2.5 %, h5 1.2 %.
+
+Queda un sesgo de +0.5 LSB en la suma: ~0.15 LSB (4.5 mA) por fase de diferencia entre el
+"cero" del valle y el del pico. Está un orden de magnitud por debajo de la resolución
+(30 mA/LSB) y no se persigue.
+
+### Por qué importa
+
+**1. Lo que deriva no se calibra, se mide.** La pregunta correcta no era "cada cuánto
+recalibro" sino "dónde hay un cero de corriente durante la operación". El PWM lo ofrece dos
+veces por periodo; cuesta un canal interno del timer y medio microsegundo.
+
+**2. Un invariante físico vale más que un modelo.** ia + ib + ic = 0 no depende de R, ni de L,
+ni del dead-time, ni de λ. Fue el diagnóstico que descartó el balance de tensión y el que
+validó el valle. Dejarlo impreso a 1 Hz cuesta tres sumas.
+
+**3. Limpiar el flag al entrar.** La regla general de las ISR con fuentes que pueden
+reactivarse durante el handler. Con una sola fuente a 50 kHz nunca importó; con dos a 100 kHz
+habría perdido todos los valles en silencio.
+
+---

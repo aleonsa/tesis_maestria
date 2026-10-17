@@ -121,6 +121,28 @@ extern int32_t g_offset_b_q8;
 extern int32_t g_offset_c_q8;
 
 /*
+ * Offset en línea medido en el valle del PWM (sesión 21). Requiere
+ * pwm_valley_trigger_enable() + adc_valley_offset_enable(ccr_min).
+ *
+ * En el valle conducen los high-side y los shunts ven corriente cero: la
+ * lectura es el offset del canal, a la temperatura real y conmutando. La ISR
+ * promedia bloques de 65536 muestras válidas (los tres CCR activos ≥ ccr_min,
+ * para que la conversión caiga con el high-side ON; 500 ticks ≈ 3 µs) y filtra
+ * entre bloques (EWMA 1/4). g_valley_blocks == 0 → aún sin estimación.
+ *
+ * g_valley_count / g_valley_skipped: disparos del valle atendidos / descartados
+ * por duty bajo. Con todo bien, count = 50000/s y skipped ≈ 0 a 300 rpm.
+ */
+extern volatile int32_t  g_offset_valley_a_q8;
+extern volatile int32_t  g_offset_valley_b_q8;
+extern volatile int32_t  g_offset_valley_c_q8;
+extern volatile uint32_t g_valley_count;
+extern volatile uint32_t g_valley_skipped;
+extern volatile uint32_t g_valley_blocks;
+
+void adc_valley_offset_enable(uint16_t ccr_min);
+
+/*
  * adc_calibrate_offsets — promedia las N muestras siguientes de la ISR y
  * guarda el resultado en g_offset_a/b/c.
  *
