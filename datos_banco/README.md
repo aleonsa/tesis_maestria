@@ -23,6 +23,7 @@ Los `.log` no se versionan (pesan hasta 25 MB); solo este README. Se nombran
 | `m2pc_s23_exp2_100rpm_50mHz.log` | 23 | **Exp. 2 / dataset**, ω* = ±100 rpm·sin(2π·0.05·t), sector por tensión deadbeat |
 | `m2pc_s23_exp2_300rpm_100mHz.log` | 23 | **Exp. 2 / dataset**, ±300 rpm, 0.1 Hz |
 | `m2pc_s23_exp2_600rpm_200mHz.log` | 23 | **Exp. 2 / dataset**, ±600 rpm, 0.2 Hz |
+| `bemf_oc_s24_run1.log` | 24 | **Exp. 2b**, app `08_bemf_oc`: BEMF en circuito abierto, llanta a mano, ±730 rpm, 2.5 kHz (`B seq th w va vb vc`) |
 
 Los archivos pueden empezar con la cola del firmware anterior (el `cat` arranca antes del
 flash): **usar solo lo que sigue al último `[boot]`**.

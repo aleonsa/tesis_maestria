@@ -5,6 +5,56 @@
 
 ---
 
+## Sesión 24 — 2026-10-18 — Exp. 2b: la BEMF real del 2804, medida en circuito abierto
+
+**Hito**: la forma de la BEMF del motor medida **sin modelo** (sin R, L, dead‑time ni tensión comandada), con la red de sensado de BEMF de la propia placa y la llanta girada a mano: **THD 0.42 / 0.67 / 0.64 % por fase**, λ = 3.487 mWb, y el error de alineación del encoder medido directamente: **+2.85°** eléctricos. Hasta donde sabemos (PLANNING §3.5), es el primer reporte cuantitativo de la forma de BEMF de un 2804. Gráfica: `firmware/apps/08_bemf_oc/doc/bemf_oc_s24_forma.png`; coeficientes: `python_scripts/bemf_2804_oc.json`.
+
+### Montaje
+
+- **Red de la placa** (MB1419 hoja 4, "BEMF DETECTION – SIX STEP"; UM2516 Tabla 4): BEMF1/2/3 en **PA4 / PC4 / PB11** (ADC2_IN17 / IN5 / IN14), R61–63 = 10 kΩ en serie con la fase, R57–59 = 2.2 kΩ, diodos BAT30 D10–D15 a `GPIO_BEMF` (PB5). Topología inferida de las medidas: `fase ─10 k─ nodo ─2.2 k─ diodo ─ GPIO_BEMF`.
+- **`[bias]` con el motor quieto, sin resistencia externa** (app `08_bemf_oc`): Hi‑Z → nodo flotando (1.75 V y deriva hasta saturar); ALTO → 2.43 V con los terminales pegados a 0 V; BAJO → 35 mV (divisor correcto pero neutro en ~0 V: recortaría los semiciclos negativos). La red está pensada para 6‑step, donde el inversor fija el modo común.
+- **Polarización externa**: una resistencia de **10 kΩ (medida 9.46 kΩ) entre +12 V y OUT1 (J7)**. Los tres terminales quedan al mismo DC a través de los devanados. Predicción 3.5 V, **medido con DMM OUT1–GND: 3.66–3.84 V** ✓. `[bias] BAJO` con la resistencia: **820 mV en los tres canales** (±2 LSB), margen hasta ~1700 rpm. Corriente inyectada < 1 mA (2 mV en los devanados).
+- Fuente **encendida** a 12 V (diodos de cuerpo de los STL180N6F7 en inversa); puente apagado por firmware (seis compuertas como GPIO en bajo, TIM1 sin inicializar); consumo ≤ baseline; la llanta gira libre.
+
+### Firmware `08_bemf_oc`
+
+TIM2 a 50 kHz con PLL + bombeo del encoder (idéntico a 04/06); cada 5 ticks (10 kHz) tres conversiones regulares del ADC2 por polling (92.5 ciclos, ~7 µs; `isr_max` 9.8 µs); cada 4 (2.5 kHz) encola (seq, θ_e, ω̂, va, vb, vc) → UART a 921600: `B seq th w va vb vc`. Sin promediar (h10 a 600 rpm = 700 Hz ≪ 1250 Hz de Nyquist). 300 023 muestras en 120 s, **0 pérdidas**.
+
+### Captura y análisis
+
+Llanta a mano, varios impulsos en cada sentido: **−728 … +645 rpm**, nodo 562–1540 raw (sin recorte), 11.6 s útiles con |ω| ≥ 80 rpm. `python_scripts/bemf_oc_analyze.py`: componente diferencial e_x − ē = (v_x − mean v)/ratio (elimina la polarización y el modo común), ajuste por mínimos cuadrados **e_x = ω_e·Σ_k[a_k cos kθ + b_k sin kθ] + c_x** (H = 12) usando ω̂ muestra a muestra (método "freewheeling", J. Appl. Phys. 2006), IC 95 % por bootstrap sobre bloques de 0.5 s. Validado antes con un log sintético (recupera h5 = 2.00 %, h7 = 1.00 %, λ a 0.01 %).
+
+| | fase a | fase b | fase c |
+|---|---|---|---|
+| λ (fundamental, ratio 0.1803) | 3.488 mWb | 3.488 | 3.485 |
+| fase del fundamental vs −sin(θ_e − k·120°) | +2.84° | +2.89° | +2.86° |
+| h3 | 0.29 % [0.24–0.35] | 0.61 [0.55–0.68] | 0.37 [0.30–0.43] |
+| h5 | 0.28 % [0.25–0.34] | 0.27 [0.20–0.35] | 0.52 [0.46–0.59] |
+| h7 | 0.03 % | 0.05 | 0.08 |
+| h2, h4, h6, h8–h12 | < 0.1 % | | |
+| **THD** | **0.42 %** | **0.67 %** | **0.64 %** |
+| DC c_x | +8 / −2 / −7 mV | | |
+
+En αβ: λ = 3.487 mWb, h3 0.29|0.56 %, h5 0.28|0.44 %, resto < 0.1 %.
+
+### Lectura
+
+1. **La BEMF del 2804 es sinusoidal al 99.5 %.** Coherente con k_w5 = k_w7 = 0.067 del 12/14 (§3.5) y con la conexión delta (h3 pequeño). El punto de decisión 2 del PLANNING queda cerrado con número: el ADALINE en este motor es **demostrativo**; lo que hay que aprender es el dead‑time, el offset y la fase, no la forma del imán.
+2. **La reconstrucción desde la tensión comandada (Exp. 3a) sobreestimaba h2–h6 entre 2 y 5 veces** (h3 1.25 vs 0.29, h6 0.70 vs 0.01): dead‑time y R disfrazados de armónicos, exactamente como advierte la literatura (Bedetti 2016, Pfeifer 2025). Dato para la tesis: la BEMF "vista por el controlador" ≠ la BEMF del motor, y el ADALINE en línea aprende la primera.
+3. **Alineación del encoder: +2.85 ± 0.05° eléctricos**, igual en las tres fases. Es el error que i_d delataba (≈2°, sesión 23) y el +1.5° de la Exp. 3a. Corrección propuesta: `PHASE_A_OFFSET_RAW` 2558 → **2563** (2.85°/7 = 0.41° mec = 4.6 cuentas). Pendiente de verificar en 06/07 (puede incluir parte de latencia del PLL).
+4. λ = 3.487 mWb con el ratio nominal 0.1803; el ratio real (tolerancias de 10 k/2.2 k + diodo) puede moverlo un ±5 %. λ ≈ 3.46 de la vía eléctrica (cuatro corridas) sigue siendo el valor de trabajo; concuerdan al 1 %.
+5. Residuo RMS 84 mV (≈5 % del fundamental a 700 rpm) sin estructura en θ_e: candidato principal la **no linealidad del AS5600** (INL ±0.5–1° mec = ±3.5–7° eléctricos, periódica por vuelta mecánica, no representable en la base de θ_e). No sesga los armónicos (promedia sobre 7 ciclos eléctricos por vuelta) pero es la cota de sistemático. Para caracterizarla haría falta loguear también el raw mecánico.
+
+### Código y datos
+
+`apps/08_bemf_oc` (nueva), `python_scripts/bemf_oc_analyze.py`, `python_scripts/bemf_2804_oc.json`. Log: `datos_banco/bemf_oc_s24_run1.log` (120 s, 2.5 kHz). **Al terminar: quitar la resistencia de 10 kΩ antes de volver a 07** (con el puente activo inyectaría 1 mA a OUT1: inocuo, pero no es el setup de control).
+
+### Para las sesiones siguientes
+
+- Quitar la resistencia; reflashear 07; probar `PHASE_A_OFFSET_RAW = 2563` (06: lag; 07: i_d → 0 a 600 rpm).
+- Exp. 3b: ADALINE en línea con la forma de referencia ya medida; comparativa 3c.
+- Opcional: repetir 08 logueando el raw mecánico para caracterizar la INL del AS5600.
+
 ## Sesión 23 — 2026-10-18 — Exp. 1, 2 y 3a del subplan: seguimiento en la ISR, trayectoria con inversión (y el sector que no sabía frenar), BEMF reconstruida offline
 
 **Hito**: primera cifra válida de desempeño del lazo de corriente (PLANNING §11, Exp. 1), y el motor siguiendo una trayectoria senoidal de ±600 rpm con inversión de giro (Exp. 2) tras corregir la selección de sector del M²PC, que solo contemplaba par positivo. Dataset del ADALINE grabado. Telemetría dq sincronizada en la ISR (Park muestra a muestra, RMS de error por ventana de 10 ms) y captura en RAM a 50 kHz de la respuesta al escalón. A 300 y 600 rpm: **respuesta en < 200 µs, RMS(ε_q) ≈ 37–40 mA sobre un rizo de conmutación de 225–334 mA pk‑pk, sesgo estacionario de +10…+14 mA en i_q y un error de fase del modelo de BEMF de ≈ 2°** (i_d crece con ω). Gráfica: `firmware/apps/07_m2pc/doc/exp1_escalon_iq.png`.

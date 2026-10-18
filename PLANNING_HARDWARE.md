@@ -587,7 +587,11 @@ no hay problema.
 **Entregable**: figura ω*(t) vs ω̂(t) con la inversión; RMS del error de velocidad; log
 `datos_banco/m2pc_s2x_seno_±600.log` etiquetado como dataset.
 
-### Experimento 2b — BEMF en circuito abierto (medida directa, sin modelo) — ~1 sesión
+### Experimento 2b — BEMF en circuito abierto (medida directa, sin modelo) — HECHO (sesión 24)
+
+**Resultado**: THD 0.42/0.67/0.64 % por fase, h3 ≤ 0.6 %, h5 ≤ 0.5 %, resto < 0.1 %; λ = 3.49 mWb;
+alineación del encoder +2.85°. Hizo falta una resistencia externa de 10 kΩ de +12 V a OUT1 para
+fijar el modo común (la red de la placa es para 6‑step). Detalle en PROGRESO sesión 24.
 
 **Por qué** (sesión 23, Exp. 3a): reconstruir e = u − R·i − L·di/dt desde la tensión comandada
 deja los armónicos del 2804 en "≤ 2 %" pero no los resuelve: el dead‑time y R se confunden
@@ -657,7 +661,7 @@ Exp. 2 (seno ±600 rpm) ──► figura trayectoria + dataset          [HECHO s
 Exp. 3a (ADALINE offline) ──► μ, nº armónicos, W de referencia   [HECHO s23]
         │
         ▼
-Exp. 2b (BEMF circuito abierto) ──► forma real con incertidumbre
+Exp. 2b (BEMF circuito abierto) ──► forma real con incertidumbre   [HECHO s24: THD 0.4–0.7 %]
         │
         ▼
 Exp. 3b (ADALINE en línea) ──► convergencia en banco, presupuesto ISR
