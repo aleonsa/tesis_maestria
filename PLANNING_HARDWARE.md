@@ -500,3 +500,145 @@ Lectura opcional si sobra tiempo: post de brushless.zone sobre CORDIC (15 min) y
 ---
 
 **Próximo paso inmediato (esta semana)**: cuando confirmes que el planning te sirve, empezamos por leer UM2516 juntos y armamos el repo `firmware/` con la estructura inicial.
+
+---
+
+## 11. Subplan Fase 5 → 6 (escrito 2026-10-18, sesión 22)
+
+### Contexto
+
+Al cerrar la sesión 22 el estado real contra este plan es: Fases 0–1 cerradas; Fase 2 parcial
+(R medido, λ = 3.47 mWb y forma de BEMF identificadas en tres corridas consistentes; L del
+planning; J y b sin medir); Fases 3 y 4 **saltadas a propósito**; Fase 5 corriendo en banco
+(`07_m2pc`, 66 candidatos a 50 kHz, `overruns = 0`) pero **sin métrica válida**: todo lo medido
+en lazo cerrado antes de la sesión 22 se tomó con la Park rota (CORDIC, N1.27). Fase 6 sin
+empezar. Calendario: ~5 meses efectivos para llegar aquí contra 7–8 del plan.
+
+Lo que falta para la contribución central de la tesis es corto y está acotado: una métrica
+del M²PC con BEMF sinusoidal, un dataset de BEMF vs θ, y el ADALINE encima. Este subplan
+lo ordena en tres experimentos encadenados, cada uno con entregable.
+
+### Decisiones tomadas (§6, puntos 3 y 5, y una nueva)
+
+| Decisión | Resolución | Justificación |
+|---|---|---|
+| **Fase 3, FOC baseline** | **No se implementa.** | La comparación del banco es M²PC-sinusoidal vs M²PC+ADALINE: es la que sustenta la contribución (el ADALINE mejora *al predictor*, no al controlador). La comparación vs TRAP/FOC queda en simulación (Cap. de simulación, 69 %/61 %). Un FOC bare-metal son ~50 h que no aportan un número nuevo a la tesis. |
+| **Fase 4, FCS-MPC 1 vector** | No se implementa. | Mismo argumento; el M²PC ya corre. |
+| **Fase 2, L, J, b** | No se identifican salvo necesidad. | L pesa ~6 mV de 755 en la reconstrucción de e a 300 rpm (L·ω_e·I); J y b solo afectan al PI de velocidad, que ya cumple. Si el ADALINE a 600–900 rpm muestra sesgo atribuible a L, se mide entonces (escalón de tensión, 3 h). |
+| **Punto de decisión 2** (¿ADALINE necesario o demostrativo?) | **Demostrativo**: armónicos h2…h7 ≤ 1.1 % con el CORDIC sano (sesión 22). | Queda escrito aquí y debe ir al capítulo experimental: el 12N14P es casi sinusoidal; la aportación del ADALINE en este banco es demostrar convergencia, portabilidad y captura de lo que *sí* hay (dead-time en los cruces por cero, asimetrías), no una reducción grande de rizo. |
+
+### Experimento 1 — Seguimiento de corriente puro (M²PC con BEMF sinusoidal) — ~1 sesión
+
+**Objetivo**: la cifra de desempeño del M²PC que sirve de baseline al ADALINE: error de
+seguimiento de i_q e i_d y rizo de corriente, **medidos muestra a muestra en la ISR**.
+
+**Por qué no sirve el logger actual**: promedia i_αβ en 1 ms (esconde el rizo de 50 kHz) y
+manda θ_e al cierre de la ventana (desfasa i_dq). La métrica calculada de ese log está
+sesgada hacia abajo y desplazada. README_scope.md ya lo advierte.
+
+**Firmware (`07_m2pc`), telemetría sincronizada**:
+- En `control_step`, tras la Park: ε_q = i_q − i_q*, ε_d = i_d − i_d* (= i_d). Acumular en la
+  ventana de 1 ms: Σε_q, Σε_q², Σε_d², Σi_q, Σi_d, n (int64 en Q8²: 50 muestras × (40 LSB·256)² cabe de sobra).
+- Publicar a 1 kHz en la línea `L` (o una línea `E` nueva, con **secuencia** para detectar
+  pérdidas): media y RMS de ε_q y ε_d, media de i_q e i_d, i_q* vigente. Todo en Q8 LSB.
+- Costo esperado: < 0.3 µs (seis MAC en int64). Comprobar `paso_max` antes/después.
+- `scope_m2pc.py`: leer la línea nueva y mostrar ε_q/ε_d *reales* en lugar de los aproximados.
+
+**Protocolo de banco** (sin carga, i_q* constante = runaway hasta 1390 rpm, sesión 20):
+1. `SPEED_LOOP = 1` como contención, pero con **escalones de i_q\*** inyectados *sumados* a la
+   salida del PI (feedforward): ±100 mA durante 200 ms cada 2 s. El PI corrige la velocidad
+   lentamente (ancho de banda ~3 Hz); dentro de los 200 ms el lazo de corriente responde solo.
+   Métrica: tiempo de subida de i_q (esperado: 2–3 periodos de 20 µs) y RMS de ε_q en régimen.
+2. Régimen a 300 rpm, 60 s: RMS(ε_q), RMS(ε_d), rizo pico-pico de i_q. Repetir a 600 rpm.
+3. Opcional, si hay carga mecánica disponible (freno por fricción en la llanta): i_q* = 200 mA
+   constante con `SPEED_LOOP = 0`, 10 s, límite de velocidad por software (trip si ω > 800 rpm).
+
+**Entregable**: tabla "M²PC sinusoidal: RMS(ε_q), RMS(ε_d), rizo, t_subida a 300 y 600 rpm"
++ figura de un escalón (i_q*, i_q muestra a muestra si cabe en el UART; si no, media y
+envolvente por ms). Reemplaza al "160 de 200 mA" de la sesión 20, que no vale.
+
+### Experimento 2 — Trayectoria senoidal de velocidad, ambos sentidos — ~1 sesión
+
+**Objetivo doble**: (a) demostrar seguimiento de trayectoria y paso por cero velocidad con
+inversión de giro; (b) **generar el dataset del ADALINE**: BEMF vs θ_e barriendo velocidad y
+signo, que es mucho más informativo que 300 rpm constantes (separa lo que escala con ω —la
+BEMF— de lo que no —dead-time, offsets).
+
+**Firmware (`07_m2pc`)**: referencia ω* = A·sin(2π·f·t) generada en el lazo de 1 kHz; A y f
+por `#define`. Primera corrida A = 300 rpm, f = 0.1 Hz; luego A = 600, f = 0.2 Hz. Checks
+previos (no deberían fallar, pero se verifican): ω̂ con signo en el PLL, sector por θ_e (no
+depende del signo), saturación simétrica del PI, `I_TRIP` intacto. El runaway no aplica: la
+referencia es acotada.
+
+**Dataset**: el log existente (`L`: i_αβ, u_αβ, θ_e, ω̂ a 1 kHz) ya sirve. Limitación:
+el armónico 10 a 600 rpm está a 700 Hz, al borde del logger de 1 kHz; **no subir de 600 rpm
+para el dataset** salvo que se añada un log decimado desde la ISR. A 300 rpm (h10 = 350 Hz)
+no hay problema.
+
+**Entregable**: figura ω*(t) vs ω̂(t) con la inversión; RMS del error de velocidad; log
+`datos_banco/m2pc_s2x_seno_±600.log` etiquetado como dataset.
+
+### Experimento 3 — ADALINE: offline primero, en línea después — 2–3 sesiones
+
+**3a. Offline (Python, sin tocar firmware)** — `python_scripts/adaline_offline.py`:
+- Entrada: logs de 300 rpm (sesión 22) y del Experimento 2.
+- e_αβ reconstruida como ya hace `analyze_m2pc_log.py` (e = u − R·i − L·Δi/Δt, DC quitado).
+- Forma objetivo s = e/(λ·ω̂) (normalizar por velocidad, como en `fcs_m2pc_v2`: así el mismo W
+  vale a cualquier rpm y signo).
+- Base x(θ) = [cos kθ, sin kθ], k = 1…10 (20 coef. por eje; el término constante se omite:
+  el DC de e no es BEMF). LMS de `lms_update.m` traducido literal.
+- Validar: W converge a los coeficientes que ya da la FFT de `analyze_m2pc_log.py`; curva
+  W(t); μ y tiempo de convergencia; comparar W de 300 vs 600 rpm vs ±.
+- Decidir aquí **μ**, **número de armónicos** (probablemente 5–7 bastan; 10 es el techo), y
+  la **cadencia** del update.
+
+**3b. En línea (C)**:
+- **Observador**: el mismo algebraico, pero **no a 50 kHz**: L/Ts = 43 Ω → un LSB de ruido de
+  corriente son 1.3 V de "BEMF" (lo advierte `bemf_observer.m`). Se calcula sobre los
+  promedios de la ventana de 1 ms que el logger ya acumula (L/Ts_eff = 0.86 Ω → 26 mV/LSB), con
+  θ_e *promediado* en la ventana (no al cierre). LMS a 1 kHz en el lazo lento, fuera de la ISR.
+- **Evaluación** e_hat = W·x(θ_e) sí va en la ISR, a 50 kHz, sustituyendo la línea
+  `λ·ω·[−sin, cos]` de `control_step`. x(θ) con el CORDIC (ahora fiable) por recurrencia de
+  ángulo múltiple o k llamadas (k ≤ 7 × ~30 ciclos: cabe en los ~7 µs que sobran). Medir.
+- Inicialización: W = sinusoidal (λ, k = 1) para una "demostración honesta" de que converge a
+  lo mismo partiendo de la hipótesis del modelo; y una corrida desde W = 0 para la curva de
+  convergencia.
+- Opción `ADALINE = 0/1` por `#define` para la comparativa en condiciones idénticas.
+
+**3c. Comparativa final** (la contribución): Experimento 1 repetido con `ADALINE = 1`. Tabla
+RMS(ε_q), RMS(ε_d), rizo, a 300 y 600 rpm, sinusoidal vs ADALINE, + curva W(t), + forma
+aprendida vs FFT. Con armónicos ≤ 1 % la mejora será pequeña: **se reporta tal cual**, con la
+discusión de que lo que captura es el residuo no sinusoidal (dead-time en los cruces).
+
+### Secuencia y criterio de avance
+
+```
+Exp. 1 (telemetría ISR + escalones) ──► cifra baseline M²PC
+        │
+        ▼
+Exp. 2 (seno ±600 rpm) ──► figura trayectoria + dataset
+        │
+        ▼
+Exp. 3a (ADALINE offline) ──► μ, nº armónicos, W de referencia
+        │
+        ▼
+Exp. 3b (ADALINE en línea) ──► convergencia en banco, presupuesto ISR
+        │
+        ▼
+Exp. 3c (comparativa) ──► tabla final de la tesis
+```
+
+Regla heredada de la sesión 22: **tras cualquier cambio en `lib/` o en flags, correr 06** y
+mirar el autotest del CORDIC y que i_dq sea DC.
+
+### Riesgos de este tramo
+
+| Riesgo | Mitigación |
+|---|---|
+| El UART a 921600 no da para telemetría por muestra | No se intenta: estadísticos por ms (media, RMS) y, para la figura del escalón, un buffer de 2000 muestras en RAM volcado después. |
+| La inversión de giro excita algo no previsto (signo en sector/BEMF) | Primera corrida a A = 100 rpm, f = 0.05 Hz, mirando el scope; `I_TRIP` activo. |
+| El observador en línea es ruidoso | Promedios de 1 ms (decidido arriba); si no basta, LMS a 100 Hz sobre 10 ms. |
+| El ADALINE no mejora nada medible | Es un resultado válido con el punto de decisión 2 ya escrito. Se complementa con la prueba de robustez del plan original (Fase 6, semana 28): inducir un armónico y ver que lo captura. |
+| x(θ) con 10 armónicos no cabe en la ISR | Recurrencia cos(kθ) = 2cosθ·cos((k−1)θ) − cos((k−2)θ): 2 MAC por armónico, sin CORDIC extra. |
+
+---

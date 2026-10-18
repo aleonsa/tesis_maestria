@@ -46,9 +46,11 @@ Las cifras de *lazo cerrado* de las sesiones 20–21 (seguimiento i_q 160/200, i
 
 ### Para las sesiones siguientes
 
-1. Repetir el seguimiento de corriente puro (`SPEED_LOOP = 0`, i_q* = 200 mA, con carga o con límite de velocidad) → cifra que reemplaza al "160 de 200".
-2. Telemetría sincronizada en la ISR (errores muestra a muestra, promediados, con secuencia) para el scope y para la métrica de seguimiento.
-3. Identificación a 600–900 rpm; ADALINE offline y luego en línea; rizo de par vs baseline.
+Subplan detallado en **PLANNING_HARDWARE §11** (escrito al cerrar esta sesión): Exp. 1
+seguimiento de corriente con telemetría en la ISR → Exp. 2 trayectoria senoidal ±600 rpm
+(= dataset) → Exp. 3 ADALINE offline, en línea, comparativa. Decisiones registradas: sin FOC
+baseline (Fase 3) ni FCS-MPC de 1 vector (Fase 4); L, J, b no se identifican salvo necesidad;
+punto de decisión 2 = ADALINE "demostrativo".
 
 ---
 
