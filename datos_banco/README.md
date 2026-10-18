@@ -31,7 +31,9 @@ Los logs de las sesiones 20–21 y el primero de la 22 se tomaron con el CORDIC 
 `sin ≡ cos` (N1.27): sirven para identificar λ y la forma de la BEMF (offline, en αβ) pero
 **no** como datos de desempeño del lazo cerrado.
 
-Análisis: `python3 python_scripts/analyze_m2pc_log.py datos_banco/<log> --win 30`.
+Análisis: `python3 python_scripts/analyze_m2pc_log.py datos_banco/<log> --win 30` (un log a
+velocidad constante) o `python3 python_scripts/bemf_reconstruct.py datos_banco/m2pc_s23_exp2_*.log
+datos_banco/m2pc_s22_cordic_fix.log` (reconstrucción conjunta S + D + dead‑time, LMS).
 
 Líneas desde la sesión 23 (`07_m2pc`): `L` a 1 kHz (medias de i_αβ, u_αβ, θ_e, ω̂, i_q*),
 `E` a 100 Hz (`t id iq ref eq_rms ed_rms iq_min iq_max`, Q8 LSB, Park en la ISR),

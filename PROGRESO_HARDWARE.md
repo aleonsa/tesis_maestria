@@ -5,7 +5,7 @@
 
 ---
 
-## Sesión 23 — 2026-10-18 — Exp. 1 y Exp. 2 del subplan: seguimiento de corriente en la ISR, trayectoria senoidal con inversión (y el sector del M²PC que no sabía frenar)
+## Sesión 23 — 2026-10-18 — Exp. 1, 2 y 3a del subplan: seguimiento en la ISR, trayectoria con inversión (y el sector que no sabía frenar), BEMF reconstruida offline
 
 **Hito**: primera cifra válida de desempeño del lazo de corriente (PLANNING §11, Exp. 1), y el motor siguiendo una trayectoria senoidal de ±600 rpm con inversión de giro (Exp. 2) tras corregir la selección de sector del M²PC, que solo contemplaba par positivo. Dataset del ADALINE grabado. Telemetría dq sincronizada en la ISR (Park muestra a muestra, RMS de error por ventana de 10 ms) y captura en RAM a 50 kHz de la respuesta al escalón. A 300 y 600 rpm: **respuesta en < 200 µs, RMS(ε_q) ≈ 37–40 mA sobre un rizo de conmutación de 225–334 mA pk‑pk, sesgo estacionario de +10…+14 mA en i_q y un error de fase del modelo de BEMF de ≈ 2°** (i_d crece con ω). Gráfica: `firmware/apps/07_m2pc/doc/exp1_escalon_iq.png`.
 
@@ -61,11 +61,40 @@ El RMS de velocidad (~10 rpm) es el rizo a f_e que el PI de 3 Hz no persigue, no
 
 `lib/m2pc.{c,h}` (sector por tensión deadbeat, `sector_of`, `s_invg_q8`), `apps/07_m2pc` (`TRAJ_*`, FPU en `SystemInit`, `STEP_ENABLE = 0`). La placa queda con ±300 rpm / 0.1 Hz por defecto.
 
+### Exp. 3a — reconstrucción offline de la BEMF (misma sesión, sin banco)
+
+`python_scripts/bemf_reconstruct.py`. Va más allá del análisis por bins de `analyze_m2pc_log.py`:
+θ al **centro** de la ventana de 1 ms (al cierre va 12.5° adelantado a 600 rpm), compensación **sinc** del promediado por armónico (h7 a 600 rpm: ×0.66), y un modelo que **separa lo que escala con ω de lo que no**: e(θ, ω) = ω·S(θ) + D(θ) + V_dt·g(i) + c, con S y D series de Fourier (H = 10), g(i) la firma del dead‑time (signo suavizado de las corrientes de fase proyectado a αβ) y c el residuo de offset. Mínimos cuadrados apilando α y β sobre los tres logs de velocidad variable (32 814 ventanas; a velocidad constante S y D son colineales y el log de 300 rpm solo sirve para ajustar S con D fija). Después el **LMS secuencial** (`lms_update.m` literal) sobre la forma normalizada: converge a la solución de mínimos cuadrados (máx |W − S/λ| = 0.02) en **~2 s** con μ = 2·10⁻³.
+
+Resultado (figuras `firmware/apps/07_m2pc/doc/bemf_rec_s23_{forma,lms}.png`, coeficientes en `python_scripts/bemf_2804_fourier.json`):
+
+| | conjunto | 300 rpm (s22) | ±300 traj | ±600 traj |
+|---|---|---|---|---|
+| λ | **3.457 mWb** | 3.64 | 3.53 | 3.44 |
+| fase del fundamental | +1.5° α / +1.1° β | +2.7° | +1.4° | +1.7° |
+| h2 / h3 / h5 / h7 (α) | 0.4 / 1.3 / 0.5 / 0.2 % | 1.5 / 0.7 / 2.5 / 1.8 | 4.1 / 0.1 / 0.4 / 0.6 | 1.0 / 1.8 / 0.5 / 0.0 |
+| THD | 1.7 % α / 2.1 % β | | | |
+| residuo RMS | 126 mV | 42 | 116 | 148 |
+
+Lo que se sostiene: λ = 3.46 ± 0.1 mWb (cuarta estimación consistente), fase +1.5 ± 0.5° (el error de alineación que i_d ya delataba), **THD ≤ 2 %**, D(θ) con un fundamental de ~85 mV que no escala con ω (dead‑time: 500 ns × 50 kHz × 12 V = 300 mV de pico por fase, su proyección media), c = −47/−99 mV.
+
+Lo que **no** se sostiene: los armónicos individuales cambian ~1–2 % de un dataset a otro, del mismo orden que ellos mismos. Diagnóstico: el residuo es **ruido blanco de ±120 mV**, sin correlación con ω, i ni dω/dt; viene de L·di/dt calculado con medias de 1 ms mientras la corriente real se mueve ±60 mA entre ventanas (el error de seguimiento del lazo). No sesga, pero el error sistemático de modelar D y el dead‑time es del tamaño de los armónicos. Se intentó identificar también R y L (`--fit-rl`): R 4.6 Ω, L 6.7 mH — absurdo, la media de 1 ms no conserva di/dt; descartado y documentado en el script.
+
+**Conclusión**: por el camino "BEMF inferida de la tensión comandada", el 2804 tiene armónicos ≤ 2 % y **no se puede resolver más fino**. Para la forma *real* hace falta medirla sin modelo. **La placa lo permite**: red de sensado de BEMF para 6‑step (esquemático MB1419 hoja 4: fase ─10 kΩ─┬─2.2 kΩ─GND, ratio 0.18, diodos BAT30 a `GPIO_BEMF`/PB5) en **PA4/PC4/PB11** (UM2516 Tabla 4). Con el puente apagado (MOE = 0) y la llanta girada a mano: 4.4 mV de fase por LSB, ~340 LSB a 600 rpm, θ_e del encoder → e_abc(θ) directa, sin R, L, dead‑time ni tensión comandada. Es el "free‑wheeling identification" de la literatura. **Próxima sesión de banco: app `08_bemf_oc`** (añadido al subplan como Exp. 2b).
+
+### Lo que dice la literatura (búsqueda 2026-10-18, detalle en PLANNING §3.5)
+
+- El motor es el **DFRobot FIT1034 / kit SimpleFOC**: 2804, 220 KV, **conexión delta**, 2.3 Ω y 0.86 mH por fase (5.1 Ω / 2.8 mH de devanado), λ = 0.0035 Wb, 7 pp. Coincide con `motor_params.h`. **Delta** explica el h3 ≈ 0 medido: el tercer armónico circula dentro del triángulo y no aparece en las magnitudes de línea.
+- Factores de devanado del 12/14 doble capa: k_w1 = 0.933, **k_w5 = k_w7 = 0.067**, k_w11 = k_w13 = 0.933 (Libert & Soulard 2004). El devanado atenúa 5º y 7º a un 7 %: la BEMF cuasi‑sinusoidal es de diseño, y nuestros ≤ 1 % en h5/h7 son coherentes.
+- **Nadie ha publicado los armónicos de BEMF de un 2804** (iFlight, T‑Motor, DFRobot, SimpleFOC, ODrive, VESC, pat92fr): solo evidencia cualitativa con osciloscopio en 12N14P mayores ("clearly sinusoidal", Parsons 2018). El número que saquemos en la Exp. 2b es nuevo.
+- Sobre nuestro problema exacto: el dead‑time genera 6º armónico en dq, **indistinguible** del que producen 5º/7º de BEMF al reconstruir e = u − R·i − L·di/dt (Bedetti 2016, Qiu 2016, Lv 2024); la salida es identificar con el inversor en rueda libre (Pfeifer 2025) — justo la Exp. 2b. ADALINE + Fourier para armónicos de BEMF: Wang & Zhu 2020 (IEEE TIE), Nguyen & Semail 2016, Vu 2022; revisión Zhu, Liang & Liu 2021 (IEEE Access).
+- Inercia: sin dato de fabricante; estimación geométrica del rotor 4–7·10⁻⁶ kg·m². Nuestro 1.5·10⁻⁵ con llanta y base es coherente.
+
 ### Pendiente
 
+- **Exp. 2b**: `08_bemf_oc` — BEMF en circuito abierto con los divisores de la placa y la llanta a mano.
 - `scope_m2pc.py` todavía no lee la línea `E`: los paneles de error siguen siendo los aproximados.
-- Al tomar logs con `cat` arrancado antes del flash, la cola del firmware anterior queda al principio del archivo: **recortar desde el último `[boot]`** (el analizador ya debería hacerlo; `analyze_m2pc_log.py` no lo hace aún).
-- Exp. 3a: ADALINE offline con los tres logs de la Exp. 2 y el de 300 rpm de la sesión 22.
+- Al tomar logs con `cat` arrancado antes del flash, la cola del firmware anterior queda al principio del archivo: `bemf_reconstruct.py` ya recorta desde el último `[boot]`; `analyze_m2pc_log.py` no.
 
 ## Sesión 22 — 2026-10-18 — Setup final (llanta + base), scope en vivo, y el CORDIC que devolvía el coseno dos veces
 

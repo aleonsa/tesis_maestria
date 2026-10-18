@@ -150,6 +150,15 @@ Restos históricos conocidos (no afectan resultados vigentes):
 
 ---
 
+### 3.5 BEMF del 2804: fabricante y literatura (búsqueda 2026-10-18)
+
+- **Motor del banco = DFRobot FIT1034 / kit SimpleFOC** ([DFRobot](https://www.dfrobot.com/product-3005.html), [wiki](https://wiki.dfrobot.com/fit1034/)): 2804, 220 KV, **delta**, 2.3 Ω y 0.86 mH por fase (5.1 Ω / 2.8 mH devanado), 0.0035 Wb, 7 pp, 0.4 A nominal, 0.03 N·m. Otros 2804 (iPower GBM2804H‑100T, 10 Ω; GM2804, 9 Ω; T‑Motor GB2208, 14.4 Ω) son variantes de más vueltas. **Ningún fabricante publica forma de BEMF, THD ni inercia.**
+- **12/14 doble capa**: k_w1 = 0.933, k_w3 = 0.5, **k_w5 = k_w7 = 0.067**, k_w11 = k_w13 = 0.933 (Libert & Soulard, ICEM 2004). En delta el 3º circula dentro del triángulo. Tang & Brown, IEEE TEC 38(3) 2023 (THD espacial de FMM 12/14 = 1.69 vs 0.98 del 12/10). Ishak, Zhu & Howe, IEEE TIA 41(2) 2005 e IEEE TEC 21(1) 2006 (BEMF en 12 ranuras, "todos los dientes bobinados" = la menos trapezoidal).
+- **Mediciones en 12N14P pequeños**: solo cualitativas — Parsons, *Things in Motion* 2018 (osciloscopio a mano, ODrive D5065: "clearly sinusoidal"). SimpleFOC, pat92fr/FOC2, ODrive, VESC: nada cuantitativo para 2804.
+- **Identificación de armónicos de BEMF con ADALINE/Fourier**: Wang, Zhu, Bin & Gong, IEEE TIE 67(11) 2020 (doi 10.1109/TIE.2019.2955414); Nguyen, Semail, De Belie & Kestelyn, IECON 2016; Vu, Nguyen, Semail & Wu, Energies 15(1):249, 2022; revisión Zhu, Liang & Liu, IEEE Access 9, 2021 (doi 10.1109/ACCESS.2021.3072959).
+- **Dead‑time vs BEMF**: Bedetti, Calligaro & Petrella, IEEE TIA 52(5) 2016 (regresión lineal múltiple); Qiu, Wen & Zhao, IEEE TPEL 31(3) 2016 (ADALINE); Lv et al., Energies 17(7):1693, 2024. El dead‑time produce 6º en dq, el mismo orden que 5º/7º de BEMF: no se separan desde la tensión comandada. **Pfeifer et al., TechRxiv 2025**: identificación en rueda libre (inversor apagado) — es nuestra Exp. 2b.
+- Inercia del rotor 2804: sin dato; estimación geométrica 4–7·10⁻⁶ kg·m². Medido en banco con llanta: 1.5·10⁻⁵ (sesión 23).
+
 ## 4. Plan fase por fase
 
 > **Notación**: cada fase declara un **objetivo único**, **entregables**, **tiempo en horas** y un **desglose semanal a 2 h/día**.
@@ -578,9 +587,35 @@ no hay problema.
 **Entregable**: figura ω*(t) vs ω̂(t) con la inversión; RMS del error de velocidad; log
 `datos_banco/m2pc_s2x_seno_±600.log` etiquetado como dataset.
 
+### Experimento 2b — BEMF en circuito abierto (medida directa, sin modelo) — ~1 sesión
+
+**Por qué** (sesión 23, Exp. 3a): reconstruir e = u − R·i − L·di/dt desde la tensión comandada
+deja los armónicos del 2804 en "≤ 2 %" pero no los resuelve: el dead‑time y R se confunden
+con ellos, y el L·di/dt de medias de 1 ms mete ±120 mV de ruido. La literatura dice lo mismo
+(§3.5). La placa tiene la red de sensado de BEMF del 6‑step: fase ─10 kΩ─┬─2.2 kΩ─GND (ratio
+0.18) en **PA4 (BEMF1), PC4 (BEMF2), PB11 (BEMF3)**, diodos a `GPIO_BEMF` (PB5) que debe
+quedar en alta impedancia/alto para no clampar (esquemático MB1419 hoja 4, UM2516 Tabla 4).
+
+**App `08_bemf_oc`**: puente apagado (`MOE = 0`, los seis MOSFET off), ADC regular sobre los
+tres canales de BEMF disparado por TIM2 a 10 kHz, PLL del encoder como en 06, log de
+(t, θ_e, ω̂, v_a, v_b, v_c) por UART. Con las tres fases en abierto los tres divisores forman
+un neutro virtual: e_x − ē = v_x − mean(v). La llanta se gira a mano (o con una cuerda): un
+barrido de ~600 → 0 rpm en decaimiento libre da todas las velocidades de una vez y, de regalo,
+**J y b** por el decaimiento (si se quiere confirmar el 1.5·10⁻⁵).
+
+**Análisis**: e_abc(θ_e) por bins y por mínimos cuadrados con la base de Fourier, normalizado
+por ω̂ muestra a muestra; armónicos con intervalo de confianza; comparar con la forma de la
+Exp. 3a (misma figura). Resolución esperada: 4.4 mV por LSB en la fase, ~340 LSB a 600 rpm →
+armónicos al 0.3 %. Verificar el ratio del divisor con el DMM antes (tolerancias).
+
+**Entregable**: **la BEMF real del 2804 con incertidumbre** — un dato que no existe publicado
+(§3.5) — y la forma de referencia contra la que se juzga lo que aprende el ADALINE en línea.
+
 ### Experimento 3 — ADALINE: offline primero, en línea después — 2–3 sesiones
 
-**3a. Offline (Python, sin tocar firmware)** — `python_scripts/adaline_offline.py`:
+**3a. Offline (Python, sin tocar firmware)** — **HECHO en la sesión 23**: `python_scripts/bemf_reconstruct.py`
+(mínimos cuadrados + LMS; λ = 3.457 mWb, fase +1.5°, THD ≤ 2 %, μ = 2·10⁻³ converge en ~2 s;
+coeficientes en `python_scripts/bemf_2804_fourier.json`). Lo planeado era:
 - Entrada: logs de 300 rpm (sesión 22) y del Experimento 2.
 - e_αβ reconstruida como ya hace `analyze_m2pc_log.py` (e = u − R·i − L·Δi/Δt, DC quitado).
 - Forma objetivo s = e/(λ·ω̂) (normalizar por velocidad, como en `fcs_m2pc_v2`: así el mismo W
@@ -613,13 +648,16 @@ discusión de que lo que captura es el residuo no sinusoidal (dead-time en los c
 ### Secuencia y criterio de avance
 
 ```
-Exp. 1 (telemetría ISR + escalones) ──► cifra baseline M²PC
+Exp. 1 (telemetría ISR + escalones) ──► cifra baseline M²PC      [HECHO s23]
         │
         ▼
-Exp. 2 (seno ±600 rpm) ──► figura trayectoria + dataset
+Exp. 2 (seno ±600 rpm) ──► figura trayectoria + dataset          [HECHO s23]
         │
         ▼
-Exp. 3a (ADALINE offline) ──► μ, nº armónicos, W de referencia
+Exp. 3a (ADALINE offline) ──► μ, nº armónicos, W de referencia   [HECHO s23]
+        │
+        ▼
+Exp. 2b (BEMF circuito abierto) ──► forma real con incertidumbre
         │
         ▼
 Exp. 3b (ADALINE en línea) ──► convergencia en banco, presupuesto ISR
