@@ -36,6 +36,9 @@ con el motor ya funcionando, se **supone 300 rpm**, marcado explícitamente;
 usar `--speed-ref 600` si corresponde. No es una referencia transmitida por
 muestra, y durante el primer segundo el PI todavía no está activo.
 
+**Pendiente (sesión 23)**: el firmware ya emite una línea `E` a 100 Hz con i_dq y los RMS
+de error calculados en la ISR; el visor todavía no la lee.
+
 **Las corrientes dq y sus errores son aproximaciones**, no métricas finales
 de tesis: el logger promedia αβ durante 1 ms, transmite el ángulo al final y
 lee iq* al imprimir. No se corrige ese desfase usando una latencia supuesta.

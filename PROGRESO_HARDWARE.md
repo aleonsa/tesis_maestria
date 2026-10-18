@@ -5,6 +5,45 @@
 
 ---
 
+## Sesión 23 — 2026-10-18 — Exp. 1 del subplan: seguimiento de corriente del M²PC medido en la ISR
+
+**Hito**: primera cifra válida de desempeño del lazo de corriente (PLANNING §11, Exp. 1). Telemetría dq sincronizada en la ISR (Park muestra a muestra, RMS de error por ventana de 10 ms) y captura en RAM a 50 kHz de la respuesta al escalón. A 300 y 600 rpm: **respuesta en < 200 µs, RMS(ε_q) ≈ 37–40 mA sobre un rizo de conmutación de 225–334 mA pk‑pk, sesgo estacionario de +10…+14 mA en i_q y un error de fase del modelo de BEMF de ≈ 2°** (i_d crece con ω). Gráfica: `firmware/apps/07_m2pc/doc/exp1_escalon_iq.png`.
+
+### Firmware (`07_m2pc`)
+
+- **Línea `E` a 100 Hz** (`STAT_WINDOW = 500`): Park de i_αβ con el mismo (s, c) del controlador; media de i_d, i_q, i_q*; RMS de ε_q = i_q − i_q* y ε_d = i_d; mín/máx de i_q. El UART es polling bloqueante (la `L` ya ocupa 0.5 ms de cada ms): a 1 kHz no cabía otra línea.
+- **Escalones de i_q*** (`STEP_*`): ±100 mA, 20 ms cada 2 s desde t = 5 s, **con el PI congelado** (salida retenida, sin integrar). Primer intento con el PI activo y 200 ms: la planta mecánica es tan rápida (100 mA ≈ 2400–2700 rpm/s con la llanta) que el PI cancelaba el escalón en ~15 ms. Con 20 ms la velocidad cae ~50 rpm y el PI la recupera en ~40 ms.
+- **Captura** (`CAP_N = 1024`, 128 pre‑flanco): anillo en RAM escrito por la ISR; se arma en el primer escalón y se vuelca por UART **intercalado** (8 líneas `C` por iteración). El primer volcado en bloque congeló el PI 380 ms y el motor se fue a saturación: lección anotada.
+- Costo: `paso_max` 13.4 → **15.3 µs** (~1.5 µs la telemetría; más de los 0.3 estimados: dos Park en int64, dos Σε² en int64, anillo). `overruns = 0`. Quedan ~4.7 µs para el ADALINE.
+
+### Resultados
+
+| | 300 rpm | 600 rpm |
+|---|---|---|
+| i_q* / i_q régimen (PI) | 8.0 / 21.5 mA (**Δ +13.5**) | 17.1 / 27.2 (**Δ +10.1**) |
+| i_d régimen | +5.3 mA | **+21.8 mA** |
+| escalón + : i_q* / i_q | 100.6 / 108.9 (+8.3) | 110.5 / 118.7 (+8.2) |
+| escalón − : i_q* / i_q | −81.5 / −59.0 (+22.5) | −76.5 / −61.4 (+15.2) |
+| RMS(ε_q) / RMS(ε_d) | 37.1 / 36.7 mA | 39.9 / 46.0 mA |
+| rizo pk‑pk de i_q (10 ms) | 225 mA | 334 mA |
+| t de respuesta (captura) | < 10 muestras (< 200 µs) | < 10 muestras |
+| \|u\| | 817 mV | 1572 mV |
+
+Lectura:
+1. **Rizo**: V_bus·T_s/L = 12 V·20 µs/0.86 mH = 280 mA por periodo con un vector activo. El pk‑pk medido es ese suelo físico (el M²PC lo reparte con dos vectores + nulo); el RMS de 37 mA ≈ 1.2 LSB es rizo real, no cuantización (que daría 9 mA). Es propiedad del banco a 12 V, no del controlador.
+2. **Sesgo de +10…+14 mA en i_q**, igual en todos los niveles: error estacionario clásico de un FCS‑MPC sin integrador ante lo que el predictor no modela (dead‑time ≈ 0.3 V, residuo de offset). Argumento directo para que el modelo de BEMF se aprenda.
+3. **i_d crece con ω** (5 → 22 mA): error de *fase* del modelo: 22 mA·2.7 Ω = 60 mV sobre e_q = 1.5 V → ≈ 2.3°, coherente con el e_d = +16…27 mV del análisis offline. Latencia o `PHASE_A_OFFSET_RAW`; también lo absorbe el ADALINE.
+4. **Inercia de regalo**: K_t = 1.5·p·λ = 36 mN·m/A; 104 mA → 3.8 mN·m; medido 2400 rpm/s = 251 rad/s² → **J ≈ 1.5·10⁻⁵ kg·m²** (rotor + llanta). Cierra lo que faltaba de J en Fase 2 sin experimento aparte.
+
+### Código y datos
+
+`apps/07_m2pc` (línea `E`, `STEP_*`, `CAP_*`, PI congelado, volcado intercalado). Logs: `datos_banco/m2pc_s23_exp1_300rpm_a.log` (PI activo, 200 ms: el escalón cancelado), `_300rpm_b.log` y `_600rpm.log` (válidos). `W_REF_RPM` restaurado a 300.
+
+### Pendiente
+
+- `scope_m2pc.py` todavía no lee la línea `E`: los paneles de error siguen siendo los aproximados. Añadirlo (los errores *reales* ya vienen calculados).
+- Exp. 2 (seno ±600 rpm) → dataset; luego Exp. 3.
+
 ## Sesión 22 — 2026-10-18 — Setup final (llanta + base), scope en vivo, y el CORDIC que devolvía el coseno dos veces
 
 **Hito**: el setup mecánico definitivo queda validado (λ y BEMF sin cambio, rizo de velocidad a la mitad), el scope en vivo funciona con el motor, y una prueba de regresión de un minuto destapó que **el CORDIC entregaba `sin ≡ cos` desde la sesión 20**: el lazo cerrado de las sesiones 20–21 corrió con la Park y el modelo de BEMF rotos. Corregido en `lib/cordic`, con autotest permanente en 06. FIELD_NOTES N1.27.

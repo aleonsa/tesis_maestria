@@ -98,6 +98,31 @@
 #define LOG_WINDOW           50U
 #define UART_BAUD            921600U
 
+/* ── Telemetría sincronizada (sesión 23, PLANNING §11 Exp. 1) ────────────
+ * La línea L promedia i_αβ en 1 ms y manda θ_e al cierre: la i_dq que se
+ * reconstruye de ahí está desfasada y sin rizo. Para la métrica de
+ * seguimiento, Park en la ISR y estadísticos muestra a muestra:
+ *   E t id iq ref eq_rms ed_rms iq_min iq_max   (Q8 LSB; cada STAT_WINDOW)
+ * con ε_q = i_q − i_q*, ε_d = i_d (i_d* = 0). A 100 Hz: el UART es polling y
+ * a 1 kHz no cabe otra línea (L ya ocupa 0.5 ms de cada ms). */
+#define STAT_WINDOW          500U
+
+/* Escalones de i_q* sumados a la salida del PI, con el PI CONGELADO (salida
+ * retenida, sin integrar) mientras dura el escalón. Primer intento (sesión
+ * 23) con el PI activo y 200 ms: la planta mecánica es tan rápida (100 mA ≈
+ * 2700 rpm/s con la llanta) que el PI cancelaba el escalón en ~15 ms. Con
+ * 20 ms congelado la velocidad se mueve ~50 rpm y el PI la recupera después.
+ * Captura en RAM a 50 kHz de (i_q, i_q*) alrededor del primer escalón para
+ * la figura de respuesta; se vuelca por UART intercalado (líneas C, 8 por
+ * iteración) para no congelar el lazo de 1 kHz. */
+#define STEP_ENABLE          1
+#define STEP_MA              100
+#define STEP_ON_MS           20U
+#define STEP_PERIOD_MS       2000U
+#define STEP_FIRST_MS        5000U     /* primer escalón: régimen ya alcanzado */
+#define CAP_N                1024U     /* 20.5 ms; 128 muestras antes del flanco */
+#define CAP_PRE              128U
+
 static volatile uint32_t g_ticks = 0;
 
 void SysTick_Handler(void) {
@@ -135,6 +160,21 @@ typedef struct {
     uint32_t seq;
 } log_win_t;
 static volatile log_win_t g_log;
+
+typedef struct {
+    int32_t  id_sum, iq_sum, ref_sum;   /* Q8 × STAT_WINDOW */
+    int64_t  eq_sq, ed_sq;              /* Σε² en Q8²       */
+    int32_t  iq_min, iq_max;
+    uint32_t seq;
+} stat_win_t;
+static volatile stat_win_t g_stat;
+
+/* Captura: la ISR escribe continuamente en un anillo; al armar, sigue
+ * CAP_N − CAP_PRE muestras más y se detiene. main vuelca desde cap_head. */
+static volatile int16_t  g_cap_iq[CAP_N], g_cap_ref[CAP_N];
+static volatile uint32_t g_cap_idx;
+static volatile uint32_t g_cap_remaining;    /* 0 = parada; UINT32_MAX = libre */
+static volatile uint8_t  g_cap_done;
 
 /* ── Paso de control ─────────────────────────────────────────────────── */
 static void control_step(void) {
@@ -223,7 +263,39 @@ static void control_step(void) {
     if ((cyc1 - cyc0) > g_pub_cyc_sense) g_pub_cyc_sense = cyc1 - cyc0;
     if ((cyc2 - cyc1) > g_pub_cyc_m2pc)  g_pub_cyc_m2pc  = cyc2 - cyc1;
 
-    /* 7. Logger: sumas de la ventana; θ_e y ω̂ al cierre. 4 sumas por tick. */
+    /* 7. Telemetría dq muestra a muestra: Park de la corriente medida con
+     * el mismo (s, c) que usa el controlador. */
+    const int32_t i_d = (int32_t)(((int64_t)i_alpha * c + (int64_t)i_beta * s) >> 31);
+    const int32_t i_q = (int32_t)(((int64_t)i_beta * c - (int64_t)i_alpha * s) >> 31);
+    const int32_t eq  = i_q - iq_ref;
+    {
+        static int32_t  id_acc, iq_acc, ref_acc, iq_lo, iq_hi;
+        static int64_t  eq_sq_acc, ed_sq_acc;
+        static uint32_t ns;
+        if (ns == 0U) { iq_lo = i_q; iq_hi = i_q; }
+        else if (i_q < iq_lo) iq_lo = i_q;
+        else if (i_q > iq_hi) iq_hi = i_q;
+        id_acc += i_d; iq_acc += i_q; ref_acc += iq_ref;
+        eq_sq_acc += (int64_t)eq * eq;
+        ed_sq_acc += (int64_t)i_d * i_d;
+        if (++ns >= STAT_WINDOW) {
+            g_stat.id_sum = id_acc;   g_stat.iq_sum = iq_acc;  g_stat.ref_sum = ref_acc;
+            g_stat.eq_sq  = eq_sq_acc; g_stat.ed_sq = ed_sq_acc;
+            g_stat.iq_min = iq_lo;    g_stat.iq_max = iq_hi;
+            g_stat.seq++;
+            id_acc = 0; iq_acc = 0; ref_acc = 0; eq_sq_acc = 0; ed_sq_acc = 0; ns = 0U;
+        }
+    }
+    if (g_cap_remaining != 0U) {
+        g_cap_iq[g_cap_idx]  = (int16_t)i_q;
+        g_cap_ref[g_cap_idx] = (int16_t)iq_ref;
+        g_cap_idx = (g_cap_idx + 1U) & (CAP_N - 1U);
+        if (g_cap_remaining != UINT32_MAX) {
+            if (--g_cap_remaining == 0U) g_cap_done = 1U;
+        }
+    }
+
+    /* 8. Logger: sumas de la ventana; θ_e y ω̂ al cierre. 4 sumas por tick. */
     static int32_t  ia_acc, ib_acc, ua_acc, ub_acc;
     static uint32_t n_acc;
     const m2pc_mon_t *mon = m2pc_mon();
@@ -301,6 +373,13 @@ int main(void) {
 #endif
     printf("[log] L t th ia ib ua ub w ref  (1 kHz; th: 65536 = vuelta e; ia/ib: Q8 LSB; "
            "ua/ub: mV; w: rpm x10)\r\n");
+    printf("[log] E t id iq ref eq_rms ed_rms iq_min iq_max  (cada %u muestras; Q8 LSB)\r\n",
+           (unsigned)STAT_WINDOW);
+#if (STEP_ENABLE == 1)
+    printf("[step] +/-%d mA, %lu ms cada %lu ms desde t=%lu ms; captura %u muestras\r\n",
+           STEP_MA, (unsigned long)STEP_ON_MS, (unsigned long)STEP_PERIOD_MS,
+           (unsigned long)STEP_FIRST_MS, (unsigned)CAP_N);
+#endif
 
     g_iq_ref_q8 = 0;
     adc_set_control_hook(control_step);
@@ -311,7 +390,11 @@ int main(void) {
     const uint32_t t0 = g_ticks;
 
     uint32_t t_ctrl = 0U, t_stat = 0U, corr_prev = 0U, log_seq = 0U, valley_prev = 0U;
-    int32_t  pi_int_q8 = 0;
+    uint32_t stat_seq = 0U;
+    int32_t  pi_int_q8 = 0, pi_hold_q8 = 0;
+    uint8_t  cap_armed = 0U;
+    uint32_t cap_pos = CAP_N;             /* CAP_N = nada que volcar */
+    g_cap_remaining = UINT32_MAX;          /* anillo libre hasta armar */
 
     while (1) {
         const uint32_t t = g_ticks - t0;
@@ -325,13 +408,31 @@ int main(void) {
             } else {
                 /* PI con anti-windup por "deshacer la integración"
                  * (pi_speed_controller.m). Error en rpm×10. */
-                const int32_t rpm10 = (int32_t)(((int64_t)theta_pll_omega_tick_q32() * 30000000LL) >> 32);
-                const int32_t err   = W_REF_RPM * 10 - rpm10;
-                const int32_t dint  = (err * PI_KI_Q16) >> 16;
-                pi_int_q8 += dint;
-                int32_t iq = ((err * PI_KP_Q8) >> 8) + pi_int_q8;
-                if (iq > IQ_MAX_Q8)       { iq = IQ_MAX_Q8;  pi_int_q8 -= dint; }
-                else if (iq < -IQ_MAX_Q8) { iq = -IQ_MAX_Q8; pi_int_q8 -= dint; }
+                int32_t iq;
+#if (STEP_ENABLE == 1)
+                const uint32_t ph = (t >= STEP_FIRST_MS) ? (t - STEP_FIRST_MS) % STEP_PERIOD_MS : STEP_ON_MS;
+                const uint32_t k  = (t >= STEP_FIRST_MS) ? (t - STEP_FIRST_MS) / STEP_PERIOD_MS : 0U;
+                const uint8_t  in_step = (ph < STEP_ON_MS);
+#else
+                const uint8_t  in_step = 0U;
+#endif
+                if (in_step) {
+                    /* PI congelado: salida retenida + escalón alternado. */
+                    iq = pi_hold_q8 + ((k & 1U) ? -MA_TO_Q8(STEP_MA) : MA_TO_Q8(STEP_MA));
+                    if (k == 0U && !cap_armed) {
+                        g_cap_remaining = CAP_N - CAP_PRE;   /* captura en el flanco */
+                        cap_armed = 1U;
+                    }
+                } else {
+                    const int32_t rpm10 = (int32_t)(((int64_t)theta_pll_omega_tick_q32() * 30000000LL) >> 32);
+                    const int32_t err   = W_REF_RPM * 10 - rpm10;
+                    const int32_t dint  = (err * PI_KI_Q16) >> 16;
+                    pi_int_q8 += dint;
+                    iq = ((err * PI_KP_Q8) >> 8) + pi_int_q8;
+                    if (iq > IQ_MAX_Q8)       { iq = IQ_MAX_Q8;  pi_int_q8 -= dint; }
+                    else if (iq < -IQ_MAX_Q8) { iq = -IQ_MAX_Q8; pi_int_q8 -= dint; }
+                    pi_hold_q8 = iq;
+                }
                 g_iq_ref_q8 = iq;
             }
 #else
@@ -371,6 +472,41 @@ int main(void) {
                    (long)(w.ub_sum / (int32_t)LOG_WINDOW),
                    (long)rpm10,
                    (long)q8_to_ma(g_iq_ref_q8));
+        }
+
+        /* ── Estadísticos dq cada STAT_WINDOW (100 Hz) ──────────────── */
+        if (g_stat.seq != stat_seq) {
+            stat_win_t w;
+            do {
+                stat_seq = g_stat.seq;
+                w.id_sum = g_stat.id_sum; w.iq_sum = g_stat.iq_sum; w.ref_sum = g_stat.ref_sum;
+                w.eq_sq = g_stat.eq_sq;   w.ed_sq = g_stat.ed_sq;
+                w.iq_min = g_stat.iq_min; w.iq_max = g_stat.iq_max;
+            } while (g_stat.seq != stat_seq);
+            printf("E %lu %ld %ld %ld %lu %lu %ld %ld\r\n",
+                   (unsigned long)t,
+                   (long)(w.id_sum / (int32_t)STAT_WINDOW),
+                   (long)(w.iq_sum / (int32_t)STAT_WINDOW),
+                   (long)(w.ref_sum / (int32_t)STAT_WINDOW),
+                   (unsigned long)adc_isqrt32((uint32_t)(w.eq_sq / STAT_WINDOW)),
+                   (unsigned long)adc_isqrt32((uint32_t)(w.ed_sq / STAT_WINDOW)),
+                   (long)w.iq_min, (long)w.iq_max);
+        }
+
+        /* ── Volcado de la captura del escalón: 8 líneas por iteración ── */
+        if (g_cap_done != 0U) {
+            g_cap_done = 0U;
+            cap_pos = 0U;
+            printf("[cap] %u muestras a 50 kHz, flanco en la muestra %u: C k iq ref (Q8)\r\n",
+                   (unsigned)CAP_N, (unsigned)CAP_PRE);
+        }
+        if (cap_pos < CAP_N) {
+            const uint32_t head = g_cap_idx;        /* muestra más antigua (anillo parado) */
+            for (uint32_t n = 0U; n < 8U && cap_pos < CAP_N; n++, cap_pos++) {
+                const uint32_t j = (head + cap_pos) & (CAP_N - 1U);
+                printf("C %lu %d %d\r\n", (unsigned long)cap_pos, (int)g_cap_iq[j], (int)g_cap_ref[j]);
+            }
+            if (cap_pos == CAP_N) printf("[cap] fin\r\n");
         }
 
         /* ── Estado a 1 Hz ────────────────────────────────────────────── */

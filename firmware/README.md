@@ -85,7 +85,7 @@ openocd -f interface/stlink.cfg -f target/stm32g4x.cfg \
 | `04_theta_pll` | 1 | Observador PLL tipo II de θ/ω a 50 kHz (TIM2), sin motor. |
 | `05_phase_align` | 1 | Offset θ_e ↔ fase A y sentido del encoder (necesita Vbus y motor). |
 | `06_openloop_sync` | 1→2 | Cadena completa en la ISR: PLL + offset + Clarke + Park (CORDIC) con el motor en open-loop. i_dq debe ser DC. Mide el costo del paso. Esqueleto del controlador. **Prueba de regresión obligatoria tras cualquier cambio en `lib/` o en los flags** (sesión 22: destapó el CORDIC roto); incluye autotest del CORDIC al arrancar. |
-| `07_m2pc` | 3→5 | **FCS-M²PC en lazo cerrado** (`lib/m2pc`) + PI de velocidad a 1 kHz + logger a 1 kHz (921600 baud). `python_scripts/analyze_m2pc_log.py` reconstruye la BEMF del log. Offset de corriente en línea desde el valle del PWM (`pwm_valley_trigger_enable`, N1.26). `-O2`. |
+| `07_m2pc` | 3→5 | **FCS-M²PC en lazo cerrado** (`lib/m2pc`) + PI de velocidad a 1 kHz + logger a 1 kHz (921600 baud). `python_scripts/analyze_m2pc_log.py` reconstruye la BEMF del log. Offset de corriente en línea desde el valle del PWM (`pwm_valley_trigger_enable`, N1.26). Telemetría dq en la ISR (línea `E` a 100 Hz), escalones de i_q* con PI congelado y captura de 1024 muestras a 50 kHz (sesión 23, Exp. 1). `-O2`. |
 
 `lib/cordic` entrega sin y cos en **una sola lectura** de 16 bits (`RESSIZE=1`, `NRES=0`) y verifica el CSR por relectura: con dos lecturas de 32 bits la segunda se adelantaba y con la escritura tras habilitar el reloj se perdía (N1.27).
 
