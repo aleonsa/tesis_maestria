@@ -28,6 +28,35 @@
 - Sesgo fijo de +0.5 LSB en la suma (0.15 LSB por fase): por debajo de la resolución, no se persigue.
 - Sigue la lista de la sesión 20: identificación a 600–900 rpm, ADALINE offline, PI y rizo de par vs. baseline, escritura.
 
+### Sesión 21b — 2026-10-18 — Scopes en vivo (sin tocar firmware)
+
+Antes de subir a 600–900 rpm se quiso *ver* los dos lazos, no solo sus medias. Se evaluaron
+PlotJuggler (no instalado), Serial Studio (parte Pro) y un visor propio; se hizo el visor
+propio con lo ya disponible (Matplotlib + pyserial): `python_scripts/scope_m2pc.py`,
+documentado en `python_scripts/README_scope.md`, pruebas en `test_scope_m2pc.py` (5, sin
+hardware).
+
+- Ocho paneles con eje de tiempo común: ω y ω*, error de velocidad, i_d, i_q con i_q*,
+  errores de corriente, i_αβ, u_αβ comandada, salida del PI. Pausa (solo la vista; la
+  adquisición y el log siguen), ventanas 0.1/1/3/10 s, zoom con la barra de Matplotlib.
+- Es el **único lector** del puerto (`exclusive=True`): no correr `cat /dev/ttyACM0` a la vez.
+  Guarda todo lo recibido en `datos_axel/m2pc_live_<fecha>.log` (ignorado por git).
+- `--replay <log>` reproduce un log existente a ritmo real sin abrir el puerto; `--rate 2`
+  acelera. Validado con `m2pc_300rpm_2026-10-14.log` y `m2pc_s21_valle_on.log`.
+- ω* sale del banner `w* = N rpm`; si se conecta con el motor ya girando se asume 300 rpm
+  (marcado en pantalla; `--speed-ref` lo cambia).
+
+**Limitaciones del stream actual, escritas en el propio panel**: i_dq y sus errores son
+*aproximados* (el logger promedia i_αβ en 1 ms, manda θ_e al cierre de la ventana y lee i_q*
+al imprimir → desfase aparente, más a más rpm); no se ve el rizado de 50 kHz; u es comando,
+no medida. Para el error de seguimiento como métrica de tesis hace falta telemetría
+sincronizada en la ISR (errores calculados muestra a muestra y promediados) con secuencia —
+es el siguiente paso del visor, antes de la identificación a 600–900 rpm.
+
+En banco no se llegó a ver en vivo: la placa quedó en `reset halt` de la sesión 21 y el
+puerto abrió sin muestras. Pendiente: encender fuente, `reset run` (o ciclo de alimentación)
+y abrir el visor. **Cerrar el visor no detiene el motor.**
+
 ---
 
 ## Sesión 20 — 2026-10-14 — FCS-M²PC en lazo cerrado: primer giro, lazo de velocidad y BEMF identificada

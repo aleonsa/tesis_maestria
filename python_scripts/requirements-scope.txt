@@ -1,0 +1,4 @@
+# Entorno ligero para el visor, sin Torch ni las dependencias de entrenamiento.
+matplotlib>=3.8
+numpy>=1.26
+pyserial>=3.5

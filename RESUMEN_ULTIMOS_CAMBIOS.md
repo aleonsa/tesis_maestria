@@ -1,4 +1,4 @@
-# Resumen de los últimos cambios (al 2026-10-17)
+# Resumen de los últimos cambios (al 2026-10-18)
 
 Cubre el trabajo posterior al commit `dee0967` (2026-08-23): redacción del Cap. 1 de la
 tesis (2026-08-17), la sesión 15 de firmware (2026-08-24), la sesión 16 (2026-10-11),
@@ -160,7 +160,12 @@ Detalle completo en `PROGRESO_HARDWARE.md` sesión 17.
    los shunts ven corriente cero: offset medido en continuo, filtrado en bloques de 2¹⁶.
    Validado contra el invariante ia+ib+ic = 0: de ±2 LSB de deriva a **+0.48 ± 0.38 LSB**.
    `paso_max` sin cambio (13.1 µs). FIELD_NOTES N1.26.
-6. Identificación a 600–900 rpm; ADALINE offline (Python) y luego en línea; afinar PI; rizo
+6. **Scopes en vivo (sesión 21b, 2026-10-18)**: `python_scripts/scope_m2pc.py` grafica los dos
+   lazos desde el stream existente (ocho paneles, pausa, ventanas, replay de logs, graba
+   todo). i_dq y errores son aproximados por el desfase del logger; el siguiente paso es
+   telemetría sincronizada en la ISR (errores muestra a muestra + secuencia). Ver
+   `python_scripts/README_scope.md`. Aún no probado con el motor girando.
+7. Identificación a 600–900 rpm; ADALINE offline (Python) y luego en línea; afinar PI; rizo
    de par vs baseline.
-7. Deuda: glitch esporádico de fase C (una muestra en 12 000), race de `adc_get_vbus_raw`,
+8. Deuda: glitch esporádico de fase C (una muestra en 12 000), race de `adc_get_vbus_raw`,
    M2PC en CCM-SRAM para recuperar el medio periodo.
