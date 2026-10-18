@@ -10,8 +10,10 @@
  *
  * EL ALGORITMO EN TRES LÍNEAS
  *
- *   1. Por la posición del rotor se elige el sector: los dos vectores activos
- *      adyacentes a la dirección de la BEMF (θ_e + 90°) más el vector nulo.
+ *   1. Se elige el sector: los dos vectores activos adyacentes a la tensión
+ *      deadbeat u* = e + R·i* + (L/Ts)(i* − i), más el vector nulo. (El paper
+ *      usa la dirección de la BEMF, θ_e + 90°: vale solo con par positivo y
+ *      e dominante; ver m2pc.c, sesión 23.)
  *   2. Se divide Ts en ρ partes y se prueban todas las combinaciones
  *      (n·Ts/ρ con Va, m·Ts/ρ con Vb, el resto nulo), n + m ≤ ρ: son
  *      (ρ+1)(ρ+2)/2 candidatos (66 con ρ = 10). Para cada uno se predice

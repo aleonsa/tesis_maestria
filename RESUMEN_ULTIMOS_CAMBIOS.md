@@ -175,8 +175,15 @@ Detalle completo en `PROGRESO_HARDWARE.md` sesión 17.
    rizo 2·f_e → f_e. **Las cifras de lazo cerrado de las sesiones 20–21 no valen como datos**
    (la identificación de λ sí). Logs del banco propio ahora en `datos_banco/`. FIELD_NOTES
    N1.27. Regla: cada cambio en `lib/` → correr 06.
-8. Repetir el seguimiento de corriente puro (`SPEED_LOOP = 0`); telemetría sincronizada en la
-   ISR; identificación a 600–900 rpm; ADALINE offline y luego en línea; rizo de par vs baseline.
-9. Deuda conciliada en PROGRESO sesión 22: apps 02–06 con `tim1_trgo2` cerrado; glitch de
+8. **Sesión 23 (2026-10-18) — Exp. 1 y 2 del subplan (PLANNING §11).** Telemetría dq en la
+   ISR (línea `E`, Park muestra a muestra, RMS de error) + escalones de i_q* con PI congelado +
+   captura a 50 kHz: M²PC sinusoidal responde en < 200 µs, RMS(ε_q) ≈ 37–40 mA sobre un rizo
+   de conmutación de 225–334 mA pk‑pk (suelo físico V·Ts/L a 12 V), error de fase del modelo
+   ≈ 2°. J ≈ 1.5e‑5 kg·m². Trayectoria senoidal ±100/300/600 rpm con inversión: RMS ≈ 10 rpm.
+   Dos bugs más: FPU nunca habilitado (primer `float` del proyecto) y el **sector del M²PC
+   elegido por la BEMF no puede frenar ni invertir** → ahora por la tensión deadbeat
+   (`lib/m2pc.c`), lo que además eliminó el sesgo de i_q. Dataset del ADALINE grabado.
+9. Exp. 3: ADALINE offline (Python) con los logs de la Exp. 2 → en línea → comparativa.
+10. Deuda conciliada en PROGRESO sesión 22: apps 02–06 con `tim1_trgo2` cerrado; glitch de
    fase C no reproducido; race de `adc_get_vbus_raw` y CCM-SRAM diferidos; 7 citas del `.bib`
    pendientes.

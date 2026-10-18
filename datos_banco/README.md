@@ -20,6 +20,12 @@ Los `.log` no se versionan (pesan hasta 25 MB); solo este README. Se nombran
 | `m2pc_s23_exp1_300rpm_a.log` | 23 | Exp. 1, PI activo y escalón de 200 ms: el PI lo cancela (no usar) |
 | `m2pc_s23_exp1_300rpm_b.log` | 23 | **Exp. 1**, 300 rpm, escalones ±100 mA/20 ms con PI congelado, líneas `E` y captura `C` |
 | `m2pc_s23_exp1_600rpm.log` | 23 | **Exp. 1**, 600 rpm, ídem |
+| `m2pc_s23_exp2_100rpm_50mHz.log` | 23 | **Exp. 2 / dataset**, ω* = ±100 rpm·sin(2π·0.05·t), sector por tensión deadbeat |
+| `m2pc_s23_exp2_300rpm_100mHz.log` | 23 | **Exp. 2 / dataset**, ±300 rpm, 0.1 Hz |
+| `m2pc_s23_exp2_600rpm_200mHz.log` | 23 | **Exp. 2 / dataset**, ±600 rpm, 0.2 Hz |
+
+Los archivos pueden empezar con la cola del firmware anterior (el `cat` arranca antes del
+flash): **usar solo lo que sigue al último `[boot]`**.
 
 Los logs de las sesiones 20–21 y el primero de la 22 se tomaron con el CORDIC entregando
 `sin ≡ cos` (N1.27): sirven para identificar λ y la forma de la BEMF (offline, en αβ) pero

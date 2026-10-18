@@ -26,6 +26,7 @@
  */
 
 #include <stdio.h>
+#include <math.h>
 #include "stm32g431xx.h"
 #include "clock.h"
 #include "uart.h"
@@ -115,13 +116,23 @@
  * Captura en RAM a 50 kHz de (i_q, i_q*) alrededor del primer escalón para
  * la figura de respuesta; se vuelca por UART intercalado (líneas C, 8 por
  * iteración) para no congelar el lazo de 1 kHz. */
-#define STEP_ENABLE          1
+#define STEP_ENABLE          0
 #define STEP_MA              100
 #define STEP_ON_MS           20U
 #define STEP_PERIOD_MS       2000U
 #define STEP_FIRST_MS        5000U     /* primer escalón: régimen ya alcanzado */
 #define CAP_N                1024U     /* 20.5 ms; 128 muestras antes del flanco */
 #define CAP_PRE              128U
+
+/* ── Exp. 2 (PLANNING §11): trayectoria senoidal de velocidad ───────────
+ * ω* = TRAJ_AMP_RPM · sin(2π·f·(t − RAMP_START_MS)), f = TRAJ_FREQ_MHZ/1000 Hz,
+ * generada en el lazo de 1 kHz con sinf (FPU; el CORDIC es de la ISR).
+ * Pasa por cero velocidad e invierte el giro. ω* no va en la línea L (su
+ * formato lo leen el scope y el analizador): se reconstruye offline de A, f
+ * y t, que van en el banner. TRAJ_ENABLE = 0 → ω* = W_REF_RPM constante. */
+#define TRAJ_ENABLE          1
+#define TRAJ_AMP_RPM         300
+#define TRAJ_FREQ_MHZ        100U
 
 static volatile uint32_t g_ticks = 0;
 
@@ -130,7 +141,13 @@ void SysTick_Handler(void) {
 }
 
 void SystemInit(void) {
-    /* Vacío a propósito: el setup del reloj se hace desde main(). */
+    /* El reloj se configura desde main(). Aquí solo el FPU: con -mfloat-abi=hard
+     * el compilador emite vpush/vldr en cuanto hay un float (sinf de la
+     * trayectoria, sesión 23) y sin CP10/CP11 habilitados el core cae en
+     * HardFault (UFSR.NOCP) en la primera instrucción de main. PM0214 §4.6.1. */
+    SCB->CPACR |= (3UL << 20) | (3UL << 22);
+    __DSB();
+    __ISB();
 }
 
 static void systick_init(uint32_t ticks_per_irq) {
@@ -380,6 +397,10 @@ int main(void) {
            STEP_MA, (unsigned long)STEP_ON_MS, (unsigned long)STEP_PERIOD_MS,
            (unsigned long)STEP_FIRST_MS, (unsigned)CAP_N);
 #endif
+#if (TRAJ_ENABLE == 1)
+    printf("[traj] w* = %d rpm * sin(2*pi * %lu mHz * (t - %lu ms))\r\n",
+           TRAJ_AMP_RPM, (unsigned long)TRAJ_FREQ_MHZ, (unsigned long)RAMP_START_MS);
+#endif
 
     g_iq_ref_q8 = 0;
     adc_set_control_hook(control_step);
@@ -414,6 +435,7 @@ int main(void) {
                 const uint32_t k  = (t >= STEP_FIRST_MS) ? (t - STEP_FIRST_MS) / STEP_PERIOD_MS : 0U;
                 const uint8_t  in_step = (ph < STEP_ON_MS);
 #else
+                const uint32_t k = 0U;
                 const uint8_t  in_step = 0U;
 #endif
                 if (in_step) {
@@ -425,7 +447,13 @@ int main(void) {
                     }
                 } else {
                     const int32_t rpm10 = (int32_t)(((int64_t)theta_pll_omega_tick_q32() * 30000000LL) >> 32);
-                    const int32_t err   = W_REF_RPM * 10 - rpm10;
+#if (TRAJ_ENABLE == 1)
+                    const float   ph_rad = 6.2831853f * (float)TRAJ_FREQ_MHZ * 1e-6f * (float)(t - RAMP_START_MS);
+                    const int32_t wref10 = (int32_t)lroundf(10.0f * (float)TRAJ_AMP_RPM * sinf(ph_rad));
+#else
+                    const int32_t wref10 = W_REF_RPM * 10;
+#endif
+                    const int32_t err   = wref10 - rpm10;
                     const int32_t dint  = (err * PI_KI_Q16) >> 16;
                     pi_int_q8 += dint;
                     iq = ((err * PI_KP_Q8) >> 8) + pi_int_q8;

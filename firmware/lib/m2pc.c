@@ -37,6 +37,23 @@ static const uint8_t s_next[6] = {1, 2, 3, 4, 5, 0};
 /* Comando elegido en el paso anterior: es el que está en curso ahora. */
 static int32_t s_uprev_a, s_uprev_b;
 
+/* (L/Ts) en mV por Q8 LSB, Q8: inverso de G. Para la tensión deadbeat del
+ * sector (sesión 23). */
+static int32_t s_invg_q8;
+
+/* Sector (0..5, [60s°, 60s°+60°)) de un vector (α, β) por tres semiplanos:
+ *   t1: β ≥ 0   t2: √3α − β ≥ 0   t3: −√3α − β ≥ 0
+ *   código t1t2t3: 110→0  100→1  101→2  001→3  011→4  010→5
+ * 000 y 111 solo con el vector nulo: devuelve 6 (sin sector). */
+static uint32_t sector_of(int32_t a, int32_t b) {
+    const int32_t r3a = (int32_t)(((int64_t)a * 56756) >> 15);   /* √3·α */
+    const uint32_t code = ((b >= 0) ? 4U : 0U)
+                        | ((r3a - b >= 0) ? 2U : 0U)
+                        | ((-r3a - b >= 0) ? 1U : 0U);
+    static const uint8_t lut[8] = { 6, 3, 5, 4, 1, 2, 0, 6 };
+    return lut[code];
+}
+
 static m2pc_mon_t s_mon;
 static uint32_t   s_overruns;
 
@@ -77,6 +94,7 @@ void m2pc_init(void) {
     s_uprev_a = 0;
     s_uprev_b = 0;
     s_overruns = 0U;
+    s_invg_q8 = (int32_t)((1UL << 20) / (uint32_t)M2PC_G_Q20);
 }
 
 void m2pc_step(const m2pc_in_t *in) {
@@ -85,11 +103,7 @@ void m2pc_step(const m2pc_in_t *in) {
      * alcanzó y el comando entrará un periodo tarde. */
     TIM1->SR = ~TIM_SR_UIF;
 
-    /* 1. Sector por la dirección de la BEMF: θ_e + 90°, en sextos de vuelta.
-     *    (θ + 2^30)·6 >> 32 es floor((θ + 90°)/60°) sin división. */
-    const uint32_t s = (uint32_t)(((uint64_t)(in->theta_e_q32 + 0x40000000U) * 6U) >> 32);
-
-    /* 2. Compensación del retardo: el comando que elijamos se aplica en el
+    /* 1. Compensación del retardo: el comando que elijamos se aplica en el
      *    periodo SIGUIENTE. Primero se predice i(k+1) con el comando que ya
      *    está en curso (u_prev), y desde ahí se predice i(k+2) con cada
      *    candidato. La BEMF se toma constante en los dos pasos (a 1750 rpm
@@ -100,6 +114,25 @@ void m2pc_step(const m2pc_in_t *in) {
     const int32_t i1_b = in->i_beta  + euler_step(in->i_beta,  s_uprev_b, in->e_beta);
     const int32_t a_a  = i1_a + euler_step(i1_a, 0, in->e_alpha);
     const int32_t a_b  = i1_b + euler_step(i1_b, 0, in->e_beta);
+
+    /* 2. Sector por la dirección de la TENSIÓN DEADBEAT
+     *        u* = e + R·i* + (L/Ts)·(i* − i(k+1))  [mV],
+     *    la que llevaría la corriente a la referencia en un paso. Los dos
+     *    vectores adyacentes a u* son los que mejor la sintetizan.
+     *    El paper (eq. 4) y la versión hasta la sesión 23 usaban la dirección
+     *    de la BEMF, θ_e + 90°: es el caso particular e ≫ R·i*, par positivo.
+     *    Con i_q* < 0 a baja velocidad (frenar, invertir el giro) la tensión
+     *    necesaria apunta a −q y esos candidatos no existían: el motor se
+     *    paraba y no invertía (Exp. 2, PROGRESO sesión 23). Si u* es
+     *    exactamente cero (ω = 0 e i* = i = 0) vale cualquier sector: θ_e + 90°. */
+    const int32_t ri_a = ((in->ref_alpha >> 4) * M2PC_RK_Q8) >> 12;
+    const int32_t ri_b = ((in->ref_beta  >> 4) * M2PC_RK_Q8) >> 12;
+    const int32_t ld_a = (int32_t)(((int64_t)(in->ref_alpha - i1_a) * s_invg_q8) >> 8);
+    const int32_t ld_b = (int32_t)(((int64_t)(in->ref_beta  - i1_b) * s_invg_q8) >> 8);
+    uint32_t s = sector_of(in->e_alpha + ri_a + ld_a, in->e_beta + ri_b + ld_b);
+    if (s > 5U) {
+        s = (uint32_t)(((uint64_t)(in->theta_e_q32 + 0x40000000U) * 6U) >> 32);
+    }
 
     /* 3. Rejilla sobre (n, m), n + m ≤ ρ. Residuo r = ref − pred; se recorre
      *    restando los incrementos precalculados del sector. */

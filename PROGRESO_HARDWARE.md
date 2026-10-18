@@ -5,9 +5,9 @@
 
 ---
 
-## Sesión 23 — 2026-10-18 — Exp. 1 del subplan: seguimiento de corriente del M²PC medido en la ISR
+## Sesión 23 — 2026-10-18 — Exp. 1 y Exp. 2 del subplan: seguimiento de corriente en la ISR, trayectoria senoidal con inversión (y el sector del M²PC que no sabía frenar)
 
-**Hito**: primera cifra válida de desempeño del lazo de corriente (PLANNING §11, Exp. 1). Telemetría dq sincronizada en la ISR (Park muestra a muestra, RMS de error por ventana de 10 ms) y captura en RAM a 50 kHz de la respuesta al escalón. A 300 y 600 rpm: **respuesta en < 200 µs, RMS(ε_q) ≈ 37–40 mA sobre un rizo de conmutación de 225–334 mA pk‑pk, sesgo estacionario de +10…+14 mA en i_q y un error de fase del modelo de BEMF de ≈ 2°** (i_d crece con ω). Gráfica: `firmware/apps/07_m2pc/doc/exp1_escalon_iq.png`.
+**Hito**: primera cifra válida de desempeño del lazo de corriente (PLANNING §11, Exp. 1), y el motor siguiendo una trayectoria senoidal de ±600 rpm con inversión de giro (Exp. 2) tras corregir la selección de sector del M²PC, que solo contemplaba par positivo. Dataset del ADALINE grabado. Telemetría dq sincronizada en la ISR (Park muestra a muestra, RMS de error por ventana de 10 ms) y captura en RAM a 50 kHz de la respuesta al escalón. A 300 y 600 rpm: **respuesta en < 200 µs, RMS(ε_q) ≈ 37–40 mA sobre un rizo de conmutación de 225–334 mA pk‑pk, sesgo estacionario de +10…+14 mA en i_q y un error de fase del modelo de BEMF de ≈ 2°** (i_d crece con ω). Gráfica: `firmware/apps/07_m2pc/doc/exp1_escalon_iq.png`.
 
 ### Firmware (`07_m2pc`)
 
@@ -39,10 +39,33 @@ Lectura:
 
 `apps/07_m2pc` (línea `E`, `STEP_*`, `CAP_*`, PI congelado, volcado intercalado). Logs: `datos_banco/m2pc_s23_exp1_300rpm_a.log` (PI activo, 200 ms: el escalón cancelado), `_300rpm_b.log` y `_600rpm.log` (válidos). `W_REF_RPM` restaurado a 300.
 
+### Exp. 2 — trayectoria senoidal de velocidad con inversión de giro (misma sesión)
+
+ω* = A·sin(2πft) en el lazo de 1 kHz (`TRAJ_*`, `sinf` en float; el CORDIC es de la ISR). Dos tropiezos y un hallazgo de fondo:
+
+1. **HardFault al arrancar (UFSR.NOCP)**: nadie había habilitado el FPU (`CPACR`); hasta hoy ningún firmware usaba float y con `-mfloat-abi=hard` el prólogo de `main` ya lleva `vpush`. Habilitado en `SystemInit` de 07. Lección: el toolchain compila hard-float desde la Fase 0 y el primer `float` fue hoy.
+2. **El motor no invertía**: la mitad positiva seguía la trayectoria y en la negativa se quedaba a 0 rpm con i_q* saturado en −300 mA. Causa: el **sector del M²PC se elegía por la dirección de la BEMF, θ_e + 90°** (eq. 4 del paper, `m2pc.c`), y los dos vectores adyacentes a +q no pueden producir tensión hacia −q. Con i_q* < 0 a baja velocidad el mejor candidato era el nulo: frena, no invierte. La simulación nunca giró en negativo.
+3. **Fix en `lib/m2pc.c`**: sector por la dirección de la **tensión deadbeat** u* = e + R·i* + (L/T_s)(i* − i(k+1)), que coincide con la regla del paper cuando e domina y sigue a la referencia cuando e ≈ 0 o el par es negativo. Tres comparaciones de semiplano (sin `atan2`), fallback a θ_e + 90° si u* = 0. Costo +1.2 µs (`paso_max` 16.5 µs, `overruns = 0`). Documentado como desviación deliberada en `m2pc.h`. Efectos colaterales buenos: el sesgo de i_q de la Exp. 1 (+10…+14 mA) **bajó a ±1 mA** y desapareció el "arranque espontáneo con i_q* = 0" de la sesión 20 (ambos eran el sector mal elegido cerca de i_q* ≈ 0). 06 re‑corrido como regresión: i_dq DC, CORDIC sano.
+
+Resultados (t > 3 s, tras el último `[boot]`; gráfica `firmware/apps/07_m2pc/doc/exp2_trayectoria_seno.png`):
+
+| A, f | RMS(ω̂ − ω*) | máx \|e\| | retraso | \|i_q*\| máx | RMS ε_q / ε_d | Δi_q | i_d |
+|---|---|---|---|---|---|---|---|
+| ±100 rpm, 0.05 Hz | 10.8 rpm | 31 | 18 ms | 90 mA | 62 / 62 mA | +0.5 | +1.0 |
+| ±300 rpm, 0.1 Hz | 9.1 rpm | 35 | 7 ms | 105 mA | 65 / 64 | −0.1 | +2.9 |
+| ±600 rpm, 0.2 Hz | 9.5 rpm | 54 | 5 ms | 114 mA | 68 / 64 | −0.6 | +8.6 |
+
+El RMS de velocidad (~10 rpm) es el rizo a f_e que el PI de 3 Hz no persigue, no error de seguimiento; el retraso de 5–18 ms es el del PI. RMS ε_q sube de 37 a 62–68 mA respecto al régimen a 300 rpm: la trayectoria pasa por cero velocidad, donde el dead‑time domina y el rizo relativo es mayor. **Dataset del ADALINE**: `m2pc_s23_exp2_{100,300,600}rpm_*.log` — BEMF vs θ_e barriendo ω y signo.
+
+### Código y datos (Exp. 2)
+
+`lib/m2pc.{c,h}` (sector por tensión deadbeat, `sector_of`, `s_invg_q8`), `apps/07_m2pc` (`TRAJ_*`, FPU en `SystemInit`, `STEP_ENABLE = 0`). La placa queda con ±300 rpm / 0.1 Hz por defecto.
+
 ### Pendiente
 
-- `scope_m2pc.py` todavía no lee la línea `E`: los paneles de error siguen siendo los aproximados. Añadirlo (los errores *reales* ya vienen calculados).
-- Exp. 2 (seno ±600 rpm) → dataset; luego Exp. 3.
+- `scope_m2pc.py` todavía no lee la línea `E`: los paneles de error siguen siendo los aproximados.
+- Al tomar logs con `cat` arrancado antes del flash, la cola del firmware anterior queda al principio del archivo: **recortar desde el último `[boot]`** (el analizador ya debería hacerlo; `analyze_m2pc_log.py` no lo hace aún).
+- Exp. 3a: ADALINE offline con los tres logs de la Exp. 2 y el de 300 rpm de la sesión 22.
 
 ## Sesión 22 — 2026-10-18 — Setup final (llanta + base), scope en vivo, y el CORDIC que devolvía el coseno dos veces
 
