@@ -81,6 +81,8 @@ static void systick_init(uint32_t ticks_per_irq) {
 static volatile int32_t  g_pub_id_sum, g_pub_iq_sum;   /* Σ raw en la ventana */
 static volatile uint32_t g_pub_lag_q32;                /* θ_ol − θ_e           */
 static volatile uint16_t g_pub_raw;                    /* última muestra enc.  */
+static volatile uint32_t g_pub_theta_e;                /* θ_e del último paso  */
+static volatile int32_t  g_pub_sin, g_pub_cos;         /* CORDIC del último paso */
 static volatile uint32_t g_pub_corr;                   /* correcciones del PLL */
 static volatile uint32_t g_pub_i2c_err;
 static volatile uint32_t g_pub_cyc_max;                /* peor paso, ciclos    */
@@ -138,6 +140,8 @@ static void control_step(void) {
         g_pub_id_sum  = id_acc;
         g_pub_iq_sum  = iq_acc;
         g_pub_lag_q32 = g_theta_q32 - theta_e;
+        g_pub_theta_e = theta_e;
+        g_pub_sin = s; g_pub_cos = c;
         id_acc = 0; iq_acc = 0; n_acc = 0U;
     }
 
@@ -174,6 +178,20 @@ int main(void) {
            (unsigned)raw0, (unsigned)PHASE_A_OFFSET_RAW, ENCODER_SIGN);
 
     cordic_init();
+    /* Autotest del CORDIC (sesión 22): CSR debe quedar en 0x00200060 y los
+     * cinco ángulos dar (cos, sin) exactos en Q15. Si una lectura devuelve
+     * el ángulo ANTERIOR, NRES/RESSIZE están mal (ver cordic.c). */
+    printf("[cordic] CSR = %08lX (esperado 00200060)\r\n", (unsigned long)CORDIC->CSR);
+    {
+        static const uint32_t test_th[] = { 0U, 0x20000000U, 0x40000000U, 0x80000000U, 0xC0000000U };
+        for (unsigned k = 0; k < 5; k++) {
+            CORDIC->WDATA = test_th[k];
+            uint32_t r = CORDIC->RDATA;
+            int32_t ss, cc; cordic_sincos_q31(test_th[k], &ss, &cc);
+            printf("[cordic] th=%08lX rdata=%08lX  api: s=%ld c=%ld (Q15)\r\n",
+                   (unsigned long)test_th[k], (unsigned long)r, (long)(ss >> 16), (long)(cc >> 16));
+        }
+    }
 
     /* Potencia + corriente. */
     pwm_init();
@@ -210,14 +228,17 @@ int main(void) {
             int32_t iq_ma = adc_raw_to_ma((int16_t)(g_pub_iq_sum / (int32_t)MON_WINDOW));
             int64_t rpm10 = ((int64_t)theta_pll_omega_tick_q32() * 30000000LL) >> 32;
 
-            printf("S t=%lu lag=%s%ld.%ld id=%ld iq=%ld om=%s%ld.%ld raw=%u\r\n",
+            printf("S t=%lu lag=%s%ld.%ld id=%ld iq=%ld om=%s%ld.%ld raw=%u the=%lu s=%ld c=%ld csr=%08lX\r\n",
                    (unsigned long)g_ticks,
                    (lag10 < 0) ? "-" : "", (long)((lag10 < 0 ? -lag10 : lag10) / 10),
                    (long)((lag10 < 0 ? -lag10 : lag10) % 10),
                    (long)id_ma, (long)iq_ma,
                    (rpm10 < 0) ? "-" : "", (long)((rpm10 < 0 ? -rpm10 : rpm10) / 10),
                    (long)((rpm10 < 0 ? -rpm10 : rpm10) % 10),
-                   (unsigned)g_pub_raw);
+                   (unsigned)g_pub_raw,
+                   (unsigned long)(g_pub_theta_e >> 16),
+                   (long)(g_pub_sin >> 16), (long)(g_pub_cos >> 16),
+                   (unsigned long)CORDIC->CSR);
         }
 
         if ((g_ticks - t_stat) >= 1000U) {

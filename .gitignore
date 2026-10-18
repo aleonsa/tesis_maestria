@@ -62,5 +62,8 @@ opencode.json
 # ── Firmware: vendor de terceros (clone local, no se versiona) ─────────────
 vendor/
 
+# ── Logs serie del banco propio (hasta 25 MB cada uno); se conserva el README ──
+datos_banco/*.log
+
 # graphify — grafo de conocimiento generado, no es fuente
 graphify-out/

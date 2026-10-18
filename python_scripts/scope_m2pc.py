@@ -2,7 +2,7 @@
 """Scopes de 07_m2pc, sin modificar ni enviar comandos al firmware.
 
 python3 python_scripts/scope_m2pc.py --window 3
-python3 python_scripts/scope_m2pc.py --replay datos_axel/m2pc_s21_valle_on.log
+python3 python_scripts/scope_m2pc.py --replay datos_banco/m2pc_s21_valle_on.log
 """
 
 import argparse
@@ -160,7 +160,7 @@ def main():
     ap.add_argument("--baud", type=int, default=921600)
     ap.add_argument("--window", type=float, default=3, help="segundos visibles (0.05–30)")
     ap.add_argument("--speed-ref", type=float, default=300, help="rpm supuestas hasta recibir el banner")
-    ap.add_argument("--save", help="log nuevo; por defecto datos_axel/m2pc_live_<fecha>.log")
+    ap.add_argument("--save", help="log nuevo; por defecto datos_banco/m2pc_live_<fecha>.log")
     ap.add_argument("--replay", help="reproducir un log sin abrir el puerto")
     ap.add_argument("--rate", type=float, default=1, help="velocidad de reproducción")
     ap.add_argument("--duration", type=float, help="cerrar tras N segundos (pruebas)")
@@ -170,7 +170,7 @@ def main():
         ap.error("--window debe estar entre 0.05 y 30; --rate debe ser positivo")
     if not args.save:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        args.save = str(Path(__file__).resolve().parents[1] / "datos_axel" / f"m2pc_live_{stamp}.log")
+        args.save = str(Path(__file__).resolve().parents[1] / "datos_banco" / f"m2pc_live_{stamp}.log")
 
     import numpy as np
     import matplotlib.pyplot as plt

@@ -19,7 +19,7 @@ Resultados:
   - armónicos de esa forma (FFT sobre los bins).
 
 Uso:
-    python3 analyze_m2pc_log.py datos_axel/m2pc_300rpm_2026-10-14.log [--t0 3 --t1 12]
+    python3 analyze_m2pc_log.py datos_banco/m2pc_300rpm_2026-10-14.log [--t0 3 --t1 12]
 
 Caveat: u es el comando medio; el dead-time (500 ns a 50 kHz ≈ 2.5 % de Vbus
 ≈ 0.3 V) distorsiona la tensión real según el signo de la corriente. A baja

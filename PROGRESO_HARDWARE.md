@@ -5,6 +5,53 @@
 
 ---
 
+## Sesión 22 — 2026-10-18 — Setup final (llanta + base), scope en vivo, y el CORDIC que devolvía el coseno dos veces
+
+**Hito**: el setup mecánico definitivo queda validado (λ y BEMF sin cambio, rizo de velocidad a la mitad), el scope en vivo funciona con el motor, y una prueba de regresión de un minuto destapó que **el CORDIC entregaba `sin ≡ cos` desde la sesión 20**: el lazo cerrado de las sesiones 20–21 corrió con la Park y el modelo de BEMF rotos. Corregido en `lib/cordic`, con autotest permanente en 06. FIELD_NOTES N1.27.
+
+### Resultados de banco (en orden cronológico)
+
+1. **Llanta + base impresas, 07 a 300 rpm, 220 s** (CORDIC aún roto, sin saberlo): λ = 3.465 mWb (−1.0 %), e_q = 755 mV, h2/h3/h5/h7 = 0.4/0.8/1.1/0.9 %. ω = 297.1 ± 4.4 rpm (sin llanta: ± 11.8). Los parámetros eléctricos no cambian; la inercia baja el rizo de velocidad a la mitad y, de paso, los armónicos aparentes (parte de lo que medíamos era el rizo de velocidad "manchando" la forma). Régimen en < 2 s; el PI no necesita retoque.
+2. **Regresión de 06 con `tim1_trgo2`** (deuda de la sesión 21): lag y ω idénticos a la sesión 19 (105.0 ± 1.9°, 85.7 rpm) pero **i_dq pulsante a 2·f_e**, 169 ± 160 / −186 ± 171 mA, con |i| colapsando a ~30 mA cada medio ciclo.
+3. **Motor y medida descartados con 02** (barrido 0/170/510): pico 16/17/17 y 38/39/41 raw, RMS 1/8/23 — idéntico a la sesión 18. De paso, la cadena ADC por `tim1_trgo2` queda validada en 02 y 06.
+4. **Firma cuantificada**: DC + 2·f_e con ceros = Park con el mismo factor en ambos productos. Con I = 343 mA (RMS 8 raw × √2) predice DC (171, −171) y |i|máx 485; medido (169, −186) y ~500. Publicados `s`, `c`, θ_e en el stream de 06: **`s == c == cos θ_e`** en todas las muestras.
+5. **Causa 1 — el `CSR` del CORDIC seguía en su reset (`0x50`, `NRES = 0`)**: la escritura justo tras habilitar el reloj se perdía. En la sesión 19 (lib en `-Og`, sin prefetch) los wait-states tapaban el hueco; con `-O2` + `PRFTEN` (sesión 20) dejó de funcionar sin tocar `cordic.c`. Fix: `__DSB()` + relectura del `CSR` hasta que coincida.
+6. **Causa 2 — dos `ldr` consecutivos a `RDATA`**: con `NRES = 1` ya efectivo, el 3.2 % de los pasos seguía con `s == c` (la segunda lectura llega antes de que el periférico cargue el segundo resultado; `__DSB()` entre lecturas no lo arregla). Fix: `RESSIZE = 1`, sin y cos en **una sola lectura** (como el MCSDK). Y una trampa del manual por el camino: con `RESSIZE = 1` hay que poner `NRES = 0` — `NRES` cuenta lecturas de 32 bits, no resultados; con `NRES = 1` cada lectura devolvía el ángulo *anterior* y `RRDY` se quedaba en 1. `CSR` final `0x00200060`.
+7. **06 con el fix**: i_d = **323 ± 16**, i_q = **0.7 ± 7.0 mA**, s² + c² = 1.00000 ± 0.00002 (2257 muestras). Mejor que la sesión 19 (305 ± 25 / 4 ± 16), que ya llevaba el 3 % de lecturas repetidas.
+8. **07 con el fix, 240 s a 300 rpm**: i_q* medio **43 → 7.7 Q8** (el controlador dejó de compensar su propio modelo), rizo de velocidad dominante **2·f_e → f_e** (34.7 Hz), i_d = +8 / i_q = +20 mA, λ = **3.476 mWb** (−0.7 %), h2/h3/h5/h7 = 1.1/0.4/1.0/0.5 %, `overruns = 0`, `paso_max` 13.32 µs. Gráfica: `firmware/apps/07_m2pc/doc/bemf_s22_cordic_fix.png`.
+9. **Scope en vivo** (`scope_m2pc.py`) probado con el motor girando: lectura exclusiva del puerto, log automático, los ocho paneles en tiempo real. Dos tropiezos de operación anotados en `README_scope.md`: hay que abrirlo con la placa ya en 07 (si corre otra app a 115200 el log es basura), y no sobreescribe un log existente.
+
+### Consecuencia para la tesis
+
+Las cifras de *lazo cerrado* de las sesiones 20–21 (seguimiento i_q 160/200, i_q* de −20 a +70, rizo 2·f_e) **no valen como datos**: se tomaron con Park y BEMF rotas. Las identificaciones de λ y la forma de la BEMF sí valen (offline, en αβ, con θ del log). La prueba de seguimiento de corriente (`SPEED_LOOP = 0`, i_q* = 200 mA) hay que repetirla.
+
+### Código
+
+`lib/cordic.{c,h}` (relectura del CSR, `RESSIZE = 1`, `NRES = 0`, una lectura; API Q31 intacta), `apps/06_openloop_sync` (autotest del CORDIC al arrancar: CSR + cinco ángulos; `the`, `s`, `c`, `csr` en el stream). Carpeta nueva **`datos_banco/`** para los logs del banco propio (`datos_axel/` son las grabaciones de otra persona con otro motor); `scope_m2pc.py`, `analyze_m2pc_log.py` y `README_scope.md` apuntan ahí; `.gitignore` excluye `datos_banco/*.log` explícitamente. Logs de hoy: `m2pc_live_20261018_111051_678526.log` (llanta, CORDIC roto), `m2pc_s22_cordic_fix.log`.
+
+### Deuda, conciliada
+
+| Item | Estado |
+|---|---|
+| Apps 02–06 con `tim1_trgo2` | **Cerrado**: 02 y 06 corridas en banco, señal idéntica. |
+| Sesgo +0.5 LSB en Σi | No se persigue (< resolución). Hoy 274 Q8 ≈ 1.1 LSB con el CORDIC sano; vigilar. |
+| Glitch fase C | No reproducido en ~10 min de scope en vivo. Pasa a "limitaciones" salvo que reaparezca. |
+| Race `adc_get_vbus_raw` | Diferido hasta que Vbus entre en el modelo (`VBUS_MV` fijo hoy). |
+| M²PC en CCM-SRAM | Opcional; `overruns = 0` con retardo entero. |
+| 7 citas del `.bib` de memoria | Tarea de escritorio pendiente. |
+
+### Regla nueva
+
+**Cada vez que cambie `lib/` (o los flags de compilación), correr 06** y mirar el autotest del CORDIC y que i_dq sea DC. Es un minuto y es la única prueba que ve la cadena completa sin un lazo externo que tape errores.
+
+### Para las sesiones siguientes
+
+1. Repetir el seguimiento de corriente puro (`SPEED_LOOP = 0`, i_q* = 200 mA, con carga o con límite de velocidad) → cifra que reemplaza al "160 de 200".
+2. Telemetría sincronizada en la ISR (errores muestra a muestra, promediados, con secuencia) para el scope y para la métrica de seguimiento.
+3. Identificación a 600–900 rpm; ADALINE offline y luego en línea; rizo de par vs baseline.
+
+---
+
 ## Sesión 21 — 2026-10-16/17 — Offset de corriente en línea: el valle del PWM como cero de corriente
 
 **Hito**: el offset de los tres canales de corriente se mide en continuo, 50 000 veces por segundo, en el valle del PWM (high-side ON, shunts sin corriente). La media de ia+ib+ic —que es cero físicamente— pasa de derivar ±2 LSB en 10 min a quedarse en **+0.48 ± 0.38 LSB**. FIELD_NOTES N1.26.
@@ -20,7 +67,7 @@
 
 ### Código
 
-`lib/adc.{c,h}` (offsets Q8, rama del valle en la ISR, `tim1_trgo2`), `lib/pwm.{c,h}` (`MMS2`, `pwm_valley_trigger_enable`), `apps/07_m2pc` (`CLARKE_FULL`, `OFFSET_ONLINE`, línea `[off]`), `python_scripts/analyze_m2pc_log.py` (`--win`: DC de e_αβ por ventanas). Logs en `datos_axel/m2pc_s21_*.log` (local, no versionados).
+`lib/adc.{c,h}` (offsets Q8, rama del valle en la ISR, `tim1_trgo2`), `lib/pwm.{c,h}` (`MMS2`, `pwm_valley_trigger_enable`), `apps/07_m2pc` (`CLARKE_FULL`, `OFFSET_ONLINE`, línea `[off]`), `python_scripts/analyze_m2pc_log.py` (`--win`: DC de e_αβ por ventanas). Logs en `datos_banco/m2pc_s21_*.log` (local, no versionados).
 
 ### Pendiente al cerrar sesión 21
 
@@ -40,7 +87,7 @@ hardware).
   errores de corriente, i_αβ, u_αβ comandada, salida del PI. Pausa (solo la vista; la
   adquisición y el log siguen), ventanas 0.1/1/3/10 s, zoom con la barra de Matplotlib.
 - Es el **único lector** del puerto (`exclusive=True`): no correr `cat /dev/ttyACM0` a la vez.
-  Guarda todo lo recibido en `datos_axel/m2pc_live_<fecha>.log` (ignorado por git).
+  Guarda todo lo recibido en `datos_banco/m2pc_live_<fecha>.log` (ignorado por git).
 - `--replay <log>` reproduce un log existente a ritmo real sin abrir el puerto; `--rate 2`
   acelera. Validado con `m2pc_300rpm_2026-10-14.log` y `m2pc_s21_valle_on.log`.
 - ω* sale del banner `w* = N rpm`; si se conecta con el motor ya girando se asume 300 rpm

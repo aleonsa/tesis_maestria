@@ -12,8 +12,12 @@ python3 python_scripts/scope_m2pc.py
 ```
 
 Lee `/dev/ttyACM0` a 921600 baud y guarda automáticamente un log nuevo en
-`datos_axel/m2pc_live_<fecha>.log` (ignorado por Git). Cerrar la ventana cierra
+`datos_banco/m2pc_live_<fecha>.log` (ignorado por Git). Cerrar la ventana cierra
 el puerto, pero **no detiene el motor**. No ejecutar otro lector serie a la vez.
+
+Dos cosas aprendidas en banco (sesión 22): abrirlo **con la placa ya corriendo `07_m2pc`**
+(si corre otra app a 115200 baud el log se llena de basura y no se recupera solo), y
+`--save` **no sobreescribe** un log existente (borra el viejo o cambia el nombre).
 
 ## Controles y señales
 
@@ -41,8 +45,8 @@ no mediciones. No se representa par medido ni ADALINE inexistente.
 ## Reproducir datos, sin mover el motor
 
 ```bash
-python3 python_scripts/scope_m2pc.py --replay datos_axel/m2pc_s21_valle_on.log
-python3 python_scripts/scope_m2pc.py --replay datos_axel/m2pc_s21_valle_on.log --rate 2
+python3 python_scripts/scope_m2pc.py --replay datos_banco/m2pc_s21_valle_on.log
+python3 python_scripts/scope_m2pc.py --replay datos_banco/m2pc_s21_valle_on.log --rate 2
 ```
 
 Los reinicios del dispositivo limpian la historia para no unir corridas.
@@ -58,6 +62,6 @@ python3 -m unittest discover -s python_scripts -p 'test_scope_m2pc.py'
 Prueba gráfica con cierre y captura automáticos:
 
 ```bash
-python3 python_scripts/scope_m2pc.py --replay datos_axel/m2pc_s21_valle_on.log \
+python3 python_scripts/scope_m2pc.py --replay datos_banco/m2pc_s21_valle_on.log \
   --duration 5 --snapshot /tmp/opencode/scope_m2pc.png
 ```

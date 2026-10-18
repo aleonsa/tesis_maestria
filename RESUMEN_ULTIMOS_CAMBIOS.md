@@ -1,4 +1,4 @@
-# Resumen de los últimos cambios (al 2026-10-18)
+# Resumen de los últimos cambios (al 2026-10-18, sesión 22)
 
 Cubre el trabajo posterior al commit `dee0967` (2026-08-23): redacción del Cap. 1 de la
 tesis (2026-08-17), la sesión 15 de firmware (2026-08-24), la sesión 16 (2026-10-11),
@@ -165,7 +165,18 @@ Detalle completo en `PROGRESO_HARDWARE.md` sesión 17.
    todo). i_dq y errores son aproximados por el desfase del logger; el siguiente paso es
    telemetría sincronizada en la ISR (errores muestra a muestra + secuencia). Ver
    `python_scripts/README_scope.md`. Aún no probado con el motor girando.
-7. Identificación a 600–900 rpm; ADALINE offline (Python) y luego en línea; afinar PI; rizo
-   de par vs baseline.
-8. Deuda: glitch esporádico de fase C (una muestra en 12 000), race de `adc_get_vbus_raw`,
-   M2PC en CCM-SRAM para recuperar el medio periodo.
+7. **Sesión 22 (2026-10-18) — setup final y bug del CORDIC.** Llanta + base montadas: λ y
+   BEMF sin cambio (3.476 mWb, armónicos ≤ 1.1 %), rizo de velocidad a la mitad por la
+   inercia. Scope en vivo validado con el motor. La regresión de 06 destapó que **el CORDIC
+   devolvía `sin ≡ cos` desde la sesión 20** (la escritura del CSR tras habilitar el reloj se
+   perdía con `-O2` + prefetch; además dos lecturas seguidas a RDATA se adelantaban el 3 % de
+   las veces). Fix en `lib/cordic`: relectura del CSR, resultados de 16 bits en una sola
+   lectura (`RESSIZE=1`, `NRES=0`). 06: i_dq 323 ± 16 / 0.7 ± 7 mA. 07: i_q* medio 43 → 7.7,
+   rizo 2·f_e → f_e. **Las cifras de lazo cerrado de las sesiones 20–21 no valen como datos**
+   (la identificación de λ sí). Logs del banco propio ahora en `datos_banco/`. FIELD_NOTES
+   N1.27. Regla: cada cambio en `lib/` → correr 06.
+8. Repetir el seguimiento de corriente puro (`SPEED_LOOP = 0`); telemetría sincronizada en la
+   ISR; identificación a 600–900 rpm; ADALINE offline y luego en línea; rizo de par vs baseline.
+9. Deuda conciliada en PROGRESO sesión 22: apps 02–06 con `tim1_trgo2` cerrado; glitch de
+   fase C no reproducido; race de `adc_get_vbus_raw` y CCM-SRAM diferidos; 7 citas del `.bib`
+   pendientes.

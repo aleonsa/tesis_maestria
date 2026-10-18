@@ -46,6 +46,8 @@
 - [N1.23 — La paradoja de corriente, desarmada: valle del PWM, red de polarización y 34 LSB/A](#n123--la-paradoja-de-corriente-desarmada-valle-del-pwm-red-de-polarización-y-34-lsba)
 - [N1.24 — i_dq constante: la prueba que valida toda la cadena (y cazó dos signos cancelados)](#n124--i_dq-constante-la-prueba-que-valida-toda-la-cadena-y-cazó-dos-signos-cancelados)
 - [N1.25 — Primer lazo cerrado: dónde cae la UEV, cuánto cuesta un ciclo desde flash, y la BEMF leída del propio controlador](#n125--primer-lazo-cerrado-dónde-cae-la-uev-cuánto-cuesta-un-ciclo-desde-flash-y-la-bemf-leída-del-propio-controlador)
+- [N1.26 — El offset de corriente no es un número: se mide en el valle, cada 20 µs](#n126--el-offset-de-corriente-no-es-un-número-se-mide-en-el-valle-cada-20-µs)
+- [N1.27 — Un periférico que devuelve lo mismo dos veces: el CORDIC, el reloj recién habilitado y lo que cuenta NRES](#n127--un-periférico-que-devuelve-lo-mismo-dos-veces-el-cordic-el-reloj-recién-habilitado-y-lo-que-cuenta-nres)
 
 ---
 
@@ -4562,5 +4564,115 @@ validó el valle. Dejarlo impreso a 1 Hz cuesta tres sumas.
 **3. Limpiar el flag al entrar.** La regla general de las ISR con fuentes que pueden
 reactivarse durante el handler. Con una sola fuente a 50 kHz nunca importó; con dos a 100 kHz
 habría perdido todos los valles en silencio.
+
+---
+
+## N1.27 — Un periférico que devuelve lo mismo dos veces: el CORDIC, el reloj recién habilitado y lo que cuenta NRES
+
+### Panorama
+
+Una prueba de regresión de 1 minuto (`06_openloop_sync`, "i_dq debe ser DC") para cerrar una
+deuda menor (las apps 02–06 no se habían vuelto a probar con `tim1_trgo2`) devolvió i_dq
+pulsando a 2·f_e con |i| que colapsaba a cero. El ADC, el encoder, el PLL y el motor estaban
+bien. Lo que fallaba era el **CORDIC**: devolvía el coseno dos veces, `sin ≡ cos`. Y llevaba
+así desde la sesión 20, es decir, **todo el lazo cerrado de las sesiones 20 y 21 corrió con
+la Park y el modelo de BEMF rotos**. El PI de velocidad lo tapaba: el motor giraba a 300 rpm
+y la identificación de λ (offline, en αβ) salía bien. Nadie miró i_dq *dentro* del
+controlador.
+
+### 1. Leer la firma antes de tocar nada
+
+Con θ_e correcta (el lag θ_ol − θ_e era constante, 105°, como en la sesión 19) y la corriente
+real un círculo (02 dio 38/39/41 raw de pico en las tres fases, idéntico a la sesión 18), un
+i_dq con DC + 2·f_e **y ceros periódicos** solo sale de una Park con el mismo valor en los dos
+factores: i_d = (i_α + i_β)·c, i_q = (i_β − i_α)·c, que se anula cuando c = 0. La
+cuantificación cerró la hipótesis antes de instrumentar: con I = 343 mA (RMS 8 raw × √2) el
+modelo predice DC = (171, −171) y |i|máx = 485; medido (169, −186) y ~500. La alternativa
+"i_β ≡ 0" pedía I = 502 y no cuadraba con el máximo.
+
+Luego se publicaron `s`, `c` y θ_e en el stream: `s == c == cos θ_e`, muestra a muestra.
+
+### 2. Primera causa: la escritura al CSR se perdía
+
+`CSR` leído tras `cordic_init()`: **`0x00000050`, el valor de reset** (`PRECISION = 5`,
+`NRES = 0`). El `str` al `CSR` iba justo detrás de `RCC->AHB1ENR |= CORDICEN` y de la
+relectura de `AHB1ENR`. RM0440 §7.2.17: tras habilitar el reloj de un periférico hay que
+esperar antes de acceder a sus registros. La relectura del registro del RCC es la receta
+estándar, y bastó en la sesión 19 porque la lib compilaba en `-Og` sin prefetch de flash:
+cada instrucción pagaba wait-states y el CORDIC tenía reloj cuando llegaba la escritura. La
+sesión 20 puso la lib en `-O2` y activó `PRFTEN` por el presupuesto del M²PC —y la misma
+secuencia dejó de funcionar sin cambiar una línea de `cordic.c`.
+
+Con `NRES = 0` el periférico entrega un solo resultado por cálculo; la segunda lectura de
+`RDATA` devuelve el valor que ya estaba: el coseno.
+
+Fix: `__DSB()` tras habilitar el reloj y **relectura del `CSR` hasta que coincida**. Un init
+que no verifica es un init que puede fallar en silencio con el siguiente cambio de flags.
+
+### 3. Segunda causa: dos lecturas consecutivas a RDATA
+
+Con el `CSR` ya correcto (`NRES = 1`), el 3.2 % de los pasos seguía dando `s == c`. Dos `ldr`
+seguidos a la misma dirección: el primero se detiene hasta que hay resultado (RM0440 §17.3.5,
+es la forma de "polling sin flag"); el segundo llega en el ciclo siguiente y, a veces, antes
+de que el periférico haya cargado el segundo resultado. Un `__DSB()` entre lecturas no lo
+corrige (no es un problema de orden del core, es de latencia del periférico), y no hay flag
+que mirar: `RRDY` se mantiene a 1 hasta la última lectura.
+
+Fix estructural: **resultados de 16 bits** (`RESSIZE = 1`). Sin y cos llegan empaquetados en
+una sola palabra —`[15:0]` cos, `[31:16]` sin, q1.15— y no existe segunda lectura que pueda
+adelantarse. Es la configuración del MCSDK de ST. La API sigue entregando Q31 (los 16 bits
+bajos a cero); 06 y 07 no cambian. Precisión 3·10⁻⁵: para corrientes de decenas de LSB y para
+λω·sin θ es ruido de cuantización dos órdenes por debajo del ADC.
+
+### 4. Y una trampa del manual: NRES cuenta lecturas, no resultados
+
+Primer intento con `RESSIZE = 1` y `NRES = 1`: el seno salía bien y el coseno basura. El
+autotest con ángulos conocidos lo hizo evidente:
+
+```
+th=00000000 rdata=00007FFF   ← (cos, sin) de 0°    correcto
+th=20000000 rdata=00007FFF   ← ¡el de 0° otra vez!
+th=40000000 rdata=5A825A82   ← el de 45°
+th=80000000 rdata=7FFF0000   ← el de 90°
+```
+
+Cada lectura devolvía el cálculo **anterior** y `RRDY` se quedaba en 1. `NRES` es el número de
+*lecturas de 32 bits* que el periférico espera por cálculo; con `RESSIZE = 1` los dos
+resultados ya caben en una, así que `NRES` debe ser 0. Con `NRES = 1` y una sola lectura por
+cálculo se acumula una palabra pendiente y todo sale desplazado un paso. Configuración final:
+`CSR = 0x00200060` (`RESSIZE`, `PRECISION = 6`, `NRES = 0`, `FUNC = cos`).
+
+### 5. Resultado
+
+`06_openloop_sync` (10 Hz_e, amp 10 %):
+
+| | sesión 19 | sesión 22, antes | sesión 22, después |
+|---|---|---|---|
+| i_d | 305 ± 25 mA | 169 ± 160 | **323 ± 16** |
+| i_q | 4 ± 16 mA | −186 ± 171 | **0.7 ± 7.0** |
+| s² + c² | — | 0.83 ± 0.46 | **1.00000 ± 0.00002** |
+
+Mejor que la sesión 19, que ya llevaba el 3 % de lecturas repetidas sin que nadie lo supiera.
+`07_m2pc` a 300 rpm: i_q* medio de 43 a **7.7 Q8** (el controlador dejó de compensar su propio
+modelo), rizo de velocidad dominante de 2·f_e a **f_e**, `overruns = 0`, `paso_max` 13.3 µs.
+
+### Por qué importa
+
+**1. Un cambio de flags de compilación es un cambio de hardware.** `-O2` y el prefetch no
+tocaron `cordic.c` y lo rompieron. Toda secuencia "habilitar reloj → configurar" debe
+verificarse por relectura, porque la única garantía de que funcionó era un retraso accidental.
+
+**2. "Funciona" no es una prueba.** El motor giró a 300 rpm durante dos sesiones con la Park
+rota. Un lazo externo robusto esconde un lazo interno mal construido. La prueba que lo
+destapó —i_dq DC en open-loop— existía desde la sesión 19 y no se volvió a correr tras cambiar
+la lib. Ahora 06 lleva un autotest del CORDIC con cinco ángulos conocidos, y la regla es:
+**cada vez que cambie `lib/`, correr 06.**
+
+**3. Dos lecturas a un registro de resultado son un race salvo que el manual diga lo
+contrario.** Si el periférico puede entregar todo en una lectura, esa es la configuración.
+
+**4. Cuantificar la firma antes de instrumentar.** El modelo "s = c" predijo DC y máximo con
+el dato de otra app (02) antes de tocar una línea; el instrumento solo confirmó. Lo que no
+cuadraba numéricamente (la fase abierta, i_β ≡ 0) se descartó sin flashear nada.
 
 ---
