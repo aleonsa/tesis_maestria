@@ -3,6 +3,15 @@
 
 #include <stdint.h>
 
+/* Regla de sector (A/B de la sesión 24, 600 rpm):
+ *   0: BEMF, θ_e + 90° (paper, eq. 4). Solo par positivo: no frena ni invierte.
+ *   1: tensión deadbeat e + R·i* + (L/Ts)(i* − i). Invierte, pero el término
+ *      de L mete el ruido de medida en el sector: rizo pk-pk 667 mA.
+ *   2: tensión de régimen e + R·i*. Invierte y no lleva ruido. Adoptada. */
+#ifndef M2PC_SECTOR_DEADBEAT
+#define M2PC_SECTOR_DEADBEAT 2
+#endif
+
 /*
  * m2pc.h — FCS-M²PC: control predictivo de corriente con conjunto finito y
  * modulación de dos vectores + nulo (Coronado-Andrade et al. 2025, Alg. 3;

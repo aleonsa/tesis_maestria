@@ -49,9 +49,22 @@ En αβ: λ = 3.487 mWb, h3 0.29|0.56 %, h5 0.28|0.44 %, resto < 0.1 %.
 
 `apps/08_bemf_oc` (nueva), `python_scripts/bemf_oc_analyze.py`, `python_scripts/bemf_2804_oc.json`. Log: `datos_banco/bemf_oc_s24_run1.log` (120 s, 2.5 kHz). **Al terminar: quitar la resistencia de 10 kΩ antes de volver a 07** (con el puente activo inyectaría 1 mA a OUT1: inocuo, pero no es el setup de control).
 
+### Offset 2563 y A/B de la regla de sector (misma sesión, resistencia ya retirada)
+
+**Offset**: con `PHASE_A_OFFSET_RAW = 2563` a 600 rpm, e_d offline pasa de +27 a **−6.8 mV** (0.3°): el ángulo queda corregido ✓. Pero i_d solo baja de +21.8 a +17.4 mA: la mayor parte del i_d estacionario **no** era el ángulo; es error de régimen del M²PC (sin integrador) y depende de qué vectores use.
+
+**Sector, A/B a 600 rpm constante, mismo offset** (`M2PC_SECTOR_DEADBEAT` en `m2pc.h`):
+
+| regla | i_d | RMS ε_q | RMS ε_d | pk‑pk i_q | invierte |
+|---|---|---|---|---|---|
+| 0: BEMF θ_e + 90° (paper) | +36 | 56.1 | 73.2 | 432 mA | no |
+| 1: deadbeat e + R·i* + (L/Ts)(i* − i) (s23) | +18 | 72.1 | 65.2 | **667** | sí |
+| **2: régimen e + R·i*** | +30 | **43.7** | **54.2** | **377** | **sí** (±300 rpm: RMS 6.5 rpm, \|i_q*\| ≤ 58 mA) |
+
+La deadbeat mete el ruido de medida en el sector: (L/Ts)·1 LSB = 1.3 V, comparable a la BEMF → el sector salta al azar en régimen. La de régimen sigue a i* cuando e es pequeña y a e cuando domina, sin ruido. **Adoptada (= 2)**; `paso_max` 15.8 µs. Es la versión que va a la tesis como extensión de la eq. 4 del paper.
+
 ### Para las sesiones siguientes
 
-- Quitar la resistencia; reflashear 07; probar `PHASE_A_OFFSET_RAW = 2563` (06: lag; 07: i_d → 0 a 600 rpm).
 - Exp. 3b: ADALINE en línea con la forma de referencia ya medida; comparativa 3c.
 - Opcional: repetir 08 logueando el raw mecánico para caracterizar la INL del AS5600.
 

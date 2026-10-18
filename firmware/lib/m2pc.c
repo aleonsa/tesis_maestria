@@ -129,10 +129,25 @@ void m2pc_step(const m2pc_in_t *in) {
     const int32_t ri_b = ((in->ref_beta  >> 4) * M2PC_RK_Q8) >> 12;
     const int32_t ld_a = (int32_t)(((int64_t)(in->ref_alpha - i1_a) * s_invg_q8) >> 8);
     const int32_t ld_b = (int32_t)(((int64_t)(in->ref_beta  - i1_b) * s_invg_q8) >> 8);
+#if (M2PC_SECTOR_DEADBEAT == 1)
     uint32_t s = sector_of(in->e_alpha + ri_a + ld_a, in->e_beta + ri_b + ld_b);
     if (s > 5U) {
         s = (uint32_t)(((uint64_t)(in->theta_e_q32 + 0x40000000U) * 6U) >> 32);
     }
+#elif (M2PC_SECTOR_DEADBEAT == 2)
+    /* Tensión de RÉGIMEN u_ss = e + R·i*: sin el término (L/Ts)(i* − i), que
+     * con 1 LSB de ruido vale 1.3 V y hacía saltar el sector al azar en
+     * régimen (sesión 24: pk-pk 667 vs 432 mA a 600 rpm). u_ss sigue a la
+     * referencia cuando e es pequeña (frena, invierte) y a e cuando domina. */
+    (void)ld_a; (void)ld_b;
+    uint32_t s = sector_of(in->e_alpha + ri_a, in->e_beta + ri_b);
+    if (s > 5U) {
+        s = (uint32_t)(((uint64_t)(in->theta_e_q32 + 0x40000000U) * 6U) >> 32);
+    }
+#else
+    (void)ri_a; (void)ri_b; (void)ld_a; (void)ld_b;
+    const uint32_t s = (uint32_t)(((uint64_t)(in->theta_e_q32 + 0x40000000U) * 6U) >> 32);
+#endif
 
     /* 3. Rejilla sobre (n, m), n + m ≤ ρ. Residuo r = ref − pred; se recorre
      *    restando los incrementos precalculados del sector. */

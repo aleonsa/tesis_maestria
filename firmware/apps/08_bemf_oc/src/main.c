@@ -47,7 +47,7 @@
 #include "theta_pll.h"
 #include "adc.h"
 
-#define PHASE_A_OFFSET_RAW   2558U
+#define PHASE_A_OFFSET_RAW   2563U   /* 2558 + 4.6: +2.85° e medidos en 08 (sesión 24) */
 #define ENCODER_SIGN         (+1)
 #define THETA_E_OFFSET_Q32   (THETA_PLL_POLE_PAIRS * (PHASE_A_OFFSET_RAW << 20))
 

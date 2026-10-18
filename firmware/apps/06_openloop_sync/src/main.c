@@ -38,7 +38,7 @@
 /* --------------------------------------------------------------------------
  * Constantes del banco (05_phase_align, 2026-10-13).
  * -------------------------------------------------------------------------- */
-#define PHASE_A_OFFSET_RAW   2558U
+#define PHASE_A_OFFSET_RAW   2563U   /* 2558 + 4.6: +2.85° e medidos en 08 (sesión 24) */
 #define ENCODER_SIGN         (+1)
 
 /* θ_e = SIGN · p · (θ̂ − OFF) = SIGN · (p·θ̂ − p·OFF). El PLL ya entrega p·θ̂

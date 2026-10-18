@@ -40,7 +40,7 @@
 #include "m2pc.h"
 
 /* ── Constantes del banco (05_phase_align) ───────────────────────────── */
-#define PHASE_A_OFFSET_RAW   2558U
+#define PHASE_A_OFFSET_RAW   2563U   /* 2558 + 4.6: +2.85° e medidos en 08 (sesión 24) */
 #define ENCODER_SIGN         (+1)
 #define THETA_E_OFFSET_Q32   (THETA_PLL_POLE_PAIRS * (PHASE_A_OFFSET_RAW << 20))
 
@@ -63,7 +63,7 @@
  * ~1500 rpm/s → la planta vale ~10 (rpm/s)/mA. Con Kp = 2 mA/rpm el lazo
  * queda en ~20 s⁻¹ (~3 Hz), Ki pone el cero en 10 s⁻¹. Conservador. */
 #define SPEED_LOOP           1
-#define W_REF_RPM            300
+#define W_REF_RPM            600
 #define IQ_REF_MA            200      /* solo con SPEED_LOOP = 0 */
 #define IQ_MAX_MA            300      /* saturación del PI (0.6·Inom) */
 #define PI_KP_MA_PER_RPM     2.0
