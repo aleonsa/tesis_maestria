@@ -5,7 +5,7 @@
 
 ---
 
-## Sesión 24 — 2026-10-18 — Exp. 2b: la BEMF real del 2804, medida en circuito abierto
+## Sesión 24 — 2026-10-18 — Exp. 2b (BEMF real en circuito abierto), offset 2563, A/B del sector, reporte visual
 
 **Hito**: la forma de la BEMF del motor medida **sin modelo** (sin R, L, dead‑time ni tensión comandada), con la red de sensado de BEMF de la propia placa y la llanta girada a mano: **THD 0.42 / 0.67 / 0.64 % por fase**, λ = 3.487 mWb, y el error de alineación del encoder medido directamente: **+2.85°** eléctricos. Hasta donde sabemos (PLANNING §3.5), es el primer reporte cuantitativo de la forma de BEMF de un 2804. Gráfica: `firmware/apps/08_bemf_oc/doc/bemf_oc_s24_forma.png`; coeficientes: `python_scripts/bemf_2804_oc.json`.
 
@@ -65,8 +65,10 @@ La deadbeat mete el ruido de medida en el sector: (L/Ts)·1 LSB = 1.3 V, compara
 
 ### Para las sesiones siguientes
 
-- Exp. 3b: ADALINE en línea con la forma de referencia ya medida; comparativa 3c.
-- Opcional: repetir 08 logueando el raw mecánico para caracterizar la INL del AS5600.
+- **Exp. 3b — ADALINE en línea**, en dos pasos: (1) réplica bit‑exacta en Python (formatos Q, observador algebraico sobre medias de 1 ms, LMS a 1 kHz fuera de la ISR, evaluación W·x(θ) en la ISR) alimentada con los logs de las Exp. 2 y la s22, validada contra el LMS en float de la Exp. 3a; (2) port a C en `07_m2pc` (option `ADALINE = 0/1`, presupuesto: quedan ~4 µs de los 20). Decisiones ya tomadas: H = 6–7, μ = 2·10⁻³ a 1 kHz, forma de referencia = `bemf_2804_oc.json` (para juzgar qué aprende).
+- **Exp. 3c — comparativa**: repetir la Exp. 1 con `ADALINE = 1` a 300 y 600 rpm; tabla RMS ε_q/ε_d, rizo, sesgo, i_d vs el baseline sinusoidal; curva W(t); forma aprendida vs real.
+- Opcional: repetir 08 logueando el raw mecánico para caracterizar la INL del AS5600 (candidata a ser la cota de sistemático del residuo de 84 mV).
+- Reporte visual: `docs/banco_2804.html` (sesiones 16–24); regenerar con `python_scripts/make_bench_report.py` cuando haya datos del 3b/3c.
 
 ## Sesión 23 — 2026-10-18 — Exp. 1, 2 y 3a del subplan: seguimiento en la ISR, trayectoria con inversión (y el sector que no sabía frenar), BEMF reconstruida offline
 

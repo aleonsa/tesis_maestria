@@ -183,7 +183,15 @@ Detalle completo en `PROGRESO_HARDWARE.md` sesión 17.
    Dos bugs más: FPU nunca habilitado (primer `float` del proyecto) y el **sector del M²PC
    elegido por la BEMF no puede frenar ni invertir** → ahora por la tensión deadbeat
    (`lib/m2pc.c`), lo que además eliminó el sesgo de i_q. Dataset del ADALINE grabado.
-9. Exp. 3: ADALINE offline (Python) con los logs de la Exp. 2 → en línea → comparativa.
+9. **Sesión 24 (2026-10-18) — Exp. 2b**: app `08_bemf_oc`, BEMF en circuito abierto con la red de BEMF
+   de la placa (PA4/PC4/PB11) + 10 kΩ externa de +12 V a OUT1 (modo común 3.7 V, verificado): **THD
+   0.42/0.67/0.64 %**, h3 ≤ 0.6 %, λ = 3.49 mWb, alineación del encoder **+2.85°** → `PHASE_A_OFFSET_RAW`
+   2558 → 2563. La BEMF "vista por el controlador" (Exp. 3a) sobreestimaba h2–h6 2–5×: dead-time
+   disfrazado de armónicos. A/B de la regla de sector a 600 rpm: la deadbeat metía ruido en el sector
+   (pk-pk 667 mA); adoptada la de régimen `u_ss = e + R·i*` (pk-pk 377, RMS ε_q 44, invierte: ±300 rpm
+   RMS 6.5 rpm). Reporte visual `docs/banco_2804.html` (BEMF animada con los coeficientes medidos).
+10. Exp. 3b: ADALINE en línea — réplica bit-exacta en Python validada con logs → port a C (07_m2pc,
+    `ADALINE = 0/1`, H = 6–7, μ = 2e-3 a 1 kHz) → Exp. 3c: comparativa vs baseline sinusoidal.
 10. Deuda conciliada en PROGRESO sesión 22: apps 02–06 con `tim1_trgo2` cerrado; glitch de
    fase C no reproducido; race de `adc_get_vbus_raw` y CCM-SRAM diferidos; 7 citas del `.bib`
    pendientes.
