@@ -10,6 +10,8 @@ add_executable(m2pc.elf
 )
 
 target_compile_options(m2pc.elf PRIVATE -O2)
+option(M2PC_ADALINE "Usar ADALINE experimental en el predictor de 07" OFF)
+target_compile_definitions(m2pc.elf PRIVATE ADALINE=$<BOOL:${M2PC_ADALINE}>)
 target_link_libraries(m2pc.elf PRIVATE stm32g4_lib)
 
 target_link_options(m2pc.elf PRIVATE -Wl,-Map=m2pc.map)

@@ -5,6 +5,200 @@
 
 ---
 
+## Sesión 26 — 2026-10-20 — Exp. 3b EN BANCO: presupuesto ISR resuelto, pero el ADALINE online es estable-y-peor (resultado negativo limpio)
+
+**Secuencia**: 06 (regresión) ✓ → 07 OFF baseline ✓ → 07 ON en tres iteraciones → **conclusión: con este motor/inversor el
+ADALINE online no puede mejorar el rizo; el modelo sinusoidal ya es el mejor predictor**. Banco devuelto a OFF
+(overruns=0, 0 trips). Logs: `datos_banco/m2pc_s26_adaline_on_traj300.log` (μ=131, hasta TRIP),
+`datos_banco/m2pc_s26_adaline_mu1e4.log` (μ=7, 100 s), `s26_07_off.log` (baseline 45 s).
+
+### 1. Presupuesto de ISR — tres iteraciones hasta cumplir
+
+| iteración | eval | resultado |
+|---|---|---|
+| v1: basis()/g_axis() desde flash | 766 ciclos (4.5 µs) | paso ~21 µs típico → **overruns ~44k/s** |
+| v2: mismas fn en .data (SRAM) | ¡1109 ciclos! peor | overruns iguales; descartado (el `-g1` por el bug DWARF de gcc revertido) |
+| v3: **eval plano desenrollado** (sin llamadas, sin arrays en stack, ambos ejes entrelazados) | **365 ciclos (2.1 µs)** | **overruns=4** (arranque), paso_max 17.85 µs ✓ |
+
+Lecciones: (a) el codegen ya era SMULL óptimo — el costo extra era la estructura (llamadas + arrays en stack +
+doble pasada por eje); (b) "bit-exact" no implica "rápido": medir siempre con DWT en el target; (c) la bisección
+con `ADALINE_EVAL_NOP` confirmó que el cómputo del eval era el causante de los overruns (quedó el define en
+main.c por si hace falta de nuevo). Coste colateral medido: `corr/s` 1960 → 1785 (el eval alarga la ISR de
+control y el servicio del I²C pierde ~9 % de muestras de encoder; el PLL extrapola, comportamiento aceptable
+pero cuantificado).
+
+### 2. Cadencia real del LMS: el cuello es foreground, no el algoritmo
+
+- Con L a 1 kHz el loop foreground solo itera ~730 veces/s (el printf de L cuesta ~0.7 ms); el hook del
+  ADALINE consumía la ventana más reciente y `delta_seq` era casi siempre ≥2 → **updates=0**.
+- Fix: con `ADALINE=1` la línea L se decima a 10 Hz (métricas por E/W). El loop sube, pero la ISR de control
+  ocupa ~80 % de la CPU y foreground consume ~500 ventanas/s: **updates ≈ 230/s, skipped ≈ 285/s, gated ≈
+  60/s** (a 300 rpm de trayectoria). El μ efectivo es ~4× menor que el nominal: otra razón para no comparar
+  tiempos de convergión con la réplica.
+- Esto valida la advertencia del README: 1 kHz nominal ≠ 1000 updates/s. La telemetría `[adaline]
+  updates/skipped/gated` y la línea `W` (28 pesos Q27 a 1 Hz) quedan en el firmware.
+
+### 3. Estabilidad en lazo cerrado — el resultado central de la sesión
+
+Trayectoria ±300 rpm, 100 mHz, mismas condiciones OFF/ON:
+
+| config | ε_q RMS | ε_d RMS | evolución | desenlace |
+|---|---|---|---|---|
+| OFF (sinusoidal) | **45 mA** | 39 mA | plano toda la corrida | sano |
+| ON μ=2e-3 (131) | 73→81→111→119→138 mA | 55→105 mA | degradación monótona en 25 s | **TRIP** i_alpha=1.2 A (t≈138 s) |
+| ON μ=1e-4 (7) | ~100–105 mA | ~67–73 mA | plano tras el transitorio inicial, 100 s | estable pero **2.3× peor que OFF** |
+
+- **μ=2e-3 es inestable en lazo** (aunque convergía offline en la réplica). Mecanismo: ê alimenta el predictor
+  y la **regla de sector** (`u_ss = e + R·i*`, la extensión de la s24) → el error de forma desplaza el sector →
+  cambia el patrón de rizo → el observador (ū − R·ī − L·Δī/Δt, dominado por dead-time/distorsión) ve una
+  "BEMF" distinta → W la aprende → la espiral se cierra. La réplica no lo veía porque ahí ê no cerraba el lazo.
+- **μ=1e-4 estabiliza el lazo pero W converge a una forma dañina**: en 100 s el h2 α aprendido crece
+  0 → 17.6 % (la réplica offline, con logs a offset 2558, medía h2 α ≈ 1 % y la OC 0.07 %). El drift es
+  monótono y no se satura en un valor pequeño.
+- **Interpretación**: el observable reconstruido desde la tensión comandada está dominado por la distorsión del
+  inversor y los errores de modelo (R, L, dead-time), no por los armónicos del imán (THD real 0.4–0.7 %). El
+  ADALINE aprende *fielmente* esa distorsión — y meterla en el predictor es peor que la sinusoide ideal. Con un
+  motor de BEMF casi perfectamente sinusoidal, **no hay nada útil que aprender**: el punto de decisión 2 del
+  PLANNING cierra también para la vía online.
+
+### 4. Segunda tanda (misma sesión): controles que faltaban — la conclusión cambia de "daña" a "no puede ayudar"
+
+El punto 3 tenía dos confusores: el ON corría con la ISR al borde del presupuesto y la comparación se hizo
+en trayectoria. Se añadieron overrides de CMake (`EXP_*`: μ, H, puerta, trayectoria, ω*, sector, modelo
+inicial, decimación de L) y se repitió con controles. Todas las corridas a **300 rpm constante** (a 600 rpm el
+M²PC cuesta 10.7 µs y no queda margen; ver abajo), `overruns = 0` salvo indicación.
+
+| run | config | ε_q | ε_d | nota |
+|---|---|---|---|---|
+| A | ON, μ=0, trayectoria | 48.6 | 38.7 | = OFF (45): la **implementación es inocua**; los 100 mA de antes eran aprendizaje |
+| B-OFF | OFF, L a 1 kHz | 55.4 | 44.7 | baseline "histórico" |
+| B-OFF′ | OFF, **L decimado 1/100** | **46.7** | **43.1** | el `printf` de L a 1 kHz degradaba el baseline un 15 % (PI de velocidad a ~730 Hz irregular). **Afecta a cifras previas** (s23/s24) |
+| B-ON μ=0 | H=3, modelo nominal, sin aprender | 48.0 | 41.0 | control: la vía eval+decimación ≡ OFF′ |
+| B-ON | H=3, μ=1e-4, puerta 500 mV, 150 s | 44.8 | 39.3 | aprendizaje neto **−4 % / −9 %**: marginal; W drifta (h2 5.8 %, no satura) |
+| E-μ0 | modelo **erróneo** (λ·0.8, +10°), sin aprender | **44.1** | 39.7 | ¡igual que el correcto! el seguimiento es insensible a ≤20 % de error de BEMF |
+| E | ídem con μ=1e-4, 180 s | 46.6→55.1 | 40.5→44.2 | b1α −0.79 → −1.01 en 90 s (**recupera λ** ✓) pero converge al mismo punto fijo que B-ON (a1α −0.16, b1β −0.25, h2 8 % creciendo) y ε_q empeora lento |
+
+**Lecturas (las que van a la tesis):**
+
+1. **Presupuesto**: con H=7 la ISR ON típica era ≈19 µs de 20 y el foreground se quedaba con ~5 % de CPU
+   (`printf` de 3 caracteres: 0.58 ms; PI de velocidad a 100 Hz; LMS a 6 updates/s) — la primera tanda a
+   velocidad constante **no era válida**. Con **H=3** (h5/h7 reales ≤ 0.5 %: irrelevantes en el 12N14P) el
+   eval cuesta 235 ciclos, `overruns = 0`, ~420 updates/s. 600 rpm sigue fuera de presupuesto: el camino es
+   CCM-SRAM para `m2pc_step` (linker script propio; el stock no tiene región CCM).
+2. **El seguimiento de corriente del M²PC es insensible a la forma de la BEMF en este banco**: un error del
+   20 %/10° no cambia ε_q (E-μ0). Aritmética: G·150 mV ≈ 0.1 LSB/paso (3 mA) frente a 300 mA pk-pk de rizo
+   de conmutación (V_dc·T_s/L). Por eso ni el online ni una forma perfecta pueden mostrar mejora; solo
+   errores ≥50 % (el W desbocado de la primera tanda) llegan a dañar. **Este es el argumento central**, más
+   fuerte que "la BEMF es sinusoidal": aun con armónicos del 5 % no se vería.
+3. **El LMS funciona como identificador**: recupera λ desde un 20 % de error en ~90 s en lazo cerrado. Pero su
+   punto fijo es la *tensión efectiva vista por el controlador* — secuencia negativa (asimetría α/β de la
+   cadena de medida) + h2/h3 que crecen sin saturar — no la BEMF del imán; a largo plazo degrada. Sin
+   compensación de dead-time/asimetría en el observador, el online no debe quedarse activo.
+4. **Metodológico**: el logger L a 1 kHz contaminaba el baseline (15 %). Toda comparación futura con
+   `LOG_L_DECIM` idéntico en ambos builds; las cifras s23/s24 de ε_q llevan ese sesgo (constante entre sí,
+   pero no comparables con las de hoy).
+
+Logs: `datos_banco/m2pc_s26_{A_on_mu0_traj300,B_off_300rpm,B_off_300rpm_b,B_off_300rpm_ldec100,B_on_300rpm_mu7_gate500,B_on_300rpm_H3_mu7,B_on_600rpm_mu7_gate500,E_wrong_mu0_300rpm,E_wrong_mu7_300rpm}.log`
+(`B_on_300rpm_mu7_gate500` y `B_on_600rpm` son las corridas H=7 inválidas por starvation; se guardan como evidencia).
+Herramientas: `python_scripts/bench_run.sh` (flash + captura + resumen), `python_scripts/bench_summary.py`.
+
+### 5. Estado y decisiones
+
+- `MU_Q16 = 7` queda en `adaline.h` y réplica (tests host 12/12 OK, incl. convergencia sintética a 1.2 con
+  150k updates y el test de no-publicación-parcial a 3000 iteraciones).
+- Eval plano queda como versión definitiva del eval ISR; los defines de instrumentación
+  (`g_pub_cyc_eval`, `ADALINE_EVAL_NOP`) quedan disponibles.
+- **Exp. 3c queda redefinida** (ver §4): la tabla final es OFF′ / ON-μ0 / ON / E-μ0 / E a 300 rpm, con el
+  argumento cuantitativo de insensibilidad (G·Δe vs rizo de conmutación) y la curva W(t) de E como
+  demostración del identificador. Complementa la simulación (BEMF no sinusoidal, 12 V/50 kHz distintos)
+  donde el ADALINE sí ganaba; la tesis debe explicar la frontera entre ambos regímenes.
+- Pendiente para 600 rpm: `m2pc_step` en CCM-SRAM (linker script propio + copia al arranque; `-g1` en ese
+  archivo por el bug DWARF de gcc con `section`). Pendiente para que el online sea útil: compensar dead-time
+  y asimetría α/β en el observador (V_dt ya identificado en la Exp. 3a).
+- Pendientes de la sesión: regenerar `docs/banco_2804.html` con los datos s26; la inicialización desde W
+  offline (`adaline_replica_w.json`) **no** se persiguió: con el online dañino, inyectar la forma offline
+  (aprendida de logs en lazo, misma contaminación) no tenía recorrido probable.
+
+---
+
+## Sesión 25 — 2026-10-18 — Exp. 3b: réplica corregida, pruebas host y port C compilado (banco pendiente)
+
+**Estado real**: ADALINE implementado en `lib/adaline.{c,h}` e integrado opcionalmente en
+`07_m2pc`; **desactivado por defecto** (`M2PC_ADALINE=OFF`). No se flasheó ni se midieron
+tiempos o mejora de corriente en el motor. Protocolo: `firmware/apps/07_m2pc/README_adaline.md`.
+
+### Correcciones respecto al borrador de esta misma sesión
+
+- El centrado requiere **θ_c = θ_cierre − 7·ω_mec·25 ticks**. Faltaba el factor de polos.
+- **Pesos y forma Q27**, no Q31: Q31 no admite +1 ni adaptación por encima de ±1.
+  El borrador Python almacenaba pesos en int64 y no reproducía ese fallo del C.
+- Recurrencia Q31 saturada; ε normalizado limitado a ±4, pesos a ±2, norma L1 por eje ≤4.
+  Productos del observador en int64; multiplicación en vez de desplazar negativos en C.
+- La ISR reutiliza sin/cos de Park; foreground usa trigonometría software cuantizada q15.
+  Doble buffer con publicación atómica: la ISR nunca lee pesos parcialmente actualizados.
+- Se retiran las afirmaciones previas de convergencia en ~7 s y coste ISR ~1.2 µs/cabe holgado:
+  eran una métrica mal rotulada y una estimación sin medir. El baseline s24 cuesta 15.8 µs,
+  dejando solo ~4.2 µs; el coste nuevo debe medirse en banco.
+
+### Cadena y constantes actuales
+
+```
+e_obs = ū − R·ī − L·Δī/1 ms
+e_pk = (ω_mec·470) >> 18                 [mV]
+x = recurrencia de sin/cos kθ_c          [Q31]
+g = (Σ W·x) >> 31                       [Q27]
+e_hat = (e_pk·g) >> 27                   [mV]
+eps = clamp((e_obs−e_hat)·32768/e_pk, −4·32768, 4·32768)
+W += (131·x·eps) >> 35                   [Q27]
+```
+
+H=7, `RK_Q8=20990`, `LK_Q15=3343`, puerta |e_pk|≥150 mV. Entrenamiento sobre
+ventanas consecutivas de 50 muestras; si foreground pierde una, descarta la derivada.
+El UART es polling: **1 kHz nominal de ventanas no garantiza 1000 updates/s**.
+Se reportan `updates`, `skipped`, `gated` y `update_wall_max_cycles`, más los 28 pesos
+en línea `W` a 1 Hz. DWT de foreground incluye interrupciones.
+
+### Validación en PC
+
+- `python_scripts/test_adaline_replica.py`: compila el C con UBSan; contrasta C/Python
+  con datos aleatorios y logs del banco; prueba ambos sentidos, ángulos cardinales,
+  puerta de velocidad, entradas extremas y convergencia sintética con amplitud **1.2**.
+- La identidad bit a bit corresponde a la aritmética con entradas trigonométricas
+  iguales, **no a una emulación exacta del silicio CORDIC**. La comparación float es
+  con el mismo LMS efectivo, no con el ajuste LS de 3a que separaba S/D/dead-time.
+- Replay Exp. 2 ×3 + hasta 300 000 ventanas s22: 361 231 actualizaciones evaluadas,
+  max |W_Q27 − W_float| ≈ **3e-4** al final. Fundamental α/β **0.9976/0.9903**.
+  Primer cruce de b1α al ±2 % del float final desde cero: **t=19.48 s procesados**;
+  no es tiempo de asentamiento ni de convergencia de todos los pesos.
+- RMS vectorial del residuo, antes del update: **163.2 → 151.5 mV (−7.2 %)** desde
+  el modelo nominal. Es una métrica de replay/entrenamiento, no desempeño de corriente.
+- Error máximo de base Q31 vs trigonometría exacta ≈2.14e-4, equivalente a **0.33 mV**
+  por unidad de forma a 600 rpm (e_pk≈1540 mV), no los 0.1 mV del borrador.
+- Compilación ARM de las ocho apps en ambas configuraciones completada; solo warnings
+  de stubs newlib (`_close`, `_fstat`, etc.). 07: text 23 604/32 464 B y bss 6680/7024 B
+  para OFF/ON. Esto no sustituye la regresión física de 06.
+
+### Límites e interpretación para la tesis
+
+No se corrige la atenuación sinc de las medias de 1 ms, ni se separa DC/dead-time;
+el modelo aprende tensión **efectiva**, no BEMF física. Los logs s22/s23 preceden al
+offset 2563; la referencia OC tampoco está rotada a ese offset. No confundir fases
+entre datasets, ni atribuir la diferencia de armónicos exclusivamente al dead-time.
+El JSON `python_scripts/adaline_replica_w.json` es un resultado offline Q27;
+**no se carga como inicialización del firmware**.
+
+### Siguiente paso
+
+1. Retirar la resistencia de 08 y correr **06** (autotest CORDIC + i_dq DC).
+2. Validar 07 OFF y después ON con fuente limitada: `overruns=0`, `paso_max<20 µs`,
+   sin trip, W acotados y cadencia de updates medida. Si falla el presupuesto, detener
+   la prueba y optimizar antes de comparar.
+3. Exp. 3c a 300/600 rpm, con idénticos ajustes de trayectoria/escalones:
+   RMS ε_q/ε_d, rizo, curva W(t). La configuración actual sigue trayectoria ±300 rpm.
+4. Actualizar el reporte visual solo cuando existan datos de banco 3b/3c.
+
+---
+
 ## Sesión 24 — 2026-10-18 — Exp. 2b (BEMF real en circuito abierto), offset 2563, A/B del sector, reporte visual
 
 **Hito**: la forma de la BEMF del motor medida **sin modelo** (sin R, L, dead‑time ni tensión comandada), con la red de sensado de BEMF de la propia placa y la llanta girada a mano: **THD 0.42 / 0.67 / 0.64 % por fase**, λ = 3.487 mWb, y el error de alineación del encoder medido directamente: **+2.85°** eléctricos. Hasta donde sabemos (PLANNING §3.5), es el primer reporte cuantitativo de la forma de BEMF de un 2804. Gráfica: `firmware/apps/08_bemf_oc/doc/bemf_oc_s24_forma.png`; coeficientes: `python_scripts/bemf_2804_oc.json`.

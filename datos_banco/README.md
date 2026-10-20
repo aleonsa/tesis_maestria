@@ -25,6 +25,14 @@ Los `.log` no se versionan (pesan hasta 25 MB); solo este README. Se nombran
 | `m2pc_s23_exp2_600rpm_200mHz.log` | 23 | **Exp. 2 / dataset**, ±600 rpm, 0.2 Hz |
 | `m2pc_s24_off2563_600rpm.log`, `m2pc_s24_sector_{bemf,deadbeat,uss}_600rpm.log`, `m2pc_s24_sector_uss_traj300.log` | 24 | offset 2563; A/B de la regla de sector a 600 rpm; `u_ss` con trayectoria ±300 |
 | `bemf_oc_s24_run1.log` | 24 | **Exp. 2b**, app `08_bemf_oc`: BEMF en circuito abierto, llanta a mano, ±730 rpm, 2.5 kHz (`B seq th w va vb vc`) |
+| `m2pc_s26_adaline_off_traj300.log` | 26 | **Exp. 3b/3c baseline**, `ADALINE=0`, trayectoria ±300 rpm (0.1 Hz), 45 s (`ε_q ≈ 45 mA`) |
+| `m2pc_s26_adaline_on_traj300_a.log`, `m2pc_s26_adaline_on_traj300.log` | 26 | **Exp. 3b**, `ADALINE=1`, `MU_Q16=131` (μ = 2e-3): arranque t=0..25 s (`_a`) y continuación t=106..138 s hasta `[TRIP]` (espiral inestable en lazo cerrado) |
+| `m2pc_s26_A_on_mu0_traj300.log` | 26 | control: ON, μ=0, trayectoria ±300 (= OFF: implementación inocua) |
+| `m2pc_s26_B_off_300rpm{,_b}.log`, `m2pc_s26_B_off_300rpm_ldec100.log` | 26 | OFF 300 rpm constante con L a 1 kHz (55 mA) y con L decimado 1/100 (**46.7 mA**, baseline válido) |
+| `m2pc_s26_B_on_300rpm_mu7_gate500.log`, `m2pc_s26_B_on_600rpm_mu7_gate500.log` | 26 | ON H=7: **inválidos** (ISR ≈19 µs, foreground al 5 %, PI a 100 Hz); evidencia del problema de presupuesto |
+| `m2pc_s26_B_on_300rpm_H3_mu7.log` | 26 | **ON válido**: H=3, μ=1e-4, puerta 500 mV, 150 s: 44.8/39.3 mA, W deriva lento |
+| `m2pc_s26_E_wrong_mu0_300rpm.log`, `m2pc_s26_E_wrong_mu7_300rpm.log` | 26 | **Exp. E**: modelo inicial λ·0.8 +10°; sin aprender 44.1 mA (insensibilidad); con μ=1e-4 recupera λ en ~90 s y deriva |
+| `m2pc_s26_adaline_mu1e4.log` | 26 | **Exp. 3b**, `ADALINE=1`, `MU_Q16=7` (μ ≈ 1e-4), 100 s estables pero `ε_q ≈ 102 mA` y `h2_α` 0 → 17.6 % (`W` a 1 Hz) |
 
 Los archivos pueden empezar con la cola del firmware anterior (el `cat` arranca antes del
 flash): **usar solo lo que sigue al último `[boot]`**.

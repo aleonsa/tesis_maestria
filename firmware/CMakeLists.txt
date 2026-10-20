@@ -54,6 +54,14 @@ include_directories(
 # lib — código compartido entre apps (clock, uart, ...).
 # Debe declararse ANTES que las apps que lo consumen.
 # ============================================================================
+# Overrides de experimento (sesión 26) sin editar fuentes. Vacío = default del código.
+foreach(v ADALINE_INIT_AMP ADALINE_INIT_PHI_DEG LOG_L_DECIM ADALINE_H_HARM ADALINE_MU_Q16 ADALINE_EPK_MIN_MV ADALINE_SECTOR_MODEL TRAJ_ENABLE W_REF_RPM)
+    set(EXP_${v} "" CACHE STRING "override de ${v} para 07_m2pc/lib/adaline")
+    if(NOT EXP_${v} STREQUAL "")
+        add_compile_definitions(${v}=${EXP_${v}})
+    endif()
+endforeach()
+
 add_subdirectory(lib)
 
 # ============================================================================

@@ -38,6 +38,22 @@
 #include "cordic.h"
 #include "motor_params.h"
 #include "m2pc.h"
+#include "adaline.h"
+
+#ifndef ADALINE
+#define ADALINE 0
+#endif
+#ifndef ADALINE_EVAL_NOP
+#define ADALINE_EVAL_NOP 0
+#endif
+/* 1: la regla de sector del M²PC usa la sinusoide nominal y la forma
+ * aprendida solo entra en la predicción de Euler (experimento C, s26). */
+#ifndef LOG_L_DECIM
+#define LOG_L_DECIM (ADALINE ? 100U : 1U)
+#endif
+#ifndef ADALINE_SECTOR_MODEL
+#define ADALINE_SECTOR_MODEL 0
+#endif
 
 /* ── Constantes del banco (05_phase_align) ───────────────────────────── */
 #define PHASE_A_OFFSET_RAW   2563U   /* 2558 + 4.6: +2.85° e medidos en 08 (sesión 24) */
@@ -63,7 +79,9 @@
  * ~1500 rpm/s → la planta vale ~10 (rpm/s)/mA. Con Kp = 2 mA/rpm el lazo
  * queda en ~20 s⁻¹ (~3 Hz), Ki pone el cero en 10 s⁻¹. Conservador. */
 #define SPEED_LOOP           1
+#ifndef W_REF_RPM
 #define W_REF_RPM            600
+#endif
 #define IQ_REF_MA            200      /* solo con SPEED_LOOP = 0 */
 #define IQ_MAX_MA            300      /* saturación del PI (0.6·Inom) */
 #define PI_KP_MA_PER_RPM     2.0
@@ -99,6 +117,10 @@
 #define LOG_WINDOW           50U
 #define UART_BAUD            921600U
 
+#if (ADALINE == 1)
+_Static_assert(LOG_WINDOW == ADALINE_WIN_TICKS, "ADALINE requiere ventanas de 1 ms");
+#endif
+
 /* ── Telemetría sincronizada (sesión 23, PLANNING §11 Exp. 1) ────────────
  * La línea L promedia i_αβ en 1 ms y manda θ_e al cierre: la i_dq que se
  * reconstruye de ahí está desfasada y sin rizo. Para la métrica de
@@ -130,7 +152,9 @@
  * Pasa por cero velocidad e invierte el giro. ω* no va en la línea L (su
  * formato lo leen el scope y el analizador): se reconstruye offline de A, f
  * y t, que van en el banner. TRAJ_ENABLE = 0 → ω* = W_REF_RPM constante. */
+#ifndef TRAJ_ENABLE
 #define TRAJ_ENABLE          1
+#endif
 #define TRAJ_AMP_RPM         300
 #define TRAJ_FREQ_MHZ        100U
 
@@ -162,6 +186,7 @@ static void systick_init(uint32_t ticks_per_irq) {
 static volatile int32_t  g_iq_ref_q8;             /* la escribe main (PI o rampa) */
 static volatile uint32_t g_pub_corr, g_pub_i2c_err, g_pub_cyc_max;
 static volatile uint32_t g_pub_cyc_sense, g_pub_cyc_m2pc;   /* máximos por tramo */
+static volatile uint32_t g_pub_cyc_eval;                    /* adaline_eval solo (s26) */
 static volatile uint8_t  g_need_i2c_reset;
 static volatile uint8_t  g_tripped;
 static volatile int32_t  g_pub_zsum_q8;           /* media de ia+ib+ic en 1 s (Q8 LSB) */
@@ -258,9 +283,32 @@ static void control_step(void) {
     }
 
     /* 4. BEMF del modelo (mV): e = λ·ω_e·[−sin; cos]. */
-    const int32_t e_pk    = (theta_pll_omega_tick_q32() * KE_MV_Q18) >> 18;
+    const int32_t e_pk    = (int32_t)(((int64_t)theta_pll_omega_tick_q32() * KE_MV_Q18) >> 18);
+#if (ADALINE == 1)
+    int32_t e_alpha, e_beta;
+    const uint32_t cyc_e0 = DWT->CYCCNT;
+#if (ADALINE_EVAL_NOP == 1)
+    /* bisección s26: misma llamada/atomic, sin cómputo (modelo sinusoidal) */
+    (void)cyc_e0;
+    e_alpha = (int32_t)(-((int64_t)e_pk * s) >> 31);
+    e_beta  = (int32_t)( ((int64_t)e_pk * c) >> 31);
+    g_pub_cyc_eval = 0U;
+#else
+    adaline_eval(s, c, e_pk, &e_alpha, &e_beta);
+    const uint32_t cyc_e1 = DWT->CYCCNT;
+    if ((cyc_e1 - cyc_e0) > g_pub_cyc_eval) g_pub_cyc_eval = cyc_e1 - cyc_e0;
+#endif
+#if (ADALINE_SECTOR_MODEL == 1)
+    const int32_t es_alpha = (int32_t)(-((int64_t)e_pk * s) >> 31);
+    const int32_t es_beta  = (int32_t)( ((int64_t)e_pk * c) >> 31);
+#else
+    const int32_t es_alpha = e_alpha, es_beta = e_beta;
+#endif
+#else
     const int32_t e_alpha = (int32_t)(-((int64_t)e_pk * s) >> 31);
     const int32_t e_beta  = (int32_t)( ((int64_t)e_pk * c) >> 31);
+    const int32_t es_alpha = e_alpha, es_beta = e_beta;
+#endif
 
     /* 5. Referencia: i_d* = 0 → i_αβ* = i_q*·[−sin; cos]. */
     const int32_t iq_ref    = g_iq_ref_q8;
@@ -272,6 +320,7 @@ static void control_step(void) {
         .i_alpha = i_alpha,     .i_beta = i_beta,
         .ref_alpha = ref_alpha, .ref_beta = ref_beta,
         .e_alpha = e_alpha,     .e_beta = e_beta,
+        .es_alpha = es_alpha,   .es_beta = es_beta,
         .theta_e_q32 = theta_e,
     };
     const uint32_t cyc1 = DWT->CYCCNT;
@@ -357,6 +406,9 @@ int main(void) {
 
     cordic_init();
     m2pc_init();
+#if (ADALINE == 1)
+    adaline_init(0U);  /* modelo sinusoidal; no arranque desde cero en banco */
+#endif
 
     pwm_init();
     opamp_init();
@@ -392,6 +444,9 @@ int main(void) {
            "ua/ub: mV; w: rpm x10)\r\n");
     printf("[log] E t id iq ref eq_rms ed_rms iq_min iq_max  (cada %u muestras; Q8 LSB)\r\n",
            (unsigned)STAT_WINDOW);
+    printf("[adaline] enabled=%d H=%d W_frac=%d mu_q16=%d epk_min=%d mV sector_model=%d traj=%d wref=%d l_decim=%u\r\n",
+           ADALINE, ADALINE_H_HARM, ADALINE_W_FRAC, ADALINE_MU_Q16,
+           ADALINE_EPK_MIN_MV, ADALINE_SECTOR_MODEL, TRAJ_ENABLE, W_REF_RPM, (unsigned)LOG_L_DECIM);
 #if (STEP_ENABLE == 1)
     printf("[step] +/-%d mA, %lu ms cada %lu ms desde t=%lu ms; captura %u muestras\r\n",
            STEP_MA, (unsigned long)STEP_ON_MS, (unsigned long)STEP_PERIOD_MS,
@@ -412,6 +467,12 @@ int main(void) {
 
     uint32_t t_ctrl = 0U, t_stat = 0U, corr_prev = 0U, log_seq = 0U, valley_prev = 0U;
     uint32_t stat_seq = 0U;
+#if (ADALINE == 1)
+    uint32_t ada_prev_seq = 0U, ada_updates = 0U, ada_skipped = 0U;
+    uint32_t ada_gated = 0U, ada_cyc_max = 0U;
+    int32_t ada_prev_ia = 0, ada_prev_ib = 0;
+    uint8_t ada_have_prev = 0U;
+#endif
     int32_t  pi_int_q8 = 0, pi_hold_q8 = 0;
     uint8_t  cap_armed = 0U;
     uint32_t cap_pos = CAP_N;             /* CAP_N = nada que volcar */
@@ -491,15 +552,41 @@ int main(void) {
                 w.theta_e = g_log.theta_e; w.omega = g_log.omega;
             } while (g_log.seq != log_seq);        /* copia consistente */
             const int32_t rpm10 = (int32_t)(((int64_t)w.omega * 30000000LL) >> 32);
-            printf("L %lu %u %ld %ld %ld %ld %ld %ld\r\n",
-                   (unsigned long)t,
-                   (unsigned)(w.theta_e >> 16),
-                   (long)(w.ia_sum / (int32_t)LOG_WINDOW),
-                   (long)(w.ib_sum / (int32_t)LOG_WINDOW),
-                   (long)(w.ua_sum / (int32_t)LOG_WINDOW),
-                   (long)(w.ub_sum / (int32_t)LOG_WINDOW),
-                   (long)rpm10,
-                   (long)q8_to_ma(g_iq_ref_q8));
+#if (ADALINE == 1)
+            const int32_t ai = w.ia_sum / (int32_t)LOG_WINDOW;
+            const int32_t bi = w.ib_sum / (int32_t)LOG_WINDOW;
+            const uint32_t delta_seq = log_seq - ada_prev_seq;
+            if (ada_have_prev && delta_seq == 1U && t >= 3000U) {
+                const uint32_t start = DWT->CYCCNT;
+                if (adaline_update(ai, bi, ai - ada_prev_ia, bi - ada_prev_ib,
+                                   w.ua_sum / (int32_t)LOG_WINDOW,
+                                   w.ub_sum / (int32_t)LOG_WINDOW,
+                                   w.theta_e, w.omega)) ada_updates++;
+                else ada_gated++;
+                const uint32_t cycles = DWT->CYCCNT - start;
+                if (cycles > ada_cyc_max) ada_cyc_max = cycles;
+            }
+            if (ada_have_prev && delta_seq > 1U) ada_skipped += delta_seq - 1U;
+            ada_prev_ia = ai; ada_prev_ib = bi;
+            ada_prev_seq = log_seq; ada_have_prev = 1U;
+#endif
+            /* LOG_L_DECIM: imprimir 1 de cada N ventanas. El printf de L cuesta
+             * ~0.7 ms y a 1 kHz deja el foreground en ~730 it/s (PI de velocidad
+             * irregular, LMS sin ventanas consecutivas). Para comparar OFF/ON hay
+             * que usar el MISMO valor en ambos builds (s26). */
+            static uint32_t l_dec = 0U;
+            if (++l_dec >= LOG_L_DECIM) {
+                l_dec = 0U;
+                printf("L %lu %u %ld %ld %ld %ld %ld %ld\r\n",
+                       (unsigned long)t,
+                       (unsigned)(w.theta_e >> 16),
+                       (long)(w.ia_sum / (int32_t)LOG_WINDOW),
+                       (long)(w.ib_sum / (int32_t)LOG_WINDOW),
+                       (long)(w.ua_sum / (int32_t)LOG_WINDOW),
+                       (long)(w.ub_sum / (int32_t)LOG_WINDOW),
+                       (long)rpm10,
+                       (long)q8_to_ma(g_iq_ref_q8));
+            }
         }
 
         /* ── Estadísticos dq cada STAT_WINDOW (100 Hz) ──────────────── */
@@ -552,6 +639,19 @@ int main(void) {
                    (unsigned long)(g_pub_cyc_m2pc / 170U),
                    (unsigned long)((g_pub_cyc_m2pc % 170U) * 100U / 170U));
             corr_prev = corr;
+#if (ADALINE == 1)
+            /* Pesos una vez/s, no 28 printf bloqueantes a 1 kHz.
+             * DWT del foreground incluye las interrupciones del control. */
+            printf("[adaline] updates=%lu skipped=%lu gated=%lu update_wall_max_cycles=%lu eval_max_cycles=%lu\r\n",
+                   (unsigned long)ada_updates, (unsigned long)ada_skipped,
+                   (unsigned long)ada_gated, (unsigned long)ada_cyc_max,
+                   (unsigned long)g_pub_cyc_eval);
+            printf("W %lu", (unsigned long)t);
+            const int32_t *aw = adaline_w_q27();
+            for (uint32_t j = 0; j < 4U * ADALINE_H_HARM; j++)
+                printf(" %ld", (long)aw[j]);
+            printf("\r\n");
+#endif
             printf("[off] cal a=%ld b=%ld c=%ld  valle a=%ld b=%ld c=%ld (Q8)  "
                    "media(ia+ib+ic)=%ld  valle/s=%lu skip=%lu bloques=%lu\r\n",
                    (long)g_offset_a_q8, (long)g_offset_b_q8, (long)g_offset_c_q8,

@@ -20,6 +20,7 @@ add_library(stm32g4_lib STATIC
     openloop.c
     cordic.c
     m2pc.c
+    adaline.c
 )
 
 # La lib va en -O2 desde el 2026-10-14: el controlador (07_m2pc) necesita que

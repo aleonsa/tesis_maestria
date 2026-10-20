@@ -130,7 +130,7 @@ void m2pc_step(const m2pc_in_t *in) {
     const int32_t ld_a = (int32_t)(((int64_t)(in->ref_alpha - i1_a) * s_invg_q8) >> 8);
     const int32_t ld_b = (int32_t)(((int64_t)(in->ref_beta  - i1_b) * s_invg_q8) >> 8);
 #if (M2PC_SECTOR_DEADBEAT == 1)
-    uint32_t s = sector_of(in->e_alpha + ri_a + ld_a, in->e_beta + ri_b + ld_b);
+    uint32_t s = sector_of(in->es_alpha + ri_a + ld_a, in->es_beta + ri_b + ld_b);
     if (s > 5U) {
         s = (uint32_t)(((uint64_t)(in->theta_e_q32 + 0x40000000U) * 6U) >> 32);
     }
@@ -140,7 +140,7 @@ void m2pc_step(const m2pc_in_t *in) {
      * régimen (sesión 24: pk-pk 667 vs 432 mA a 600 rpm). u_ss sigue a la
      * referencia cuando e es pequeña (frena, invierte) y a e cuando domina. */
     (void)ld_a; (void)ld_b;
-    uint32_t s = sector_of(in->e_alpha + ri_a, in->e_beta + ri_b);
+    uint32_t s = sector_of(in->es_alpha + ri_a, in->es_beta + ri_b);
     if (s > 5U) {
         s = (uint32_t)(((uint64_t)(in->theta_e_q32 + 0x40000000U) * 6U) >> 32);
     }

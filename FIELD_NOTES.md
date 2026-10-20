@@ -48,6 +48,7 @@
 - [N1.25 — Primer lazo cerrado: dónde cae la UEV, cuánto cuesta un ciclo desde flash, y la BEMF leída del propio controlador](#n125--primer-lazo-cerrado-dónde-cae-la-uev-cuánto-cuesta-un-ciclo-desde-flash-y-la-bemf-leída-del-propio-controlador)
 - [N1.26 — El offset de corriente no es un número: se mide en el valle, cada 20 µs](#n126--el-offset-de-corriente-no-es-un-número-se-mide-en-el-valle-cada-20-µs)
 - [N1.27 — Un periférico que devuelve lo mismo dos veces: el CORDIC, el reloj recién habilitado y lo que cuenta NRES](#n127--un-periférico-que-devuelve-lo-mismo-dos-veces-el-cordic-el-reloj-recién-habilitado-y-lo-que-cuenta-nres)
+- [N1.28 — Cuándo importa la forma de la BEMF en un predictor y qué aprende realmente un observador desde la tensión comandada](#n128--cuándo-importa-la-forma-de-la-bemf-en-un-predictor-y-qué-aprende-realmente-un-observador-desde-la-tensión-comandada)
 
 ---
 
@@ -4674,5 +4675,97 @@ contrario.** Si el periférico puede entregar todo en una lectura, esa es la con
 **4. Cuantificar la firma antes de instrumentar.** El modelo "s = c" predijo DC y máximo con
 el dato de otra app (02) antes de tocar una línea; el instrumento solo confirmó. Lo que no
 cuadraba numéricamente (la fase abierta, i_β ≡ 0) se descartó sin flashear nada.
+
+---
+
+## N1.28 — Cuándo importa la forma de la BEMF en un predictor y qué aprende realmente un observador desde la tensión comandada
+
+### Panorama
+
+En las sesiones 25 y 26 cerramos el último eslabón experimental: el ADALINE en línea dentro del
+lazo de control (`lib/adaline`, `07_m2pc`). El resultado parecía primero contradictorio —en PC
+convergía al 0.03 % del LMS en flotante; en banco con $\mu = 2\times 10^{-3}$ disparó sobrecorriente, y a
+velocidad constante con controles dio el mismo error de corriente con el modelo correcto que con
+un modelo equivocado un 20 %— hasta que pusimos números a dos escalas físicas.
+
+### 1. La escala del predictor: $G\cdot\Delta e$ frente al rizo de conmutación
+
+En un paso de Euler de $T_s = 20\;\mu\text{s}$, la BEMF entra al predictor como:
+
+$$\Delta i_{\text{modelo}} = \frac{T_s}{L}\,\Delta e$$
+
+En nuestro banco ($L = 0.86\;\text{mH}$, $K = 32.93\;\text{LSB/A}$), la ganancia es
+$G = (T_s/L)\cdot K \approx 0.77\;\text{LSB/V}$. A 300 rpm la BEMF de pico vale ~770 mV: un
+error de modelo del **20 %** ($\Delta e \approx 150\;\text{mV}$) desvía la predicción en:
+
+$$\Delta i_{\text{modelo}} \approx 0.77 \times 0.15\;\text{V} \approx 0.11\;\text{LSB} \approx 3.5\;\text{mA}$$
+
+Mientras tanto, un vector activo de $V_{\text{bus}} = 12\;\text{V}$ mueve la corriente hasta
+$(2/3)V_{\text{bus}} T_s / L \approx 186\;\text{mA}$ por periodo, y el rizo pico a pico medido
+en $i_q$ es de ~280–300 mA ($\text{RMS}(\varepsilon_q) \approx 45\;\text{mA}$).
+
+**Consecuencia**: una perturbación de 3.5 mA por paso es 80 veces menor que el rizo de
+conmutación y 3 veces menor que la resolución de una subdivisión del M²PC ($\rho = 10 \Rightarrow
+18.6\;\text{mA}$ por unidad de duty). El experimento E-$\mu 0$ lo confirmó directamente:
+arrancar con $\hat{\lambda} = 0.8\,\lambda_{\text{nom}}$ y $+10^\circ$ de desfase dio
+$\text{RMS}(\varepsilon_q) = 44.1\;\text{mA}$, indistinguible del modelo nominal (46.7 mA).
+
+Para que la forma de la BEMF domine el error de seguimiento hace falta que $(T_s/L)\Delta e$ sea
+comparable al paso de cuantización de tensión $(V_{\text{bus}}/\rho)(T_s/L)$, es decir:
+
+$$\Delta e \gtrsim \frac{V_{\text{bus}}}{\rho}$$
+
+En simulación ($e_{\text{pk}}$ de varios voltios y armónicos trapezoidales grandes frente a
+$V_{\text{bus}}/\rho$) esa condición se cumple; en un gimbal 2804 a 300–600 rpm alimentado a
+12 V ($e_{\text{pk}} \approx 0.8\text{–}1.5\;\text{V}$ frente a $V_{\text{bus}}/\rho = 1.2\;\text{V}$, y
+además $\text{THD}_{\text{OC}} = 0.4\text{–}0.7\%$), estamos un orden de magnitud por debajo.
+
+### 2. Qué ve un observador algebraico sin sensores de tensión de fase
+
+En operación en línea no medimos la tensión en bornes del motor; el observador usa la tensión
+*comandada* por el modulador:
+
+$$e_{\text{obs}} = \bar{u}_{\text{cmd}} - R\bar{i} - L\frac{\Delta\bar{i}}{\Delta t}$$
+
+Pero el inversor real entrega $\bar{u}_{\text{real}} = \bar{u}_{\text{cmd}} - \Delta u_{\text{dt}}(\text{sgn}(i))$,
+y las tres fases tienen pequeñas asimetrías de ganancia/offset. Por tanto:
+
+$$e_{\text{obs}} = e_{\text{imán}}(\theta_e) + \Delta u_{\text{dt}}(i) + \Delta R\,i + \Delta L\frac{\Delta i}{\Delta t}$$
+
+Cuando el ADALINE proyecta $e_{\text{obs}}/(\lambda_{\text{nom}}\omega)$ sobre la base de
+Fourier $\cos(k\theta_e), \sin(k\theta_e)$:
+
+1. **En el fundamental ($k=1$)** sí recupera el flujo real: en el experimento E pasó de
+   $b_{1\alpha} = -0.79$ a $-1.01$ en ~90 s en lazo cerrado.
+2. **En la componente ortogonal y armónicos ($a_{1\alpha}, b_{1\beta}, h_2, h_3$)** absorbe la
+   asimetría entre ejes y la distorsión del inversor correlacionada con $\theta_e$.
+3. Si esa forma efectiva se reinyecta sin amortiguación ($\mu = 2\times 10^{-3}$) en la selección
+   discreta de sector ($u_{\text{ss}} = \hat{e} + R i^*$), desplaza las fronteras de sector,
+   cambia el patrón de corriente y realimenta el observador hasta la inestabilidad.
+
+### 3. La trampa oculta del presupuesto de CPU: cuando el 95 % en la ISR congela el lazo lento
+
+Un paso de control de $18.7\;\mu\text{s}$ dentro de un periodo de $20\;\mu\text{s}$ tiene
+`overruns = 0` — parece cumplir presupuesto. Pero deja al código de fondo (foreground) solo
+$1.3\;\mu\text{s}$ de cada $20\;\mu\text{s}$ (**6.5 % de CPU**). A ese ritmo:
+
+- un `printf` bloqueante de una línea `E` (~45 caracteres a 921600 baud ≈ 0.5 ms de reloj de
+  pared) consume casi todo el tiempo entre muestras de 100 Hz;
+- el lazo PI de velocidad (que vive en foreground gobernado por `SysTick` a 1 kHz) pasa de
+  ejecutarse a 1000 Hz a ~100 Hz;
+- el logger a 1 kHz con `LOG_L_DECIM = 1` degradaba por sí solo el $\text{RMS}(\varepsilon_q)$
+  de 46.7 mA a 55.4 mA (+15 %) incluso con `ADALINE = 0`.
+
+### Por qué importa
+
+1. **`overruns = 0` es condición necesaria pero no suficiente**: la ISR debe dejar margen real
+   al foreground (en nuestra arquitectura, $\le 15\;\mu\text{s}$ de $20\;\mu\text{s}$, es decir
+   $\le 75\%$ de CPU).
+2. **En comparativas A/B, el tráfico UART debe ser idéntico** (`LOG_L_DECIM` igual en ambos
+   builds), porque el propio `printf` perturba al lazo externo.
+3. **La tesis gana una conclusión cuantitativa más general que el motor 2804**: el aprendizaje
+   de forma de BEMF en FCS-M²PC mejora el seguimiento sí y solo si la distorsión armónica en
+   voltios supera la resolución efectiva del modulador ($\Delta e_{\text{harm}} \gtrsim V_{\text{bus}}/\rho$)
+   y el observador compensa el dead-time antes de adaptar.
 
 ---

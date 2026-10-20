@@ -92,6 +92,11 @@ openocd -f interface/stlink.cfg -f target/stm32g4x.cfg \
 
 `lib/cordic` entrega sin y cos en **una sola lectura** de 16 bits (`RESSIZE=1`, `NRES=0`) y verifica el CSR por relectura: con dos lecturas de 32 bits la segunda se adelantaba y con la escritura tras habilitar el reloj se perdía (N1.27).
 
+ADALINE experimental (sesión 25): `lib/adaline`, pesos Q27 con publicación por doble buffer,
+opción CMake `M2PC_ADALINE=OFF` por defecto. Port compilado y probado en host;
+**validación en motor pendiente**. Builds, telemetría y protocolo en
+[`apps/07_m2pc/README_adaline.md`](apps/07_m2pc/README_adaline.md).
+
 `lib/` contiene los drivers compartidos: `clock`, `uart`, `i2c`, `as5600`, `theta_pll`, `pwm`, `adc`, `openloop`, `cordic`, `m2pc`, `motor_params.h` (todos los parámetros físicos y constantes Q derivadas). La ISR de corriente llama al paso de control por hook (`adc_set_control_hook`). La lib compila en `-O2`.
 
 Timing del PWM (sesión 20): muestreo en el **pico** (OC4REF, CCR4=ARR−1, todos los low-side ON) y UEV también en el pico (`RCR=0` antes del `UG`, `RCR=1` tras `CEN`), así que un comando calculado en el paso k se aplica durante [k+1, k+2]: retardo entero, compensado en `m2pc_step`. Presupuesto: 20 µs; el paso completo cuesta 13 µs.

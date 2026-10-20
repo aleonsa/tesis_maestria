@@ -80,7 +80,11 @@
 typedef struct {
     int32_t  i_alpha,   i_beta;     /* corriente medida        [Q8 LSB] */
     int32_t  ref_alpha, ref_beta;   /* corriente de referencia [Q8 LSB] */
-    int32_t  e_alpha,   e_beta;     /* BEMF del modelo         [mV]     */
+    int32_t  e_alpha,   e_beta;     /* BEMF del modelo (predicción Euler) [mV] */
+    int32_t  es_alpha,  es_beta;    /* BEMF para la regla de SECTOR [mV]; normalmente
+                                     * = e. Separada desde la s26: con la forma
+                                     * aprendida del ADALINE en el sector el lazo
+                                     * espiralaba; aquí se puede dejar la sinusoide. */
     uint32_t theta_e_q32;           /* posición eléctrica (sector)      */
 } m2pc_in_t;
 

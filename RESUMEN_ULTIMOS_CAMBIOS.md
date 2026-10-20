@@ -190,8 +190,16 @@ Detalle completo en `PROGRESO_HARDWARE.md` sesión 17.
    disfrazado de armónicos. A/B de la regla de sector a 600 rpm: la deadbeat metía ruido en el sector
    (pk-pk 667 mA); adoptada la de régimen `u_ss = e + R·i*` (pk-pk 377, RMS ε_q 44, invierte: ±300 rpm
    RMS 6.5 rpm). Reporte visual `docs/banco_2804.html` (BEMF animada con los coeficientes medidos).
-10. Exp. 3b: ADALINE en línea — réplica bit-exacta en Python validada con logs → port a C (07_m2pc,
-    `ADALINE = 0/1`, H = 6–7, μ = 2e-3 a 1 kHz) → Exp. 3c: comparativa vs baseline sinusoidal.
+10. **Exp. 3b — sesión 25 (PC)**: réplica Python (pesos Q27), tests C↔Python con UBSan, port `lib/adaline`
+    integrado en 07 (OFF por defecto). **Sesión 26 (banco, dos tandas)**: eval plano (365 ciclos; con H=3,
+    235) y presupuesto cumplido a 300 rpm; a 600 rpm falta margen (CCM-SRAM pendiente). Hallazgos:
+    (a) el logger L a 1 kHz degradaba el baseline 15 % (55 → 46.7 mA con L decimado; afecta cifras s23/s24);
+    (b) **el seguimiento del M²PC es insensible a errores de BEMF ≤20 %/10°** (ε_q 44 mA con modelo erróneo
+    sin aprender): el piso es el rizo de conmutación, no la forma del modelo → ninguna forma aprendida
+    puede mostrar mejora en este banco; (c) el LMS recupera λ en ~90 s en lazo cerrado (mecanismo ✓) pero
+    converge a la tensión efectiva (secuencia negativa + h2 creciente) y a largo plazo degrada; μ=2e-3 era
+    inestable (TRIP). Exp. 3c = tabla OFF′/ON-μ0/ON/E a 300 rpm con el argumento cuantitativo. Overrides
+    `EXP_*` en CMake; `bench_run.sh`/`bench_summary.py`. Logs `datos_banco/m2pc_s26_*`. Banco en OFF sano.
 10. Deuda conciliada en PROGRESO sesión 22: apps 02–06 con `tim1_trgo2` cerrado; glitch de
    fase C no reproducido; race de `adc_get_vbus_raw` y CCM-SRAM diferidos; 7 citas del `.bib`
    pendientes.

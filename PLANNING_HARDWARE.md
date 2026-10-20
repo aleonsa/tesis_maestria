@@ -632,13 +632,20 @@ coeficientes en `python_scripts/bemf_2804_fourier.json`). Lo planeado era:
   la **cadencia** del update.
 
 **3b. En línea (C)**:
+**Estado s25**: `lib/adaline.{c,h}` integrado en 07 y compilado OFF/ON, con pruebas
+C↔Python en host. Pesos Q27 (no Q31), centro eléctrico con factor de 7 polos,
+doble buffer para publicación e inicio sinusoidal. Banco pendiente; protocolo en
+`firmware/apps/07_m2pc/README_adaline.md`. La versión actual no corrige la atenuación
+sinc ni separa DC/dead-time: aprende un modelo efectivo, no BEMF pura. La cadencia
+real del LMS debe medirse (UART polling); no asumir 1000 updates/s.
 - **Observador**: el mismo algebraico, pero **no a 50 kHz**: L/Ts = 43 Ω → un LSB de ruido de
   corriente son 1.3 V de "BEMF" (lo advierte `bemf_observer.m`). Se calcula sobre los
   promedios de la ventana de 1 ms que el logger ya acumula (L/Ts_eff = 0.86 Ω → 26 mV/LSB), con
   θ_e *promediado* en la ventana (no al cierre). LMS a 1 kHz en el lazo lento, fuera de la ISR.
 - **Evaluación** e_hat = W·x(θ_e) sí va en la ISR, a 50 kHz, sustituyendo la línea
   `λ·ω·[−sin, cos]` de `control_step`. x(θ) con el CORDIC (ahora fiable) por recurrencia de
-  ángulo múltiple o k llamadas (k ≤ 7 × ~30 ciclos: cabe en los ~7 µs que sobran). Medir.
+   ángulo múltiple (implementada s25, reutilizando sin/cos de Park). El baseline s24
+   cuesta 15.8 µs: quedan ~4.2 µs, no 7; **medir antes de declarar que cabe**.
 - Inicialización: W = sinusoidal (λ, k = 1) para una "demostración honesta" de que converge a
   lo mismo partiendo de la hipótesis del modelo; y una corrida desde W = 0 para la curva de
   convergencia.
@@ -664,7 +671,7 @@ Exp. 3a (ADALINE offline) ──► μ, nº armónicos, W de referencia   [HECHO
 Exp. 2b (BEMF circuito abierto) ──► forma real con incertidumbre   [HECHO s24: THD 0.4–0.7 %]
         │
         ▼
-Exp. 3b (ADALINE en línea) ──► convergencia en banco, presupuesto ISR
+Exp. 3b (ADALINE en línea) ──► [s25: réplica Q27 + tests C/Python y port C compilados] ──► [s26 BANCO: presupuesto ✓ a 300 rpm con H=3; el seguimiento es INSENSIBLE a ≤20 % de error de BEMF (rizo de conmutación domina): no hay mejora medible posible; el LMS identifica λ en ~90 s pero su punto fijo es la tensión efectiva (deriva lenta). 3c = tabla con controles a 300 rpm]
         │
         ▼
 Exp. 3c (comparativa) ──► tabla final de la tesis
