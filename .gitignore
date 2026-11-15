@@ -56,7 +56,8 @@ MEMORY.md
 AGENTS.md
 CLAUDE.md
 opencode.json
-.claude/
+.claude/*
+!.claude/skills/
 .opencode/
 
 # ── Firmware: vendor de terceros (clone local, no se versiona) ─────────────
