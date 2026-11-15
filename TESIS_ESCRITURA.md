@@ -2,9 +2,9 @@
 
 > Este archivo trackea el progreso de redacción del documento de tesis en `tesis_documento/`. Se actualiza al cierre de cada bloque para no perder hilo entre sesiones.
 
-**Última actualización:** 2026-08-17 (cerrado Bloque B — Cap. 1)
+**Última actualización:** 2026-11-15 (esqueleto del Cap. 6 experimental; correcciones del Dr. Icaza a portada y jurado)
 **Archivo LaTeX raíz:** `tesis_documento/Tesis_JALS_Maestria.tex`
-**PDF generado actual:** 56 páginas (frontmatter + Cap. 1 + Cap. 2 + Cap. 3 + Cap. 4 + Cap. 5 + Cap. 6 placeholder)
+**PDF generado actual:** 60 páginas (frontmatter + Cap. 1–5 + Cap. 6 esqueleto + Cap. 7 placeholder)
 
 ---
 
@@ -167,6 +167,19 @@ necesitaba 1.4).
 está en `papers/`. Van marcados con un comentario de bloque en `Bibliografia.bib`.
 
 **Compila limpio** (56 págs, 0 refs/citas indefinidas, 0 overfull boxes).
+
+### Bloque G — Cap. 6 Validación experimental en banco 🟡 ESQUELETO (2026-11-15)
+`\label{cap:experimental}`. Conclusiones pasó a `Capitulo7/Cap7.tex` (`cap:conclusiones`). Sección 1.4 actualizada.
+Secciones: 6.1 banco (con cuadro sim vs banco), 6.2 M2PC en punto fijo, 6.3 BEMF del motor (Exp. 2b),
+6.4 seguimiento de corriente (Exp. 1/2), 6.5 ADALINE en línea (presupuesto, tabla 3c, LMS como identificador),
+6.6 discusión (el argumento pedido por el Dr. Icaza). Huecos marcados con `\pend{}` en rojo.
+**Bloqueantes antes de citar cifras:** (1) los logs de `datos_banco/` no están en esta máquina (no se versionan);
+(2) el logger L a 1 kHz sesgó 15 % las cifras de s23/s24: usar solo baselines con L decimado (46.7 mA);
+(3) "ni con armónicos de 5 % se vería" es extrapolación: respaldar con corrida en `fcs_m2pc_v2` con parámetros del banco;
+(4) R y L del 2804 del cuadro vienen de PLANNING (aprox.), verificar.
+**Correcciones del Dr. Icaza (PDF 17-ago):** "Supervisor" → "Tutor principal" (portada y jurado); "Posgrado de Ingeniería" → "Instituto de Ingeniería".
+Pendiente de decisión: si los objetivos de `sec:objetivos` y `sec:contribuciones` deben mencionar la validación experimental.
+**Compila limpio** (60 págs, 0 errores, 0 refs indefinidas; TeX Live 2026 instalado vía MacTeX el 2026-11-15).
 
 ---
 

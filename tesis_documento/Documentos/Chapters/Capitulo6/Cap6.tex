@@ -1,16 +1,166 @@
 \documentclass[../../../Tesis_JALS_Maestria.tex]{subfiles}
 
-\graphicspath{{\subfix{../FigureC6/}}{\subfix{../}}} % agrega ambas rutas
+\graphicspath{{\subfix{FigureC6/}}{\subfix{./}}} % agrega ambas rutas
 
 \begin{document}
 
-	\chapter{Conclusiones}
-	\label{cap:conclusiones}
+% ESQUELETO (2026-11-15). Cada \pend{...} marca un hueco por llenar.
+% Fuentes de cada número: PROGRESO_HARDWARE.md (sesiones 20-26), FIELD_NOTES.md N1.27-N1.28,
+% logs en datos_banco/ (NO versionados: no están en la máquina actual, recuperarlos antes
+% de citar cualquier cifra). Regla: ningún número entra al texto sin su log.
+\providecommand{\pend}[1]{\textcolor{red}{[#1]}}
 
-	\section{Conclusiones}
-	\lipsum[1-2]
+\chapter{Validación experimental en banco}
+\label{cap:experimental}
 
-	\section{Trabajo futuro}
-	\lipsum[3]
+El capítulo anterior validó el esquema en simulación, con un motor de BEMF cuasi-trapezoidal alimentado a 240 V. Este capítulo lo lleva a un banco con otro motor, otra tensión y otra frecuencia de conmutación. El resultado es distinto al de simulación: en el banco el aprendizaje en línea no reduce el error de seguimiento. Aquí se mide ese resultado, se explica por qué ocurre y se delimita qué conclusiones de la simulación sobreviven.
+
+\pend{Párrafo de ruta del capítulo, al final: una frase por sección.}
+
+% =================================================================
+\section{Banco experimental}
+\label{sec:banco}
+
+% Contenido: B-G431B-ESC1 (STM32G431, 170 MHz, CORDIC), motor 2804 12N14P con AS5600
+% integrado, Vbus 12 V, límite de corriente 300-500 mA. ISR de control a 50 kHz.
+% Sensado: shunts de 3 fases con PGA, offset de corriente medido en el valle del PWM.
+% Posición: AS5600 por I2C (muestra nueva cada ~468 us) + observador PLL tipo II.
+% Fuente: PLANNING_HARDWARE.md §2; PROGRESO sesiones 16-19, 21.
+
+\pend{Descripción del banco: placa, motor, sensor de posición, límites de operación.}
+
+El cuadro \ref{tab:sim-vs-banco} contrasta los dos casos de estudio. La comparación importa porque casi todo lo que cambia entre ellos aparece en el argumento de la sección \ref{sec:discusion-exp}.
+
+\begin{table}[htbp]
+    \centering
+    \caption{Caso de simulación (capítulo \ref{cap:validacion}) frente al banco experimental.}
+    \label{tab:sim-vs-banco}
+    \begin{tabular}{lll}
+        \toprule
+        & Simulación & Banco \\
+        \midrule
+        Motor              & Anaheim BLY-344S & 2804 12N14P \\
+        Pares de polos $p$ & $4$              & $7$ \\
+        Tensión del bus    & $240$ V          & $12$ V \\
+        Periodo de control & $30\,\mu$s       & $20\,\mu$s ($50$ kHz) \\
+        Forma de la BEMF   & cuasi-trapezoidal & casi senoidal (THD $< 1$ \%) \\
+        $R$                & $1.2\;\Omega$    & \pend{verificar, $\approx 2.3\;\Omega$} \\
+        $L$                & $2.05$ mH        & \pend{verificar, $\approx 0.86$ mH} \\
+        $\lambda$          & \pend{derivar de $K_e$} & $3.49$ mWb \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+% =================================================================
+\section{Implementación del FCS-M2PC en punto fijo}
+\label{sec:impl-fija}
+
+% Contenido breve: 66 candidatos a 50 kHz, retardo entero (UEV movida al pico del PWM),
+% paso de control ~13 us de 20, overruns = 0. Regla de sector por la tension de regimen
+% u_ss = e + R i* (la regla por BEMF no frena ni invierte; la deadbeat mete ruido en el
+% sector: pk-pk 667 -> 377 mA a 600 rpm). Los bugs de CORDIC/FPU NO van aqui: son bitacora.
+% Fuente: PROGRESO sesiones 20, 23, 24.
+
+\pend{Qué se portó, con qué presupuesto de tiempo, y la regla de sector adoptada con su A/B.}
+
+% =================================================================
+\section{Caracterización de la BEMF del motor}
+\label{sec:bemf-banco}
+
+% Contenido: Exp. 2b, BEMF en circuito abierto con la red de BEMF de la placa.
+% THD 0.42 / 0.67 / 0.64 % (tres fases), h3 <= 0.6 %, lambda = 3.49 mWb, alineacion del
+% encoder +2.85 deg. La BEMF reconstruida desde la tension comandada (Exp. 3a)
+% sobreestimaba h2-h6 entre 2 y 5 veces: era dead-time disfrazado de armonicos.
+% Fuente: PROGRESO sesion 24; log bemf_oc_s24_run1.log. Figura: BEMF medida + ajuste.
+
+\pend{Resultado: la BEMF de este motor es casi senoidal. Figura con la forma medida y la tabla de armónicos.}
+
+Esta medición fija el punto de partida de la sección siguiente: en este motor la forma de onda que el ADALINE debería aprender se parece mucho a la que el modelo senoidal ya supone.
+
+% =================================================================
+\section{Seguimiento de corriente del M2PC}
+\label{sec:seguimiento-banco}
+
+% Contenido: Exp. 1 (escalones de i_q* con PI congelado, captura a 50 kHz): respuesta en
+% < 200 us; RMS(eps_q) ~ 37-40 mA sobre rizo de conmutacion de 225-334 mA pk-pk (suelo
+% fisico V*Ts/L a 12 V); error de fase del modelo ~2 deg. Exp. 2: trayectoria senoidal
+% con inversion, RMS ~10 rpm (+-100/300/600), +-300 rpm RMS 6.5 rpm.
+% CUIDADO: el logger L a 1 kHz degradaba el baseline 15 % (55 -> 46.7 mA). Las cifras
+% de s23/s24 llevan ese sesgo. En la tesis usar SOLO baselines con L decimado 1/100
+% (46.7 / 43.1 mA) o repetir Exp. 1 con ese logger.
+
+\pend{Tabla de Exp. 1 y 2 con el logger decimado. Resolver el sesgo del logger antes de citar cifras de s23/s24.}
+
+% =================================================================
+\section{ADALINE en línea sobre el banco}
+\label{sec:adaline-banco}
+
+\subsection{Presupuesto de cómputo}
+\label{ssec:presupuesto}
+
+% Evaluacion plana desenrollada: 365 ciclos (H=7), 235 (H=3), ~2.1 us; overruns = 0 a
+% 300 rpm. A 600 rpm no hay margen (m2pc_step cuesta 10.7 us): queda pendiente CCM-SRAM.
+% Costo colateral: corr/s 1960 -> 1785 (el I2C pierde ~9 % de muestras del encoder).
+% LMS efectivo: ~420 updates/s con H=3, no 1000. Fuente: PROGRESO s26 §1-2.
+
+\pend{Resumen corto del presupuesto. La historia de las tres iteraciones queda en la bitácora.}
+
+\subsection{Resultados a 300 rpm}
+\label{ssec:resultados-300}
+
+% TABLA CENTRAL (Exp. 3c, redefinida en s26). 300 rpm constante, L decimado, overruns = 0:
+%   OFF'            eps_q 46.7  eps_d 43.1
+%   ON mu=0         48.0        41.0   (control: implementacion inocua)
+%   ON mu=1e-4      44.8        39.3   (aprendizaje neto -4 % / -9 %: marginal; W deriva)
+%   E mu=0 (modelo erroneo lambda*0.8, +10 deg, sin aprender)  44.1  39.7
+%   E mu=1e-4       46.6 -> 55.1  40.5 -> 44.2  (recupera lambda; luego empeora)
+% Resultados negativos que tambien van: mu = 2e-3 inestable en lazo (TRIP, i_alpha = 1.2 A,
+% t ~ 138 s); mu = 1e-4 en trayectoria +-300 rpm da ~100 mA (2.3x peor que OFF).
+% Fuente: PROGRESO s26 §3-4; logs m2pc_s26_*.
+
+\pend{Cuadro con las cinco configuraciones y las dos corridas inestables; figura con W(t) de la corrida E.}
+
+\subsection{El LMS como identificador}
+\label{ssec:identificador}
+
+% Desde lambda*0.8 recupera lambda en ~90 s en lazo cerrado (b1_alpha -0.79 -> -1.01).
+% Pero converge a la tension efectiva vista por el controlador: secuencia negativa
+% (asimetria alfa/beta de la cadena de medida) y h2 creciente (5.8 -> 8 -> 17.6 %) sin
+% saturar. Mecanismo de la inestabilidad: e_hat alimenta predictor Y regla de sector ->
+% el error de forma mueve el sector -> cambia el patron de rizo -> el observador
+% (dominado por dead-time) ve otra "BEMF" -> W la aprende. En simulacion e_hat no
+% cerraba ese lazo.
+
+\pend{Explicar el punto fijo del LMS y el mecanismo de la espiral, con la figura de la deriva de $h_2$.}
+
+% =================================================================
+\section{Discusión}
+\label{sec:discusion-exp}
+
+% EL ARGUMENTO (lo que pidio el Dr. Icaza). Tres pasos:
+%
+% 1. Insensibilidad: G*Delta_e ~ 150 mV -> ~0.1 LSB/paso (~3 mA) frente a ~300 mA pk-pk
+%    de rizo de conmutacion V_dc*T_s/L. Un error de 20 %/10 deg en el modelo de BEMF no
+%    cambia eps_q (44.1 vs 46.7). Por eso ninguna forma aprendida puede mostrar mejora
+%    en este banco, y no es una falla del ADALINE.
+%    HUECO A CERRAR: la frase "ni con armonicos de 5 % se veria" es extrapolacion, no
+%    medida. Respaldarla con una corrida de fcs_m2pc_v2 con los parametros del banco
+%    (12 V, 20 us, L/R del 2804) y BEMF con 5 % de armonicos. Si no se hace, quitarla.
+%
+% 2. Frontera entre regimenes: en simulacion (240 V, Ts = 30 us, L = 2.05 mH, BEMF
+%    trapezoidal) el rizo de conmutacion es pequeno frente al efecto de la BEMF y el
+%    ADALINE gana 69 %/61 %. En el banco ocurre lo contrario. Hay que dar el criterio:
+%    cociente (efecto de Delta_e por paso) / (rizo de conmutacion). \pend{Formular como
+%    desigualdad o como numero adimensional y evaluarlo en los dos casos.}
+%
+% 3. Lo que SI se demostro en banco: el mecanismo funciona (recupera lambda en ~90 s,
+%    la implementacion cabe en la ISR a 300 rpm, no degrada con mu = 0). Lo que falta
+%    para que el online sea util: compensar dead-time y asimetria alfa/beta en el
+%    observador (V_dt ya identificado en Exp. 3a); CCM-SRAM para 600 rpm; un motor con
+%    BEMF no sinusoidal y mayor tension.
+%
+% Tono: no disculpar; es un resultado medido con controles y delimita el alcance.
+
+\pend{Redactar los tres pasos. Cerrar con una frase sobre qué motor y qué condiciones habrían mostrado la ganancia.}
 
 \end{document}
