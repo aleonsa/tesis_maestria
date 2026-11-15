@@ -3,9 +3,30 @@
 Logs serie de `07_m2pc` capturados en este banco. No confundir con `datos_axel/`,
 que son grabaciones de otra persona con otro motor (base de `generate_real_bemf_lut.py`).
 
-Los `.log` no se versionan (pesan hasta 25 MB); solo este README. Se nombran
+Los `.log` individuales se mantienen fuera de Git; los 34 registros locales
+disponibles al 15 de noviembre de 2026 están respaldados, sin pérdida, en dos
+archivos del repositorio:
+
+- `registros_banco_s22.tar.gz`: el log grande `m2pc_s22_cordic_fix.log`.
+- `registros_banco_resto.tar.gz`: los otros 33 logs disponibles.
+- `SHA256SUMS`: resumen SHA-256 de cada archivo original, para verificar la restauración.
+
+Para restaurarlos después de clonar, desde la raíz del repositorio:
+
+```bash
+tar -xkzf datos_banco/registros_banco_s22.tar.gz -C datos_banco
+tar -xkzf datos_banco/registros_banco_resto.tar.gz -C datos_banco
+cd datos_banco
+sha256sum -c SHA256SUMS
+```
+
+La opción `-k` evita sobrescribir logs locales existentes; si ya hay archivos
+con el mismo nombre, `tar` avisa y termina con error en lugar de reemplazarlos.
+En ese caso, verificar los originales con `sha256sum -c SHA256SUMS` o extraer
+los respaldos en un directorio vacío y compararlos. Los logs se nombran
 `m2pc_<descripción>_<fecha>.log`; `scope_m2pc.py` guarda por defecto como
-`m2pc_live_<fecha>.log`.
+`m2pc_live_<fecha>.log`. Logs nuevos deben añadirse explícitamente a un nuevo
+respaldo y a su manifiesto: no se incluyen de manera automática.
 
 | Archivo | Sesión | Condición |
 |---|---|---|
