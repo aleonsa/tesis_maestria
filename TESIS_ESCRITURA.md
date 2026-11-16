@@ -196,7 +196,27 @@ c6_sesgo_rizo (6.6, sesgo + rizo a 6f_e), c6_kappa (6.6, nueva: todos los casos 
 0.022/0.019. En simulación el error de los modelos fijos es sobre todo de AMPLITUD (fundamental de la planta 0.76 vs 1 de
 SIN/TRAP): la ablación amplitud vs forma (`main_ablation_ke_vs_shape.m`, sin correr, requiere MATLAB) es ahora la pieza que falta.
 Otros: la figura `banco_rms_experimento.pdf` recorta la etiqueta del eje y ("[mA"); regenerar si se pule.
-**Compila limpio** (71 págs, 0 errores, 0 refs indefinidas; TeX Live 2026 instalado vía MacTeX el 2026-11-15).
+**Compila limpio** (72 págs, 0 errores, 0 refs indefinidas; TeX Live 2026 instalado vía MacTeX el 2026-11-15).
+
+### Pasada de coherencia tras el Cap. 6 (2026-11-15)
+- **Cap. 5 (Discusión):** nuevo párrafo sobre amplitud contra forma. Los modelos fijos difieren de la planta también en el
+  fundamental (planta 0.76, SIN 1.0, TRAP 1.22; `cociente_prediccion.py`). Argumento: un error solo de amplitud no da rizo
+  (ganancia constante en la referencia, sesgo en la predicción, medido en el banco); TRAP tiene más error de amplitud y menos
+  rizo que SIN. La ganancia se atribuye a la forma; la ablación lo cuantificaría. Último párrafo enlaza al Cap. 6.
+- **Cap. 6:** la "segunda lectura" de κ usa ese argumento en vez de "no sabemos"; cierre ajustado.
+- **Cap. 1:** sexta contribución (implementación en STM32G431, banco 2804, criterio κ).
+- **Cap. 3:** objetivo general dice "en simulación y en un banco experimental"; sexto objetivo específico experimental.
+  **Confirmar con el Dr. Icaza** (cambia el alcance declarado). La hipótesis no se tocó.
+- Quedan hallazgos del revisor en prosa antigua (Cap. 1: 9, Cap. 3: 7, Cap. 5: 8; sobre todo oraciones largas y un
+  "Vale la pena" en Cap. 5). No se tocaron en esta pasada.
+
+### Bloque H — Cap. 7 Conclusiones 🟡 BORRADOR (2026-11-15)
+`Capitulo7/Cap7.tex`, `\label{cap:conclusiones}`. Apertura (respuesta en dos partes: simulación sí, banco delimitado),
+7.1 Conclusiones (dos vías; FCS-M2PC + ADALINE; simulación 69/61 %, convergencia, piso 1.9 %, atribución a la forma;
+banco: implementación, sector, BEMF medida, sin efecto del modelo, LMS identificador, inestabilidad; criterio κ; veredicto
+de la hipótesis) y 7.2 Trabajo futuro (7 líneas, en orden: ablación, banco con κ alto, medir par, señal de aprendizaje,
+desacoplar sector, rango de operación, sensibilidad a R/L). Sin cifras nuevas: todas vienen de los Cap. 5 y 6.
+Revisor sin hallazgos. **A revisar con el Dr. Icaza:** el veredicto "en el banco no se contradice, se delimita".
 
 ---
 

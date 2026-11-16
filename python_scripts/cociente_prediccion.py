@@ -52,6 +52,7 @@ def calcular(verbose=True):
     KE, WM, VDC_SIM = 0.40355, 80.0, 240.0
     esc = KE * WM
     c_real, c_sin = fund(s_real, th), fund(np.sin(th), th)
+    out['fund_planta'] = abs(c_real)
     if verbose:
         print(f"[sim] fundamental planta |c1| = {abs(c_real):.4f}, fase vs sin(theta) = {np.degrees(np.angle(c_real / c_sin)):+.2f} deg")
     for nombre, s_mod in [("SIN", np.sin(th)), ("TRAP", trap_alpha(th))]:
@@ -60,6 +61,7 @@ def calcular(verbose=True):
         s_esc = s_mod * abs(c_real) / abs(fund(s_mod, th))
         de_forma = dpk(s_esc, s_real) * esc
         out[f'sim_{nombre}'] = 2 * de / VDC_SIM
+        out[f'fund_{nombre}'] = abs(fund(s_mod, th))
         out[f'sim_{nombre}_forma'] = 2 * de_forma / VDC_SIM
         if verbose:
             print(f"[sim] {nombre:4s}: delta_e = {de:6.2f} V (solo forma {de_forma:5.2f} V)  "

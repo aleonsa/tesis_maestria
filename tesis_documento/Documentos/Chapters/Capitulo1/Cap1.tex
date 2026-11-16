@@ -77,6 +77,8 @@ Se construye un observador discreto de BEMF que provee la señal de aprendizaje 
 
 Se valida el esquema completo en un caso de estudio numérico frente a cinco alternativas, incluyendo modelos fijos trapezoidal y senoidal y un modelo aprendido fuera de línea con una red profunda. La reducción de rizo de par respecto al modelo trapezoidal es del 69 por ciento con supervisión ideal y del 61 por ciento cuando el aprendizaje se alimenta del observador. Se caracteriza además el rizo residual y se establece que el piso alcanzado corresponde a un límite del controlador ---determinado por el número de subintervalos y el periodo de muestreo--- y no del modelo de BEMF, lo que delimita con precisión qué parte del problema queda fuera del alcance de la estrategia propuesta.
 
+Se implementa el esquema en un microcontrolador STM32G431 y se evalúa en un banco con un motor 2804 de 12 ranuras y 14 polos. La \acrshort{bemf} de ese motor, medida en circuito abierto, es casi senoidal, con una distorsión armónica total menor del $0.7\%$. En ese banco el aprendizaje en línea identifica la amplitud de la \acrshort{bemf} en lazo cerrado, pero no puede mejorar el seguimiento de corriente: el error de modelo que corrige queda muy por debajo del rizo de conmutación. Se propone un cociente adimensional, el error de \acrshort{bemf} relativo a la tensión del bus, que explica la diferencia entre la simulación y el banco y permite anticipar en qué motores el aprendizaje de la forma de onda puede notarse.
+
 % =================================================================
 \section{Estructura de la tesis}
 \label{sec:estructura}

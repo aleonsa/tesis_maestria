@@ -118,7 +118,7 @@ Tres elementos sostienen esta hipótesis y se justifican a lo largo del capítul
 
 \begin{objetivo}
 \label{obj:general}
-Diseñar, analizar y validar en simulación un esquema de control predictivo de corriente FCS-M2PC con estimación adaptable en línea de la función de forma de la BEMF basada en un ADALINE con regresores de Fourier, capaz de reducir el rizo de par en motores BLDC con BEMF no senoidal sin requerir caracterización previa del motor.
+Diseñar, analizar y validar en simulación y en un banco experimental un esquema de control predictivo de corriente FCS-M2PC con estimación adaptable en línea de la función de forma de la BEMF basada en un ADALINE con regresores de Fourier, capaz de reducir el rizo de par en motores BLDC con BEMF no senoidal sin requerir caracterización previa del motor.
 \end{objetivo}
 
 \noindent Los objetivos específicos que estructuran este trabajo son:
@@ -128,6 +128,7 @@ Diseñar, analizar y validar en simulación un esquema de control predictivo de 
     \item Construir un observador discreto que recupere $\mathbf{s}(\theta_e)$ a partir de mediciones de corriente y voltaje en lazo cerrado, proporcionando la señal de aprendizaje al ADALINE en ausencia de un sensor de BEMF.
     \item Integrar las tres piezas anteriores en una arquitectura única y comparar su desempeño contra esquemas FCS-M2PC con modelos fijos de BEMF (trapezoidal, senoidal y aprendido offline con redes neuronales profundas), usando un caso de estudio numérico.
     \item Caracterizar el rizo residual y discutir las fuentes que el esquema propuesto no puede atacar por construcción, identificando direcciones de trabajo futuro.
+    \item Implementar el esquema en un microcontrolador, evaluarlo en un banco experimental y delimitar las condiciones de operación en que el aprendizaje de la forma de onda de la BEMF reduce el error frente a un modelo fijo.
 \end{enumerate}
 
 \end{document}

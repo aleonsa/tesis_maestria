@@ -4,13 +4,44 @@
 
 \begin{document}
 
-	\chapter{Conclusiones}
-	\label{cap:conclusiones}
+% BORRADOR (2026-11-15). Cifras tomadas de los capítulos 5 y 6; cada una tiene allí su fuente.
+\chapter{Conclusiones}
+\label{cap:conclusiones}
 
-	\section{Conclusiones}
-	\lipsum[1-2]
+Esta tesis planteó si un controlador predictivo puede aprender la forma de onda de la \acrshort{bemf} mientras opera y usarla para reducir el rizo de par de un motor \acrshort{bldc}. La respuesta tiene dos partes. En simulación, con una \acrshort{bemf} distorsionada, el aprendizaje redujo el rizo de par entre un $61$ y un $69\%$. En un banco con un motor de \acrshort{bemf} casi senoidal, el mismo mecanismo funcionó como identificador, pero no tenía nada que mejorar. Las dos observaciones son compatibles, y el criterio que las une es una de las aportaciones del trabajo.
 
-	\section{Trabajo futuro}
-	\lipsum[3]
+% =================================================================
+\section{Conclusiones}
+\label{sec:conclusiones}
+
+El análisis del capítulo \ref{cap:modelo} mostró que un modelo incorrecto de \acrshort{bemf} produce rizo de par por dos vías: la generación de la referencia de corriente y la predicción del controlador. Las dos vías actúan a la vez. La simulación lo confirmó con un resultado que a primera vista parece contradictorio: el modelo senoidal sigue mejor su referencia que el trapezoidal y, aun así, produce más rizo de par ($6.43$ contra $6.06\%$). El rizo de par no es monótono en el error de seguimiento: depende también de qué corriente se persigue. Por eso la corrección debe actuar sobre el modelo de \acrshort{bemf} y no solo sobre el lazo de corriente.
+
+El \acrshort{fcsm2pc} admite la forma de onda de la \acrshort{bemf} como parámetro estimado sin cambiar su estructura. El \acrshort{adaline} con regresores de Fourier resultó un estimador adecuado para ese parámetro. Con cuarenta pesos alcanza el mismo rizo que una red profunda de unos veinticinco mil parámetros, sus pesos son los coeficientes de Fourier de la forma de onda, y bajo posición uniformemente distribuida todos sus modos convergen al mismo ritmo.
+
+En simulación, el esquema completo redujo el rizo de par de $6.06$ a $1.88\%$ respecto del modelo trapezoidal, un $69\%$, con supervisión ideal. Con la señal de aprendizaje reconstruida por el observador a partir de mediciones ruidosas, el rizo quedó en $2.36\%$, una reducción del $61\%$. El aprendizaje converge en $25$ a $35$ ms con supervisión ideal y en $50$ a $120$ ms con el observador. El rizo restante, de $1.9\%$, es un límite del controlador fijado por $\rho$ y $T_s$, y no del modelo de \acrshort{bemf}. Los modelos fijos de la simulación diferían de la planta en la amplitud y en la forma. Un error solo de amplitud se traduce en un error de ganancia o en un sesgo de corriente, no en rizo, de modo que la reducción se atribuye a la forma.
+
+En el banco, el esquema se implementó en un STM32G431 a $50$ kHz. El controlador completo ocupa $15.8\,\mu$s de los $20$ disponibles, y el \acrshort{adaline} añade $235$ ciclos. La implementación obligó a cambiar la regla de selección de sector: la elección por la dirección de la \acrshort{bemf} no podía invertir el giro, y la elección por la tensión de régimen lo resolvió con menos rizo. La \acrshort{bemf} del motor 2804, medida en circuito abierto, tiene un \acrshort{thd} de $0.42$ a $0.67\%$. Reconstruida desde la tensión comandada, la misma \acrshort{bemf} mostraba armónicos dos a cinco veces mayores. La diferencia la ponen el tiempo muerto y los errores de modelo del inversor.
+
+Con ese motor, ningún modelo de \acrshort{bemf} cambió el error de seguimiento más allá de la dispersión entre corridas. Un modelo equivocado a propósito en un $25\%$ dio el mismo error que el nominal, unos $48$ mA. El \acrshort{lms} identificó la amplitud de la \acrshort{bemf} en lazo cerrado en unos $110$ s, a menos de un $3\%$ del valor medido. No corrigió la fase, y aprendió una asimetría entre ejes que el motor no tiene: converge a la tensión que ve el controlador, no a la \acrshort{bemf} del imán. Con la ganancia de la simulación el aprendizaje desestabilizó el lazo, por un camino que la simulación no tenía: la estimación de \acrshort{bemf} interviene en la elección del sector.
+
+El cociente $\kappa = 2\,\delta e/V_{dc}$ explica la diferencia entre los dos casos por la vía de la predicción. Mide el error de \acrshort{bemf} frente a la tensión del bus, y no depende de la inductancia ni del periodo. En el banco, la distorsión real del motor da $\kappa = 7.4\times 10^{-4}$, cuando haría falta $\kappa \approx 0.08$ para que el error de seguimiento subiera un $10\%$. Por la vía de la referencia, la cota del rizo de par es del orden del \acrshort{thd}: $10.6\%$ en la planta simulada y menos de $0.7\%$ en el banco.
+
+La hipótesis de la sección \ref{sec:hipotesis} se sostiene en simulación. En el banco no se contradice, se delimita: aprender la forma de onda reduce el rizo cuando la \acrshort{bemf} del motor se aparta de la que supone el modelo fijo en una fracción comparable al piso del controlador. Un motor con \acrshort{bemf} casi senoidal como el 2804, alimentado a $12$ V, queda unas cien veces por debajo de esa condición.
+
+% =================================================================
+\section{Trabajo futuro}
+\label{sec:trabajo-futuro}
+
+Las líneas que siguen salen de lo que esta tesis no pudo cerrar, en orden de importancia para sus conclusiones.
+
+\begin{itemize}
+    \item \textbf{Separar amplitud y forma en simulación.} La atribución de la ganancia simulada a la forma descansa en un argumento analítico y en la comparación entre SIN y TRAP. Una ablación que corrija por separado la amplitud y la forma, ya planteada, la cuantificaría.
+    \item \textbf{Un banco donde el criterio $\kappa$ prediga una ganancia.} La prueba directa de la frontera es un motor con \acrshort{bemf} trapezoidal o de devanado concentrado, alimentado a una tensión mayor, donde el error de un modelo fijo caiga en la zona de $\kappa$ en que el error de seguimiento crece.
+    \item \textbf{Medir el par.} El banco solo midió corriente. El rizo de par se infirió de los armónicos de corriente; un sensor de par o una carga controlada permitirían medirlo y probar el esquema con carga, donde el rizo debido a la forma escala con $i_q$.
+    \item \textbf{Una señal de aprendizaje que no confunda al inversor con el motor.} El \acrshort{lms} aprendió el tiempo muerto y la asimetría de la medición como si fueran \acrshort{bemf}. Compensar el tiempo muerto en la reconstrucción, o usar la tensión aplicada en lugar de la comandada, atacaría la causa del sesgo de fase.
+    \item \textbf{Desacoplar la estimación y la elección del sector.} La inestabilidad con ganancia alta pasa por la regla de sector. Elegir el sector con un modelo fijo, o analizar la estabilidad del lazo que forman la estimación y el sector, permitiría usar ganancias mayores.
+    \item \textbf{Ampliar el rango de operación.} A $600$ rpm el controlador con \acrshort{adaline} no cabe en la interrupción; ejecutar el \acrshort{fcsm2pc} desde memoria de acceso rápido daría ese margen. Cerca del reposo, donde la \acrshort{bemf} es pequeña, el aprendizaje se suspende y queda por definir cómo combinarlo con el encoder.
+    \item \textbf{Sensibilidad a los parámetros eléctricos.} El observador de la simulación usó $R$ y $L$ exactos. La sensibilidad del aprendizaje a errores en esos parámetros no se caracterizó.
+\end{itemize}
 
 \end{document}
