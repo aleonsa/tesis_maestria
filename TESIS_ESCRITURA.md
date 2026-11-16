@@ -196,7 +196,7 @@ c6_sesgo_rizo (6.6, sesgo + rizo a 6f_e), c6_kappa (6.6, nueva: todos los casos 
 0.022/0.019. En simulación el error de los modelos fijos es sobre todo de AMPLITUD (fundamental de la planta 0.76 vs 1 de
 SIN/TRAP): la ablación amplitud vs forma (`main_ablation_ke_vs_shape.m`, sin correr, requiere MATLAB) es ahora la pieza que falta.
 Otros: la figura `banco_rms_experimento.pdf` recorta la etiqueta del eje y ("[mA"); regenerar si se pule.
-**Compila limpio** (72 págs, 0 errores, 0 refs indefinidas; TeX Live 2026 instalado vía MacTeX el 2026-11-15).
+**Compila limpio** (75 págs, 0 errores, 0 refs indefinidas; TeX Live 2026 instalado vía MacTeX el 2026-11-15).
 
 ### Pasada de coherencia tras el Cap. 6 (2026-11-15)
 - **Cap. 5 (Discusión):** nuevo párrafo sobre amplitud contra forma. Los modelos fijos difieren de la planta también en el
@@ -210,13 +210,13 @@ Otros: la figura `banco_rms_experimento.pdf` recorta la etiqueta del eje y ("[mA
 - Quedan hallazgos del revisor en prosa antigua (Cap. 1: 9, Cap. 3: 7, Cap. 5: 8; sobre todo oraciones largas y un
   "Vale la pena" en Cap. 5). No se tocaron en esta pasada.
 
-### Bloque H — Cap. 7 Conclusiones 🟡 BORRADOR (2026-11-15)
-`Capitulo7/Cap7.tex`, `\label{cap:conclusiones}`. Apertura (respuesta en dos partes: simulación sí, banco delimitado),
-7.1 Conclusiones (dos vías; FCS-M2PC + ADALINE; simulación 69/61 %, convergencia, piso 1.9 %, atribución a la forma;
-banco: implementación, sector, BEMF medida, sin efecto del modelo, LMS identificador, inestabilidad; criterio κ; veredicto
-de la hipótesis) y 7.2 Trabajo futuro (7 líneas, en orden: ablación, banco con κ alto, medir par, señal de aprendizaje,
-desacoplar sector, rango de operación, sensibilidad a R/L). Sin cifras nuevas: todas vienen de los Cap. 5 y 6.
-Revisor sin hallazgos. **A revisar con el Dr. Icaza:** el veredicto "en el banco no se contradice, se delimita".
+### Bloque H — Cap. 7 Conclusiones 🟡 BORRADOR AMPLIADO (2026-11-15, ~2400 palabras)
+`Capitulo7/Cap7.tex`. Apertura + 7.1 Conclusiones en cinco subsecciones (planteamiento, estimador y aprendizaje,
+validación numérica, validación en banco, frontera simulación-banco) con referencias cruzadas a cuadros, figuras y
+ecuaciones de los Cap. 3-6, y 7.2 Trabajo futuro (8 líneas). Citas usadas, todas verificadas: lehuy1986minimization,
+coronado2025, coronado2023, ali2024ann, widrow1985adaptive, haykin2014adaptive, zhao2025adaline, shao2003direct,
+shao2019ismo, li2019highstability, jimenez2021bldc. Ninguna de las 7 sin verificar. Sin cifras nuevas.
+**A revisar con el Dr. Icaza:** el veredicto de la hipótesis y la frase sobre el cumplimiento de objetivos.
 
 ---
 
