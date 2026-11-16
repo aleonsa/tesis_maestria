@@ -49,7 +49,7 @@
 \glossaryentry{ADALINE?\glossentry{adaline}|setentrycounter[]{page}"\glsnumberformat}{42}
 \glossaryentry{RMSE?\glossentry{rmse}|setentrycounter[]{page}"\glsnumberformat}{42}
 \glossaryentry{PI?\glossentry{pi}|setentrycounter[]{page}"\glsnumberformat}{42}
-\glossaryentry{BEMF?\glossentry{bemf}|setentrycounter[]{page}"\glsnumberformat}{42}
+\glossaryentry{BEMF?\glossentry{bemf}|setentrycounter[]{page}"\glsnumberformat}{43}
 \glossaryentry{PI?\glossentry{pi}|setentrycounter[]{page}"\glsnumberformat}{43}
 \glossaryentry{RMSE?\glossentry{rmse}|setentrycounter[]{page}"\glsnumberformat}{43}
 \glossaryentry{BEMF?\glossentry{bemf}|setentrycounter[]{page}"\glsnumberformat}{43}
@@ -84,9 +84,14 @@
 \glossaryentry{RMSE?\glossentry{rmse}|setentrycounter[]{page}"\glsnumberformat}{47}
 \glossaryentry{BEMF?\glossentry{bemf}|setentrycounter[]{page}"\glsnumberformat}{47}
 \glossaryentry{ADALINE?\glossentry{adaline}|setentrycounter[]{page}"\glsnumberformat}{47}
+\glossaryentry{PMSM?\glossentry{pmsm}|setentrycounter[]{page}"\glsnumberformat}{47}
 \glossaryentry{BEMF?\glossentry{bemf}|setentrycounter[]{page}"\glsnumberformat}{47}
+\glossaryentry{BLDC?\glossentry{bldc}|setentrycounter[]{page}"\glsnumberformat}{47}
 \glossaryentry{BEMF?\glossentry{bemf}|setentrycounter[]{page}"\glsnumberformat}{48}
 \glossaryentry{BEMF?\glossentry{bemf}|setentrycounter[]{page}"\glsnumberformat}{48}
+\glossaryentry{BEMF?\glossentry{bemf}|setentrycounter[]{page}"\glsnumberformat}{48}
+\glossaryentry{BEMF?\glossentry{bemf}|setentrycounter[]{page}"\glsnumberformat}{48}
+\glossaryentry{FCS-MPC?\glossentry{fcsmpc}|setentrycounter[]{page}"\glsnumberformat}{48}
 \glossaryentry{BEMF?\glossentry{bemf}|setentrycounter[]{page}"\glsnumberformat}{48}
 \glossaryentry{RMSE?\glossentry{rmse}|setentrycounter[]{page}"\glsnumberformat}{48}
 \glossaryentry{RMSE?\glossentry{rmse}|setentrycounter[]{page}"\glsnumberformat}{48}
@@ -142,3 +147,4 @@
 \glossaryentry{ADALINE?\glossentry{adaline}|setentrycounter[]{page}"\glsnumberformat}{55}
 \glossaryentry{FCS-M2PC?\glossentry{fcsm2pc}|setentrycounter[]{page}"\glsnumberformat}{55}
 \glossaryentry{BEMF?\glossentry{bemf}|setentrycounter[]{page}"\glsnumberformat}{55}
+\glossaryentry{FCS-MPC?\glossentry{fcsmpc}|setentrycounter[]{page}"\glsnumberformat}{56}

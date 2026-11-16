@@ -72,11 +72,11 @@ Las líneas que siguen salen de lo que esta tesis no pudo cerrar. Están ordenad
 \begin{itemize}
     \item \textbf{Separar amplitud y forma en simulación.} La atribución de la ganancia simulada a la forma descansa en un argumento analítico y en la comparación entre los modelos senoidal y trapezoidal. Una ablación que corrija por separado la amplitud y la forma, ya planteada, la cuantificaría.
 
-    \item \textbf{Un banco donde el criterio $\kappa$ prediga una ganancia.} La prueba directa de la frontera es un motor con \acrshort{bemf} trapezoidal o de devanado concentrado, alimentado a una tensión mayor, donde el error de un modelo fijo caiga en la zona en que el error de seguimiento crece. Un experimento intermedio, sin cambiar de motor, es emular en el controlador una \acrshort{bemf} distorsionada y verificar la curva de la figura \ref{fig:kappa} en esa zona.
+    \item \textbf{Un banco donde el criterio $\kappa$ prediga una ganancia.} La prueba directa de la frontera es un motor con \acrshort{bemf} trapezoidal, alimentado a una tensión mayor, donde el error de un modelo fijo caiga en la zona en que el error de seguimiento crece. Un experimento intermedio, sin cambiar de motor, es emular en el controlador una \acrshort{bemf} distorsionada y verificar la curva de la figura \ref{fig:kappa} en esa zona.
 
     \item \textbf{Medir el par.} El banco solo midió corriente, y el rizo de par se infirió de sus armónicos. Un sensor de par o una carga controlada permitirían medirlo y probar el esquema con carga, donde el rizo debido a la forma de onda escala con $i_q$.
 
-    \item \textbf{Una señal de aprendizaje que no confunda al inversor con el motor.} El \acrshort{lms} aprendió el tiempo muerto y la asimetría de la medición como si fueran \acrshort{bemf}. Compensar el tiempo muerto en la reconstrucción, medir la tensión aplicada en lugar de usar la comandada, o sustituir la reconstrucción algebraica por un observador como los de \citet{shao2019ismo} o \citet{coronado2023}, atacaría la causa del sesgo de fase.
+    \item \textbf{Una señal de aprendizaje que no confunda al inversor con el motor.} El \acrshort{lms} aprendió el tiempo muerto y la asimetría de la medición como si fueran \acrshort{bemf}. Compensar el tiempo muerto en la reconstrucción \citep{munoz1999deadtime}, medir la tensión aplicada en lugar de usar la comandada, o sustituir la reconstrucción algebraica por un observador como los de \citet{shao2019ismo} o \citet{coronado2023}, atacaría la causa del sesgo de fase.
 
     \item \textbf{Desacoplar la estimación y la elección del sector.} La inestabilidad con ganancia alta pasa por la regla de sector. Elegir el sector con un modelo fijo y reservar la estimación para la predicción, o analizar la estabilidad del lazo que forman ambas, permitiría usar ganancias mayores y converger más rápido.
 
@@ -84,7 +84,7 @@ Las líneas que siguen salen de lo que esta tesis no pudo cerrar. Están ordenad
 
     \item \textbf{Ampliar el rango de operación.} A $600$ rpm el controlador con \acrshort{adaline} no cabe en la interrupción; ejecutar el \acrshort{fcsm2pc} desde memoria de acceso rápido daría ese margen. Cerca del reposo la \acrshort{bemf} se desvanece y el aprendizaje se suspende, el mismo régimen que atacan \citet{li2019highstability} para la estimación de posición.
 
-    \item \textbf{Sensibilidad a los parámetros eléctricos.} El observador de la simulación usó $R$ y $L$ exactos, y en el banco la inductancia se tomó de la hoja de datos. Una identificación previa de parámetros, como la de \citet{jimenez2021bldc}, y un estudio de sensibilidad del aprendizaje a errores en $R$ y $L$ completarían la validación.
+    \item \textbf{Sensibilidad a los parámetros eléctricos.} El observador de la simulación usó $R$ y $L$ exactos, y en el banco la inductancia se tomó de la hoja de datos. Una identificación previa de parámetros, como la de \citet{jimenez2021bldc}, y un estudio de sensibilidad del aprendizaje a errores en $R$ y $L$, como el de \citet{young2016mismatch} para el \acrshort{fcsmpc}, completarían la validación.
 \end{itemize}
 
 \end{document}

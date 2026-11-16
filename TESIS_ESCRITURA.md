@@ -166,6 +166,10 @@ necesitaba 1.4).
 `rodriguez2013stateofart`, `cortes2012delay`, `tarisciotti2015m2pc`. Ninguno de estos PDFs
 está en `papers/`. Van marcados con un comentario de bloque en `Bibliografia.bib`.
 
+**Actualización 2026-11-16:** las 7 se cotejaron contra Crossref (autores, revista, volumen, número, páginas, año) y coinciden. Se corrigió `tarisciotti2015m2pc` (faltaba Degano) y las páginas de `li2019highstability` (4895--4903). Sigue pendiente leer los PDF para confirmar que dicen lo que les atribuimos.
+
+**Bibliografía ampliada (2026-11-16):** 17 entradas nuevas de prioridad A, con DOI verificado en Crossref, al final de `Bibliografia.bib` (47 en total). 16 de las 17 ya están citadas en los Cap. 1, 2, 3, 4, 6 y 7 (41 referencias citadas en total; 76 págs). **Se citan solo por título y resumen**: los párrafos que dependen de leer el PDF llevan el comentario `% POR CONFIRMAR CON LOS PDF` (Cap. 1: xia2013fsmpc, li2024dutycycle, flieller2014selflearning, guo2024parallel; Cap. 6: dai2022lowinductance, fang2012smallinductance; también young2016mismatch y siami2016robustness). `elrefaie2010fscw` queda sin citar hasta confirmar el argumento de los factores de devanado (sigue el `\pend` del Cap. 6). Se quitó del Cap. 7 la mención a "devanado concentrado" como motor candidato: el 2804 ya es de devanado concentrado y su BEMF es casi senoidal. Lista completa de 41 candidatas, con dónde citar cada una, en `LITERATURA_CANDIDATA.md`. Libert y Soulard (2004) no se pudo verificar; sustituto propuesto: `elrefaie2010fscw`.
+
 **Compila limpio** (56 págs, 0 refs/citas indefinidas, 0 overfull boxes).
 
 ### Bloque G — Cap. 6 Validación experimental en banco 🟡 ESQUELETO (2026-11-15)

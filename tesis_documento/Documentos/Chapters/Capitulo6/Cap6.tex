@@ -130,7 +130,7 @@ donde $x$ es la fase, $\omega_e$ la velocidad eléctrica estimada muestra a mues
     \end{tabular}
 \end{table}
 
-El cuadro \ref{tab:bemf-oc} resume el resultado. La \acrshort{bemf} del 2804 es casi una senoide: el \acrshort{thd} va de $0.42$ a $0.67\%$ según la fase, solo el tercer y el quinto armónico se distinguen del ruido, y ninguno pasa de $0.6\%$. El resultado es coherente con el devanado de 12 ranuras y 14 polos, cuyos factores de devanado atenúan el quinto y el séptimo armónico \pend{citar Libert y Soulard (2004); no está en el .bib}.
+El cuadro \ref{tab:bemf-oc} resume el resultado. La \acrshort{bemf} del 2804 es casi una senoide: el \acrshort{thd} va de $0.42$ a $0.67\%$ según la fase, solo el tercer y el quinto armónico se distinguen del ruido, y ninguno pasa de $0.6\%$. El resultado es coherente con el devanado de 12 ranuras y 14 polos, cuyos factores de devanado atenúan el quinto y el séptimo armónico \pend{citar El-Refaie (2010) o Ishak et al. (2006) tras confirmarlo en el PDF; Libert y Soulard (2004) no se pudo verificar}.
 
 % Figura: python_scripts/make_cap6_figs.py (fig_bemf_forma).
 La figura \ref{fig:bemf-forma} pone esa forma junto a la de la planta sintética del capítulo \ref{cap:validacion}, ambas normalizadas a su fundamental. En el panel (a) la forma del banco no se distingue de la senoide ideal, mientras que la de la planta simulada tiene un perfil achatado con ondulaciones visibles. El panel (b) muestra la diferencia con la senoide: la planta simulada se aparta hasta un $14\%$ del pico; el banco, menos de un $0.6\%$. Lo que el \acrshort{adaline} tenía que aprender en simulación es, en el banco, casi nada.
@@ -144,7 +144,7 @@ La figura \ref{fig:bemf-forma} pone esa forma junto a la de la planta sintética
 
 La constante de flujo resulta $\lambda = 3.487$ mWb en el marco $\alpha\beta$. La razón real del divisor puede diferir de la nominal en un $5\%$ por las tolerancias de sus componentes, lo que afecta la amplitud pero no la forma. Cuatro estimaciones previas por la vía eléctrica dieron $3.46$ mWb; ambas coinciden al $1\%$. El fundamental de las tres fases aparece adelantado $2.85 \pm 0.05^\circ$ eléctricos respecto de la posición del encoder. Es un error de alineación del sensor, que corregimos en la constante de calibración de la sección \ref{sec:banco}.
 
-La comparación importante es con la forma que ve el controlador. Reconstruida a partir de la tensión comandada, como la reconstruye el \acrshort{adaline} en línea, la misma \acrshort{bemf} mostraba los armónicos 2 a 6 entre dos y cinco veces más grandes: $h_3 = 1.25\%$ frente a $0.29\%$, y $h_6 = 0.70\%$ frente a $0.01\%$. La diferencia la ponen el tiempo muerto del inversor y los errores en $R$, que aparecen como armónicos. La \acrshort{bemf} que ve el controlador no es la del motor, y el \acrshort{adaline} en línea aprende la primera. Este hecho reaparece en la sección \ref{sec:adaline-banco}.
+La comparación importante es con la forma que ve el controlador. Reconstruida a partir de la tensión comandada, como la reconstruye el \acrshort{adaline} en línea, la misma \acrshort{bemf} mostraba los armónicos 2 a 6 entre dos y cinco veces más grandes: $h_3 = 1.25\%$ frente a $0.29\%$, y $h_6 = 0.70\%$ frente a $0.01\%$. La diferencia la ponen el tiempo muerto del inversor y los errores en $R$, que aparecen como armónicos. El tiempo muerto distorsiona la tensión de salida respecto de la comandada, y su compensación es un problema conocido \citep{munoz1999deadtime}. La \acrshort{bemf} que ve el controlador no es la del motor, y el \acrshort{adaline} en línea aprende la primera. Este hecho reaparece en la sección \ref{sec:adaline-banco}.
 
 % =================================================================
 \section{Seguimiento de corriente del M2PC}
@@ -260,6 +260,9 @@ El modelo sí deja huella donde la medición es más fina. El valor medio de la 
 
 El rizo que importa para el par aparece en el sexto armónico de la frecuencia eléctrica. Lo medimos con $26\,522$ ventanas sincronizadas con el encoder: $2$ mA en $i_q$ y $15$ mA en $i_d$ (figura \ref{fig:sesgo-rizo}b). La forma de la \acrshort{bemf} explica como máximo $0.2$ mA de ese armónico, una décima parte en $i_q$ y una centésima en $i_d$. Aunque el \acrshort{adaline} aprendiera la forma sin error, el resto del rizo seguiría ahí. Su origen está en el lazo y en el inversor: la estructura de sectores, el tiempo muerto y la resolución que fija $\rho$.
 
+% POR CONFIRMAR CON LOS PDF: dai2022lowinductance y fang2012smallinductance se citan por título y resumen.
+El régimen no es exclusivo de este banco. \citet{dai2022lowinductance} tratan accionamientos \acrshort{pmsm} de baja inductancia con control predictivo \textit{deadbeat} y atribuyen los armónicos de corriente a la no linealidad del inversor y a la \acrshort{bemf} no senoidal. \citet{fang2012smallinductance} abordan el control de par instantáneo en un motor \acrshort{bldc} de inductancia pequeña.
+
 \begin{figure}[htbp]
     \centering
     \includegraphics[width=\linewidth]{c6_sesgo_rizo.pdf}
@@ -274,7 +277,7 @@ La simulación y el banco difieren en la planta, en la tensión y en el periodo.
     \kappa = \frac{2G\,\delta e}{V_{dc}T_s/L} = \frac{2\,\delta e}{V_{dc}},
     \label{eq:kappa}
 \end{equation}
-donde $\delta e$ es la amplitud de pico equivalente del error de modelo en el eje $\alpha$. La inductancia y el periodo se cancelan: solo importa el error de \acrshort{bemf} frente a la tensión del bus. El cuadro \ref{tab:kappa} evalúa $\kappa$ en los dos casos, en el punto de operación de cada uno.
+donde $\delta e$ es la amplitud de pico equivalente del error de modelo en el eje $\alpha$. La inductancia y el periodo se cancelan: solo importa el error de \acrshort{bemf} frente a la tensión del bus. \citet{young2016mismatch} estudian el error de predicción del \acrshort{fcsmpc} cuando los parámetros del modelo están desajustados. Aquí el desajuste está en la \acrshort{bemf}, y $\kappa$ lo compara con el rizo de conmutación. El cuadro \ref{tab:kappa} evalúa $\kappa$ en los dos casos, en el punto de operación de cada uno.
 
 % Fuente: python_scripts/cociente_prediccion.py
 \begin{table}[htbp]

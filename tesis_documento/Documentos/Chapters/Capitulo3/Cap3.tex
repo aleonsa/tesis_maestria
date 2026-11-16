@@ -47,7 +47,7 @@ que es la base sobre la que opera el FCS-MPC y su variante M2PC, como se mostrar
 
 El objetivo de control de par es mantener el par electromagnético $T_e$ tan cerca como sea posible de un valor de referencia $T_\mathrm{ref}$, que se produce típicamente por un lazo externo de velocidad. La pregunta inmediata es: ¿qué corriente $\mathbf{i}_{\alpha\beta}^*$ debe entregar el lazo interno para que $T_e = T_\mathrm{ref}$?
 
-Por \eqref{eq:torque-ab}, cualquier corriente que satisfaga $K_t\,\mathbf{s}^{\mathsf T}\,\mathbf{i}^* = T_\mathrm{ref}$ produce el par deseado. Como la ecuación tiene una sola restricción y la corriente vive en $\mathbb{R}^2$, el conjunto de soluciones es una recta. Para seleccionar un único punto de esa recta es necesario un criterio adicional. El criterio estándar en la literatura de control de máquinas \citep{lehuy1986minimization, krishnan2009pmbldc} es minimizar las pérdidas en el cobre, que son proporcionales a $\|\mathbf{i}\|^2$. El problema queda entonces como
+Por \eqref{eq:torque-ab}, cualquier corriente que satisfaga $K_t\,\mathbf{s}^{\mathsf T}\,\mathbf{i}^* = T_\mathrm{ref}$ produce el par deseado. Como la ecuación tiene una sola restricción y la corriente vive en $\mathbb{R}^2$, el conjunto de soluciones es una recta. Para seleccionar un único punto de esa recta es necesario un criterio adicional. El criterio estándar en la literatura de control de máquinas \citep{lehuy1986minimization, hung1993currents, park2000minimum, krishnan2009pmbldc} es minimizar las pérdidas en el cobre, que son proporcionales a $\|\mathbf{i}\|^2$. El problema queda entonces como
 \begin{equation}
     \min_{\mathbf{i}\in\mathbb{R}^2}\; \|\mathbf{i}\|^2
     \quad \text{sujeto a} \quad
