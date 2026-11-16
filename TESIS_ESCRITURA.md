@@ -179,13 +179,17 @@ Secciones: 6.1 banco (con cuadro sim vs banco), 6.2 M2PC en punto fijo, 6.3 BEMF
 (4) R y L del 2804 del cuadro vienen de PLANNING (aprox.), verificar.
 **Correcciones del Dr. Icaza (PDF 17-ago):** "Supervisor" → "Tutor principal" (portada y jurado); "Posgrado de Ingeniería" → "Instituto de Ingeniería".
 Pendiente de decisión: si los objetivos de `sec:objetivos` y `sec:contribuciones` deben mencionar la validación experimental.
-**Redactado (2026-11-15, 63 págs):** intro y ruta, 6.1 (banco + cuadro sim vs banco, THD 10.6 % vs 0.4-0.7 % con `python_scripts/thd_lut_sim.py`),
-6.2 (punto fijo, regla de sector u_ss) y 6.6 (sensibilidad G·δe, sesgo, armónico 6, mecanismo y límites del ADALINE, alcance).
-Cifras de 6.6 salen de `presentation/fig/asesor_numeros.json` (make_advisor_figs.py sobre `datos_banco/`).
-**Pendiente en 6.6:** evaluar 2·δe/V_dc para banco y planta sintética antes de afirmar la comparación (`\pend`); conclusión final de la sección.
-**Aviso:** las cifras 13 %/3 % de la presentación al asesor vienen de una tabla vieja (mar-may 2026, LUT real, hardcodeadas en make_advisor_figs.py:227-229); no usarlas. La planta del Cap. 5 tiene THD 10.6 %, no 2.6 %.
-Sin redactar aún: 6.3, 6.4, 6.5 (esqueleto con cifras en comentarios).
-**Compila limpio** (63 págs, 0 errores, 0 refs indefinidas; TeX Live 2026 instalado vía MacTeX el 2026-11-15).
+**Redactado completo (2026-11-15, 68 págs):** intro, 6.1 banco, 6.2 punto fijo + cuadro de reglas de sector,
+6.3 BEMF en circuito abierto (cuadro + figura), 6.4 seguimiento (piso 48.4 mA, resolución 19 mA, sesgo, trayectorias,
+sesgo del registro), 6.5 ADALINE (presupuesto, cuadro de 4 corridas, identificador, estabilidad), 6.6 discusión
+(escalas, sesgo DC, armónico 6, frontera, resultado sin explicar, alcance y condición de cuándo paga).
+Figuras en `Capitulo6/FigureC6/banco_*.pdf`: copias de `presentation/fig/asesor_*.pdf` (make_advisor_figs.py).
+No se usó `asesor_sensibilidad.pdf`: sus etiquetas "sim." se refieren a la LUT de dSPACE (2.6 %), no a la planta del Cap. 5.
+**Pendientes (`\pend`, en rojo):** cita de Libert y Soulard 2004 (no está en el .bib); cociente 2·δe/V_dc de la planta
+sintética con script trazable (estimación gruesa ~3e-2: si se confirma, la ganancia simulada viene sobre todo de la
+vía de la referencia y 6.6 debe decirlo).
+Otros: la figura `banco_rms_experimento.pdf` recorta la etiqueta del eje y ("[mA"); regenerar si se pule.
+**Compila limpio** (68 págs, 0 errores, 0 refs indefinidas; TeX Live 2026 instalado vía MacTeX el 2026-11-15).
 
 ---
 

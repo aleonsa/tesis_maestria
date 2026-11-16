@@ -4,7 +4,7 @@
 
 \begin{document}
 
-% BORRADOR (2026-11-15). Cada \pend{...} marca un hueco por llenar.
+% BORRADOR (2026-11-15). Cada \pend marca un hueco por llenar.
 % Fuentes: PROGRESO_HARDWARE.md (sesiones 16-26), FIELD_NOTES.md N1.23-N1.28,
 % presentation/fig/asesor_numeros.json (generado por python_scripts/make_advisor_figs.py
 % desde datos_banco/), python_scripts/thd_lut_sim.py. Los logs de datos_banco/ se
@@ -14,7 +14,7 @@
 \chapter{Validación experimental en banco}
 \label{cap:experimental}
 
-El capítulo anterior validó el esquema en simulación, con un motor de BEMF cuasi-trapezoidal alimentado a 240 V. Este capítulo lo lleva a un banco con otro motor, otra tensión y otra frecuencia de conmutación. El resultado es distinto al de simulación: en el banco el aprendizaje en línea no reduce el error de seguimiento. Aquí se mide ese resultado, se explica por qué ocurre y se delimita qué conclusiones de la simulación sobreviven.
+El capítulo anterior validó el esquema en simulación, con un motor de BEMF cuasi-trapezoidal alimentado a 240 V. Este capítulo lo lleva a un banco con otro motor, otra tensión y otra frecuencia de conmutación. El resultado es distinto al de simulación: en el banco el aprendizaje en línea no reduce el error de seguimiento. Este capítulo documenta ese resultado, explica por qué ocurre y precisa qué conclusiones del capítulo \ref{cap:validacion} siguen en pie.
 
 La sección \ref{sec:banco} describe el banco y lo contrasta con el caso simulado. La sección \ref{sec:impl-fija} cubre el controlador en punto fijo. La sección \ref{sec:bemf-banco} mide la \acrshort{bemf} del motor sin intervención del controlador. Las secciones \ref{sec:seguimiento-banco} y \ref{sec:adaline-banco} evalúan el seguimiento de corriente y el aprendizaje en línea. La sección \ref{sec:discusion-exp} explica el resultado y delimita su alcance.
 
@@ -61,120 +61,243 @@ En el banco, $R$ es la resistencia equivalente por fase medida con multímetro. 
 
 El controlador del capítulo \ref{cap:desarrollo} se portó a C en aritmética de punto fijo. El algoritmo \ref{alg:m2pc} no cambia: con $\rho = 10$ evalúa $66$ combinaciones por periodo. El costo de esa búsqueda decide si el esquema cabe en $T_s$.
 
-El cálculo de un periodo se aplica en el siguiente. Para que ese retardo sea de exactamente un periodo, la actualización del \acrshort{pwm} se sincroniza con el pico de la portadora. Con esa disposición el paso completo del controlador, desde la lectura de corrientes hasta la escritura del \acrshort{pwm}, tarda $13.1\,\mu$s de los $20$ disponibles. A $300$ rpm no hubo desbordes de la interrupción. El \acrshort{pi} de velocidad corre a $1$ kHz con anti-windup y entrega el par de referencia que la ecuación \eqref{eq:iref-optima} convierte en corriente de referencia.
+El cálculo de un periodo se aplica en el siguiente. La actualización del \acrshort{pwm} se sincroniza con el pico de la portadora para que ese retardo sea de un periodo exacto y el predictor pueda compensarlo. El paso completo del controlador, desde la lectura de corrientes hasta la escritura del \acrshort{pwm}, tarda $13.1\,\mu$s de los $20$ disponibles. La telemetría de los experimentos de este capítulo y la regla de sector descrita abajo lo llevan a $15.8\,\mu$s. En los experimentos sin \acrshort{adaline} no se registraron desbordes de la interrupción. El \acrshort{pi} de velocidad corre a $1$ kHz con anti-windup y entrega el par de referencia que \eqref{eq:iref-optima} convierte en corriente de referencia.
 
-El capítulo \ref{cap:desarrollo} elige el sector por la posición eléctrica, es decir, por la dirección de la \acrshort{bemf} \eqref{eq:sectores}. En el banco, esa regla no pudo frenar ni invertir el sentido de giro, porque la dirección de la \acrshort{bemf} no contiene el signo del par. Probamos dos alternativas con el motor a $600$ rpm, en la misma sesión y bajo las mismas condiciones. La primera elige el sector por la tensión que anula el error de corriente en un paso. Esa tensión es ruidosa, mueve el sector de un periodo a otro y deja un rizo de corriente de $667$ mA pico a pico. La segunda usa la tensión de régimen,
+% Fuente: PROGRESO s23 (Exp. 2) y s24 (A/B de sector, cuadro). Las tres reglas se midieron con
+% el registro L a 1 kHz: comparables entre sí, no con las cifras de la seccion 6.4.
+La regla \eqref{eq:sectores} elige el sector por la posición eléctrica, que fija la dirección de la \acrshort{bemf}. En el banco esa regla no pudo invertir el giro. Con referencia de par negativa, los dos vectores adyacentes a la dirección de la \acrshort{bemf} no producen tensión en sentido contrario, y el mejor candidato resultaba ser el vector nulo: el motor frenaba hasta detenerse, pero no invertía. La simulación del capítulo \ref{cap:validacion} nunca giró en sentido negativo, de modo que el problema no apareció ahí.
+
+Probamos dos reglas que eligen el sector por la tensión que el controlador necesita aplicar. La primera usa la tensión que anula el error de corriente en un paso,
+\begin{equation}
+    \mathbf{u}_\mathrm{db} = \hat{\mathbf{e}} + R\,\mathbf{i}^* + \frac{L}{T_s}\left(\mathbf{i}^* - \mathbf{i}(k+1)\right).
+    \label{eq:u-db}
+\end{equation}
+La segunda conserva solo la tensión de régimen,
 \begin{equation}
     \mathbf{u}_\mathrm{ss} = \hat{\mathbf{e}} + R\,\mathbf{i}^*,
     \label{eq:u-ss}
 \end{equation}
-donde $\hat{\mathbf{e}}$ es la \acrshort{bemf} estimada, $R$ la resistencia de fase e $\mathbf{i}^*$ la corriente de referencia. Con ella el rizo bajó a $377$ mA pico a pico y el motor invierte sin dificultad: en una trayectoria senoidal de $\pm 300$ rpm el error de velocidad es de $6.5$ rpm de \acrshort{rmse}. Esta regla se usa en todos los experimentos siguientes.
+donde $\hat{\mathbf{e}}$ es la \acrshort{bemf} estimada, $R$ la resistencia de fase, $\mathbf{i}^*$ la corriente de referencia e $\mathbf{i}(k+1)$ la corriente predicha. El cuadro \ref{tab:sector} compara las tres reglas a $600$ rpm, en la misma sesión y con el mismo registro de telemetría.
 
+\begin{table}[htbp]
+    \centering
+    \caption{Reglas de selección de sector a $600$ rpm. Errores \acrshort{rmse} y rizo pico a pico de $i_q$, en mA.}
+    \label{tab:sector}
+    \begin{tabular}{lcccc}
+        \toprule
+        Regla & $\varepsilon_q$ & $\varepsilon_d$ & Rizo de $i_q$ & Invierte el giro \\
+        \midrule
+        Dirección de la \acrshort{bemf} \eqref{eq:sectores} & $56.1$ & $73.2$ & $432$ & no \\
+        Tensión de un paso \eqref{eq:u-db} & $72.1$ & $65.2$ & $667$ & sí \\
+        Tensión de régimen \eqref{eq:u-ss} & $43.7$ & $54.2$ & $377$ & sí \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+La regla de un paso arrastra el ruido de medida. Una cuenta del \acrshort{adc} multiplicada por $L/T_s$ equivale a $1.3$ V, del orden de la propia \acrshort{bemf}, y el sector salta de un periodo a otro. La regla de régimen sigue a la referencia cuando la \acrshort{bemf} es pequeña y a la \acrshort{bemf} cuando domina, sin ese ruido. Coincide con \eqref{eq:sectores} cuando la \acrshort{bemf} domina, así que la tratamos como una extensión de esa regla y no como un cambio de esquema. Con ella el motor siguió una trayectoria senoidal de $\pm 300$ rpm con un error de velocidad de $6.5$ rpm \acrshort{rmse}. Es la regla de todos los experimentos que siguen.
 
 % =================================================================
 \section{Caracterización de la BEMF del motor}
 \label{sec:bemf-banco}
 
-% Contenido: Exp. 2b, BEMF en circuito abierto con la red de BEMF de la placa.
-% THD 0.42 / 0.67 / 0.64 % (tres fases), h3 <= 0.6 %, lambda = 3.49 mWb, alineacion del
-% encoder +2.85 deg. La BEMF reconstruida desde la tension comandada (Exp. 3a)
-% sobreestimaba h2-h6 entre 2 y 5 veces: era dead-time disfrazado de armonicos.
-% Fuente: PROGRESO sesion 24; log bemf_oc_s24_run1.log. Figura: BEMF medida + ajuste.
+% Fuente: PROGRESO s23 (Exp. 3a) y s24 (Exp. 2b); python_scripts/bemf_oc_analyze.py,
+% python_scripts/bemf_2804_oc.json; log datos_banco/bemf_oc_s24_run1.log.
+% Figura: presentation/fig/asesor_bemf_banco.pdf (make_advisor_figs.py).
+Para saber qué forma de onda tendría que aprender el \acrshort{adaline}, medimos la \acrshort{bemf} sin el controlador. Con el puente apagado el motor gira libre y la tensión entre sus terminales es la \acrshort{bemf}. La placa tiene una red de sensado pensada para la conmutación de seis pasos: un divisor de $10$ k$\Omega$ y $2.2$ k$\Omega$ por fase, conectado a tres canales del \acrshort{adc}. Sin el inversor, los terminales flotan; una resistencia externa de $10$ k$\Omega$ al bus de $12$ V fija su modo común e inyecta menos de $1$ mA.
 
-\pend{Resultado: la BEMF de este motor es casi senoidal. Figura con la forma medida y la tabla de armónicos.}
+Girando la llanta a mano en ambos sentidos, entre $-728$ y $+645$ rpm, registramos $300\,023$ muestras en $120$ s a $2.5$ kHz, sin pérdidas, junto con la posición del encoder. De cada fase se toma la componente diferencial, que elimina la polarización y el modo común, y se ajusta por mínimos cuadrados el modelo
+\begin{equation}
+    e_x(\theta_e) = \omega_e \sum_{k=1}^{12} \left[ a_k \cos k\theta_e + b_k \sin k\theta_e \right] + c_x,
+    \label{eq:bemf-oc}
+\end{equation}
+donde $x$ es la fase, $\omega_e$ la velocidad eléctrica estimada muestra a muestra, $a_k$ y $b_k$ los coeficientes de Fourier de la forma y $c_x$ un desplazamiento constante. El ajuste usa los $11.6$ s en que $|\omega| \ge 80$ rpm. Los intervalos de confianza del $95\%$ se obtienen por remuestreo (bootstrap) sobre bloques de $0.5$ s. Antes de aplicarlo al motor, el método se probó con un registro sintético de armónicos conocidos y recuperó $h_5 = 2.00\%$ y $h_7 = 1.00\%$.
 
-Esta medición fija el punto de partida de la sección siguiente: en este motor la forma de onda que el ADALINE debería aprender se parece mucho a la que el modelo senoidal ya supone.
+\begin{table}[htbp]
+    \centering
+    \caption{\acrshort{bemf} del motor 2804 medida en circuito abierto. Armónicos en porcentaje del fundamental, con su intervalo de confianza del $95\%$.}
+    \label{tab:bemf-oc}
+    \begin{tabular}{lccc}
+        \toprule
+        & Fase $a$ & Fase $b$ & Fase $c$ \\
+        \midrule
+        $\lambda$ [mWb]          & $3.488$ & $3.488$ & $3.485$ \\
+        Desfase del fundamental  & $+2.84^\circ$ & $+2.89^\circ$ & $+2.86^\circ$ \\
+        $h_3$ [\%]               & $0.29$ \;[$0.24$--$0.35$] & $0.61$ \;[$0.55$--$0.68$] & $0.37$ \;[$0.30$--$0.43$] \\
+        $h_5$ [\%]               & $0.28$ \;[$0.25$--$0.34$] & $0.27$ \;[$0.20$--$0.35$] & $0.52$ \;[$0.46$--$0.59$] \\
+        $h_7$ [\%]               & $0.03$ & $0.05$ & $0.08$ \\
+        \acrshort{thd} [\%]      & $0.42$ & $0.67$ & $0.64$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{banco_bemf_banco.pdf}
+    \caption{\acrshort{bemf} del motor 2804 medida en circuito abierto. Izquierda: forma normalizada de $e_\alpha$ frente a una senoide ideal, y su residuo. Derecha: armónicos por fase en escala logarítmica, con su intervalo de confianza del $95\%$.}
+    \label{fig:bemf-oc}
+\end{figure}
+
+El cuadro \ref{tab:bemf-oc} y la figura \ref{fig:bemf-oc} resumen el resultado. La \acrshort{bemf} del 2804 es casi una senoide: el \acrshort{thd} va de $0.42$ a $0.67\%$ según la fase, solo el tercer y el quinto armónico se distinguen del ruido, y ninguno pasa de $0.6\%$. El residuo entre la forma medida y la senoide no supera el $0.6\%$ del pico. El resultado es coherente con el devanado de 12 ranuras y 14 polos, cuyos factores de devanado atenúan el quinto y el séptimo armónico \pend{citar Libert y Soulard (2004); no está en el .bib}.
+
+La constante de flujo resulta $\lambda = 3.487$ mWb en el marco $\alpha\beta$. La razón real del divisor puede diferir de la nominal en un $5\%$ por las tolerancias de sus componentes, lo que afecta la amplitud pero no la forma. Cuatro estimaciones previas por la vía eléctrica dieron $3.46$ mWb; ambas coinciden al $1\%$. El fundamental de las tres fases aparece adelantado $2.85 \pm 0.05^\circ$ eléctricos respecto de la posición del encoder. Es un error de alineación del sensor, que corregimos en la constante de calibración de la sección \ref{sec:banco}.
+
+La comparación importante es con la forma que ve el controlador. Reconstruida a partir de la tensión comandada, como la reconstruye el \acrshort{adaline} en línea, la misma \acrshort{bemf} mostraba los armónicos 2 a 6 entre dos y cinco veces más grandes: $h_3 = 1.25\%$ frente a $0.29\%$, y $h_6 = 0.70\%$ frente a $0.01\%$. La diferencia la ponen el tiempo muerto del inversor y los errores en $R$, que aparecen como armónicos. La \acrshort{bemf} que ve el controlador no es la del motor, y el \acrshort{adaline} en línea aprende la primera. Este hecho reaparece en la sección \ref{sec:adaline-banco}.
 
 % =================================================================
 \section{Seguimiento de corriente del M2PC}
 \label{sec:seguimiento-banco}
 
-% Contenido: Exp. 1 (escalones de i_q* con PI congelado, captura a 50 kHz): respuesta en
-% < 200 us; RMS(eps_q) ~ 37-40 mA sobre rizo de conmutacion de 225-334 mA pk-pk (suelo
-% fisico V*Ts/L a 12 V); error de fase del modelo ~2 deg. Exp. 2: trayectoria senoidal
-% con inversion, RMS ~10 rpm (+-100/300/600), +-300 rpm RMS 6.5 rpm.
-% CUIDADO: el logger L a 1 kHz degradaba el baseline 15 % (55 -> 46.7 mA). Las cifras
-% de s23/s24 llevan ese sesgo. En la tesis usar SOLO baselines con L decimado 1/100
-% (46.7 / 43.1 mA) o repetir Exp. 1 con ese logger.
+% Fuente: PROGRESO s23 (Exp. 1 y 2), s26 §4 (sesgo del registro);
+% presentation/fig/asesor_numeros.json (piso_eq_mA, piso_ed_mA, rizo_pp_mA, resolucion_mA, vector_completo_mA).
+Antes de evaluar el aprendizaje caracterizamos el lazo de corriente con el modelo senoidal nominal. La interrupción proyecta las corrientes al marco $dq$ con el mismo ángulo que usa el controlador y calcula, muestra a muestra, los errores $\varepsilon_q = i_q - i_q^*$ y $\varepsilon_d = i_d$. El registro reporta su \acrshort{rmse} por ventanas de $10$ ms.
 
-\pend{Tabla de Exp. 1 y 2 con el logger decimado. Resolver el sesgo del logger antes de citar cifras de s23/s24.}
+Para medir la respuesta dinámica congelamos el \acrshort{pi} de velocidad y aplicamos escalones de $\pm 100$ mA y $20$ ms sobre $i_q^*$, con la corriente capturada a $50$ kHz. A $300$ y a $600$ rpm la corriente alcanza la referencia en menos de diez periodos, es decir, en menos de $200\,\mu$s. Este experimento se hizo con la regla de sector original.
+
+En régimen a $300$ rpm, con la regla de régimen \eqref{eq:u-ss} y la alineación corregida, el error de seguimiento es de $48.4 \pm 2.5$ mA \acrshort{rmse} en $q$ y de $43.6$ mA en $d$, sobre un rizo de $284$ mA pico a pico. Ese piso es una propiedad del banco. Un vector activo, de magnitud $2V_{dc}/3$, aplicado durante un periodo completo mueve la corriente $(2V_{dc}/3)\,T_s/L = 186$ mA. Con $\rho = 10$ el controlador reparte el periodo en décimos, de modo que su resolución es de $19$ mA. El error en $d$ es casi igual al de $q$. Un error causado por el modelo de \acrshort{bemf} tendría una estructura propia en cada eje; repartido por igual, apunta al ruido de medida y a la resolución del controlador.
+
+La regla de sector también corrigió un sesgo. Con la regla original, la corriente media en $q$ quedaba entre $10$ y $14$ mA por encima de la referencia en todos los niveles probados. Con la elección del sector por tensión el sesgo bajó a $\pm 1$ mA.
+
+En trayectorias senoidales de velocidad de $\pm 100$ a $\pm 600$ rpm, con inversión de giro, el error de velocidad fue de unos $10$ rpm \acrshort{rmse}. Lo domina el rizo a la frecuencia eléctrica, que el \acrshort{pi} de velocidad, con un ancho de banda de $3$ Hz, no persigue. El error de corriente sube a $62$--$68$ mA en esas trayectorias, porque pasan por velocidad cero, donde el tiempo muerto del inversor pesa más.
+
+El registro de telemetría compite con el lazo de velocidad por el procesador. Con el registro a $1$ kHz, el error en $q$ a $300$ rpm subía de $46.7$ a $55.4$ mA, porque el \acrshort{pi} quedaba ejecutándose de forma irregular. Cada cuadro de este capítulo compara corridas con la misma configuración del registro; las cifras absolutas de cuadros distintos no se comparan entre sí.
 
 % =================================================================
 \section{ADALINE en línea sobre el banco}
 \label{sec:adaline-banco}
 
-\subsection{Presupuesto de cómputo}
+\subsection{Implementación y presupuesto de cómputo}
 \label{ssec:presupuesto}
 
-% Evaluacion plana desenrollada: 365 ciclos (H=7), 235 (H=3), ~2.1 us; overruns = 0 a
-% 300 rpm. A 600 rpm no hay margen (m2pc_step cuesta 10.7 us): queda pendiente CCM-SRAM.
-% Costo colateral: corr/s 1960 -> 1785 (el I2C pierde ~9 % de muestras del encoder).
-% LMS efectivo: ~420 updates/s con H=3, no 1000. Fuente: PROGRESO s26 §1-2.
+% Fuente: PROGRESO s25 y s26 §1-2; firmware/lib/adaline.{c,h}; README_adaline.md.
+El \acrshort{adaline} conserva la estructura de la sección \ref{sec:adaline-bemf}, con dos cambios que impone el procesador. La evaluación $\hat{\mathbf{s}} = \mathbf{W}^{\mathsf{T}}\mathbf{x}(\theta_e)$ corre en la interrupción, en punto fijo con pesos de $32$ bits. La actualización \acrshort{lms} corre fuera de ella, con una cadencia nominal de $1$ kHz. La muestra que consume el \acrshort{lms} no sale del observador de la sección \ref{sec:observador}, sino de una reconstrucción algebraica sobre ventanas de $1$ ms,
+\begin{equation}
+    \bar{\mathbf{e}}_\mathrm{obs} = \bar{\mathbf{u}} - R\,\bar{\mathbf{i}} - L\,\frac{\Delta\bar{\mathbf{i}}}{\Delta t},
+    \label{eq:e-obs-banco}
+\end{equation}
+donde $\bar{\mathbf{u}}$ y $\bar{\mathbf{i}}$ son la tensión comandada y la corriente promediadas en la ventana y $\Delta t = 1$ ms. Como en simulación, la actualización se suspende cuando la \acrshort{bemf} es demasiado pequeña frente al ruido.
 
-\pend{Resumen corto del presupuesto. La historia de las tres iteraciones queda en la bitácora.}
+La primera versión de la evaluación costaba $766$ ciclos y desbordaba la interrupción decenas de miles de veces por segundo. Escrita sin llamadas a funciones ni arreglos intermedios, cuesta $365$ ciclos con $H = 7$ y $235$ con $H = 3$, unos $2.1$ y $1.4\,\mu$s. Con $H = 7$ la interrupción quedaba en unos $19\,\mu$s y el resto del programa casi sin procesador, así que los experimentos usan $H = 3$. Los armónicos quinto y séptimo del motor son menores de $0.6\%$ (cuadro \ref{tab:bemf-oc}), de modo que el truncamiento no pierde nada medible. Con $H = 3$ no hubo desbordes a $300$ rpm. A $600$ rpm no queda margen y el \acrshort{adaline} no se evaluó a esa velocidad.
+
+El \acrshort{lms} alcanzó unas $420$ actualizaciones por segundo y no $1000$, porque comparte el procesador con el registro y el lazo de velocidad. La ganancia efectiva es por eso menor que la nominal.
 
 \subsection{Resultados a 300 rpm}
 \label{ssec:resultados-300}
 
-% TABLA CENTRAL (Exp. 3c, redefinida en s26). 300 rpm constante, L decimado, overruns = 0:
-%   OFF'            eps_q 46.7  eps_d 43.1
-%   ON mu=0         48.0        41.0   (control: implementacion inocua)
-%   ON mu=1e-4      44.8        39.3   (aprendizaje neto -4 % / -9 %: marginal; W deriva)
-%   E mu=0 (modelo erroneo lambda*0.8, +10 deg, sin aprender)  44.1  39.7
-%   E mu=1e-4       46.6 -> 55.1  40.5 -> 44.2  (recupera lambda; luego empeora)
-% Resultados negativos que tambien van: mu = 2e-3 inestable en lazo (TRIP, i_alpha = 1.2 A,
-% t ~ 138 s); mu = 1e-4 en trayectoria +-300 rpm da ~100 mA (2.3x peor que OFF).
-% Fuente: PROGRESO s26 §3-4; logs m2pc_s26_*.
+% Fuente: presentation/fig/asesor_numeros.json (rms_runs), figura asesor_rms_experimento.pdf.
+% Logs: m2pc_s26_B_off_300rpm_ldec100, E_wrong_mu0, B_on_300rpm_H3_mu7, E_wrong_mu7.
+% Control mu = 0 (48.0 mA): PROGRESO s26 §4, corrida B-ON mu0.
+Comparamos cuatro corridas a $300$ rpm, en la misma sesión y con la misma configuración del registro. La primera usa el modelo senoidal nominal. La segunda usa un modelo equivocado a propósito, con amplitud $0.8\lambda$ y $10^\circ$ de desfase, sin aprender. Las dos últimas activan el \acrshort{adaline} con $\mu = 10^{-4}$, partiendo del modelo nominal y del modelo equivocado. El cuadro \ref{tab:adaline-300} y la figura \ref{fig:rms-adaline} muestran el resultado, con la media y la desviación entre bloques de $10$ s.
 
-\pend{Cuadro con las cinco configuraciones y las dos corridas inestables; figura con W(t) de la corrida E.}
+\begin{table}[htbp]
+    \centering
+    \caption{Error de seguimiento a $300$ rpm con distintos modelos de \acrshort{bemf}. Media y desviación estándar entre bloques de $10$ s.}
+    \label{tab:adaline-300}
+    \begin{tabular}{lccc}
+        \toprule
+        Modelo & $\varepsilon_q$ [mA] & $\varepsilon_d$ [mA] & Bloques \\
+        \midrule
+        Senoidal nominal                       & $48.4 \pm 2.5$ & $43.6$ & $5$ \\
+        Equivocado ($0.8\lambda$, $+10^\circ$), fijo & $44.8 \pm 1.8$ & $39.9$ & $3$ \\
+        \acrshort{adaline} desde el nominal    & $45.4 \pm 1.9$ & $39.3$ & $14$ \\
+        \acrshort{adaline} desde el equivocado & $52.0 \pm 4.0$ & $42.8$ & $17$ \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{banco_rms_experimento.pdf}
+    \caption{Error de seguimiento a $300$ rpm. Izquierda: \acrshort{rmse} de $\varepsilon_q$ por bloques de $10$ s. Derecha: media y desviación por corrida; la banda gris es la variación de la corrida de referencia.}
+    \label{fig:rms-adaline}
+\end{figure}
+
+Las tres primeras corridas difieren en $3$ o $4$ mA, del orden de la dispersión entre bloques. El modelo equivocado no empeoró el seguimiento, y el \acrshort{adaline} no lo mejoró de forma distinguible. La cuarta corrida es la única que sube con el tiempo. Una corrida de control, con el \acrshort{adaline} activo y $\mu = 0$, dio $48.0$ mA: la implementación por sí sola no altera el lazo.
 
 \subsection{El LMS como identificador}
 \label{ssec:identificador}
 
-% Desde lambda*0.8 recupera lambda en ~90 s en lazo cerrado (b1_alpha -0.79 -> -1.01).
-% Pero converge a la tension efectiva vista por el controlador: secuencia negativa
-% (asimetria alfa/beta de la cadena de medida) y h2 creciente (5.8 -> 8 -> 17.6 %) sin
-% saturar. Mecanismo de la inestabilidad: e_hat alimenta predictor Y regla de sector ->
-% el error de forma mueve el sector -> cambia el patron de rizo -> el observador
-% (dominado por dead-time) ve otra "BEMF" -> W la aprende. En simulacion e_hat no
-% cerraba ese lazo.
+% Fuente: asesor_numeros.json (id_amp_*, id_fase_*, id_neg_fin, idn_*, t90), figura
+% asesor_identificacion.pdf; h2 = 5.8 %: PROGRESO s26 §4 (B-ON).
+La figura \ref{fig:identificacion} sigue los pesos del \acrshort{adaline} como amplitud, fase y desbalance entre ejes. Partiendo de una amplitud $0.8$, el \acrshort{lms} alcanza el $90\%$ del cambio en $111$ s y termina en $1.02$, a menos de $3\%$ del valor medido en circuito abierto. El identificador funciona en lazo cerrado.
 
-\pend{Explicar el punto fijo del LMS y el mecanismo de la espiral, con la figura de la deriva de $h_2$.}
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{banco_identificacion.pdf}
+    \caption{Evolución del modelo aprendido a $300$ rpm, partiendo del modelo equivocado y del nominal. (a) Amplitud del fundamental. (b) Error de fase. (c) Secuencia negativa, una medida del desbalance entre los ejes $\alpha$ y $\beta$.}
+    \label{fig:identificacion}
+\end{figure}
+
+La fase no se corrige. Partiendo de $10^\circ$ el modelo termina en $12^\circ$; partiendo de $0^\circ$ termina en $10^\circ$. Aparece también un desbalance entre los ejes $\alpha$ y $\beta$, de $6$ a $8\%$ del fundamental, y un segundo armónico de $5.8\%$ tras $150$ s. Ninguno de los dos se estabiliza en el tiempo registrado, y ninguno existe en la medición de circuito abierto. El \acrshort{lms} converge a la tensión efectiva que reconstruye \eqref{eq:e-obs-banco}, no a la \acrshort{bemf} del imán. Sospechamos que la diferencia la ponen el tiempo muerto y las asimetrías del inversor, como en la sección \ref{sec:bemf-banco}, pero no lo hemos comprobado.
+
+\subsection{Estabilidad del aprendizaje}
+\label{ssec:estabilidad}
+
+% Fuente: asesor_numeros.json (ratio_*), figura asesor_estabilidad.pdf; TRIP: PROGRESO s26 §3.
+La figura \ref{fig:estabilidad} normaliza el error de cada corrida por el de su referencia sin aprendizaje. Con la ganancia de la simulación, $\mu = 2\times 10^{-3}$, el lazo es inestable: el error crece hasta $2.8$ veces el de referencia y salta la protección de sobrecorriente. Con $\mu = 10^{-4}$ y velocidad constante, el aprendizaje no estorba. Con la misma ganancia en una trayectoria de velocidad variable, el error sube a $2.3$ veces el de referencia. Lo atribuimos a los pasos por velocidad cero, donde la \acrshort{bemf} es pequeña y el ruido de \eqref{eq:e-obs-banco} domina. Partiendo del modelo equivocado, el error termina $11\%$ por encima del de referencia.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{banco_estabilidad.pdf}
+    \caption{Error de seguimiento normalizado por el de la referencia sin aprendizaje, para dos ganancias del \acrshort{lms} y dos regímenes de velocidad.}
+    \label{fig:estabilidad}
+\end{figure}
+
+La inestabilidad tiene un camino que la simulación no tenía. La estimación $\hat{\mathbf{e}}$ entra en el predictor y en la regla de sector \eqref{eq:u-ss}. Un error en lo aprendido cambia el sector, el sector cambia el patrón de rizo, y la reconstrucción \eqref{eq:e-obs-banco}, que ya mezcla tiempo muerto con \acrshort{bemf}, ve una tensión distinta que el \acrshort{lms} vuelve a aprender. En simulación el sector dependía solo de $\theta_e$, de modo que ese lazo no existía.
 
 % =================================================================
 \section{Discusión}
 \label{sec:discusion-exp}
 
-El aprendizaje en línea no mejoró el seguimiento de corriente en el banco. Esta sección muestra que el resultado es el esperado para este motor, y no una falla del \acrshort{adaline}.
+El aprendizaje en línea no mejoró el seguimiento de corriente en el banco. Esta sección explica por qué ese es el resultado esperado para este motor.
 
 \subsection{Cuánto pesa la forma de la BEMF en el predictor}
 
+% Fuente: asesor_numeros.json; figuras asesor_escalas.pdf, asesor_sesgo_dc.pdf, asesor_armonicos.pdf.
 El predictor del \acrshort{fcsm2pc} avanza la corriente un paso con la tensión aplicada menos la \acrshort{bemf}, multiplicada por $G = T_s/L$. En el banco $G = 0.023$ A/V. Como el controlador compensa un retardo, la predicción abarca dos pasos, y un error $\delta e$ en la \acrshort{bemf} mueve la corriente predicha $2G\,\delta e$.
 
-Con esa cuenta todo queda en amperes. A $300$ rpm la \acrshort{bemf} de pico es de $0.77$ V. La distorsión real del motor equivale a $0.2$ mA en la predicción. Un modelo equivocado en $25\%$ equivale a $9$ mA, y quitar la \acrshort{bemf} del modelo por completo, a $36$ mA. Frente a eso, el controlador solo puede elegir entre diez subdivisiones de un vector, lo que fija un paso de $19$ mA. El error de seguimiento medido es de unos $48$ mA \acrshort{rmse} y el rizo pico a pico, de $284$ mA. Lo que el modelo de \acrshort{bemf} puede mover queda entre cinco y doscientas veces por debajo del piso del controlador.
+Con esa cuenta, todo se expresa en amperes (figura \ref{fig:escalas}). A $300$ rpm la \acrshort{bemf} de pico es de $0.77$ V. La distorsión real del motor equivale a $0.2$ mA en la predicción. El modelo equivocado de la sección \ref{ssec:resultados-300} equivale a $9$ mA, y quitar la \acrshort{bemf} del modelo por completo, a $36$ mA. El piso del controlador está entre $19$ mA, su resolución, y $284$ mA, el rizo pico a pico. Lo que el modelo de \acrshort{bemf} puede mover queda entre cinco y doscientas veces por debajo.
 
-Si el error de modelo y el piso son independientes, el \acrshort{rmse} total es su suma cuadrática. Esa curva no tiene parámetros ajustados: usa $G$, la \acrshort{bemf} de pico y el piso medido. Para que el \acrshort{rmse} subiera $10\%$ habría que equivocarse $60\%$ en la \acrshort{bemf}. Los datos la confirman. Con el modelo nominal medimos $48 \pm 2.5$ mA, y con el modelo equivocado en $25\%$, $45 \pm 2$ mA. El modelo equivocado no empeoró el seguimiento. Estas cifras provienen de cinco y tres bloques de $10$ s respectivamente, a $300$ rpm y casi sin carga, de modo que la dispersión entre corridas se estima con pocos datos.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{banco_escalas.pdf}
+    \caption{Corriente que un error de modelo de \acrshort{bemf} mueve en la predicción (arriba) frente a las escalas del controlador y de la medición (abajo), a $300$ rpm. Escala logarítmica.}
+    \label{fig:escalas}
+\end{figure}
 
-El modelo sí deja huella donde la medición es más fina. El valor medio de la corriente se mide con $0.1$ mA de precisión, $25$ veces mejor que el \acrshort{rmse}. El modelo equivocado lo desplazó $12.6$ mA en el eje $d$ y $10.3$ mA en el eje $q$. La misma cuenta de dos pasos predice $5.0$ y $7.6$ mA. No coincide exactamente, pero da el signo y el orden de magnitud sin ajustar nada. Un error en la fundamental se convierte en un sesgo constante y no en rizo, y el lazo de velocidad lo absorbe.
+Si el error de modelo y el piso son independientes, el \acrshort{rmse} total es su suma cuadrática. Esa predicción no tiene parámetros ajustados: usa $G$, la \acrshort{bemf} de pico y el piso medido. Para que el \acrshort{rmse} subiera un $10\%$ habría que equivocarse un $60\%$ en la \acrshort{bemf}. El cuadro \ref{tab:adaline-300} lo confirma: el modelo equivocado en un $25\%$ no empeoró el seguimiento. Las cifras provienen de pocos bloques, a $300$ rpm y casi sin carga, de modo que la dispersión entre corridas está estimada con pocos datos.
 
-El rizo que importa para el par aparece en el sexto armónico del ángulo eléctrico, medido con $26\,522$ ventanas sincronizadas con el encoder: $2$ mA en $i_q$ y $15$ mA en $i_d$. La forma de la \acrshort{bemf} explica como máximo $0.2$ mA de ese armónico, una décima parte del rizo en $i_q$ y una centésima en $i_d$. Aunque el \acrshort{adaline} aprendiera la forma sin error, el resto del rizo seguiría ahí. Lo ponen el lazo y el inversor.
+El modelo sí deja huella donde la medición es más fina (figura \ref{fig:sesgo}). El valor medio de la corriente se mide con $0.1$ mA de precisión, unas $25$ veces mejor que el \acrshort{rmse}. El modelo equivocado lo desplazó $12.6$ mA en el eje $d$ y $10.3$ mA en el eje $q$, y la cuenta de dos pasos predice $5.0$ y $7.6$ mA. No coinciden exactamente, pero la cuenta da el signo y el orden de magnitud sin ajustar nada. Un error en el fundamental se convierte en un sesgo constante y no en rizo, y el lazo de velocidad lo absorbe.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{banco_sesgo_dc.pdf}
+    \caption{Cambio del valor medio de la corriente respecto del modelo nominal: predicción de dos pasos frente a lo medido con el modelo equivocado y con el \acrshort{adaline}.}
+    \label{fig:sesgo}
+\end{figure}
+
+El rizo que importa para el par aparece en el sexto armónico de la frecuencia eléctrica. Lo medimos con $26\,522$ ventanas sincronizadas con el encoder: $2$ mA en $i_q$ y $15$ mA en $i_d$ (figura \ref{fig:armonicos}). La forma de la \acrshort{bemf} explica como máximo $0.2$ mA de ese armónico, una décima parte en $i_q$ y una centésima en $i_d$. Aunque el \acrshort{adaline} aprendiera la forma sin error, el resto del rizo seguiría ahí. Su origen está en el lazo y en el inversor: la estructura de sectores, el tiempo muerto y la resolución que fija $\rho$.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=\linewidth]{banco_armonicos.pdf}
+    \caption{Armónicos de $i_q$ e $i_d$ sincronizados con el ángulo eléctrico a $300$ rpm. La barra roja es la cota de lo atribuible a la forma de la \acrshort{bemf} en el sexto armónico.}
+    \label{fig:armonicos}
+\end{figure}
 
 \subsection{Dónde está la frontera entre simulación y banco}
 
-La planta sintética del capítulo \ref{cap:validacion} tiene un \acrshort{thd} de $10.6\%$, entre $16$ y $25$ veces el del banco. Ahí un modelo trapezoidal o senoidal se equivoca por una fracción grande de la \acrshort{bemf}, y esa diferencia llega al par por las dos vías de la sección \ref{sec:rizo-mismatch}. En el banco el \acrshort{thd} es de $0.4$ a $0.7\%$ y la cota del rizo de par por esa vía es del mismo orden. Con un piso de conmutación de unos $300$ mA pico a pico, esa cota no se distingue en la corriente.
+La planta sintética del capítulo \ref{cap:validacion} tiene un \acrshort{thd} de $10.6\%$, entre $16$ y $25$ veces el del banco. Ahí un modelo trapezoidal o senoidal se equivoca en una fracción grande de la \acrshort{bemf}, y esa diferencia llega al par por las dos vías de la sección \ref{sec:rizo-mismatch}. En el banco el \acrshort{thd} es de $0.4$ a $0.7\%$, y la cota del rizo de par atribuible a la forma es del mismo orden. Con un rizo de conmutación de unos $300$ mA pico a pico, esa cota no se distingue en la corriente.
 
-La vía de la predicción tiene un criterio compacto. Su efecto relativo al rizo de conmutación $V_{dc}T_s/L$ es $2G\,\delta e / (V_{dc}T_s/L) = 2\,\delta e/V_{dc}$. La inductancia y el periodo se cancelan. Solo importa cuántos volts de error de \acrshort{bemf} hay frente a la tensión del bus. En el banco ese cociente es del orden de $10^{-3}$ \pend{calcular con $\delta e = $ THD $\times\, e_\mathrm{pk}$ y evaluar el mismo cociente para la planta sintética de $240$ V antes de afirmar la comparación}.
+La vía de la predicción admite un criterio compacto. Su efecto relativo al rizo de conmutación $V_{dc}T_s/L$ es $2G\,\delta e / (V_{dc}T_s/L) = 2\,\delta e/V_{dc}$: la inductancia y el periodo se cancelan, y solo importa el error de \acrshort{bemf} frente a la tensión del bus. Con la distorsión real del 2804 a $300$ rpm, $\delta e \approx 4.5$ mV y el cociente es de $7.5\times 10^{-4}$. \pend{Evaluar el mismo cociente para la planta sintética del capítulo \ref{cap:validacion} con un script trazable. Una estimación gruesa da del orden de $3\times 10^{-2}$, también pequeña: si se confirma, la ganancia simulada vendría sobre todo de la vía de la referencia, y el párrafo anterior debe decirlo.}
 
-\subsection{Lo que sí se demostró en banco}
+\subsection{Resultado sin explicar}
 
-El mecanismo de aprendizaje funciona. Partiendo de una \acrshort{bemf} $20\%$ menor que la real y con $10^\circ$ de desfase, el \acrshort{adaline} corrige la amplitud en unos $110$ s y termina a $3\%$ del valor medido en circuito abierto. La implementación cabe en la interrupción a $300$ rpm, y con ganancia nula no cambia el seguimiento respecto del controlador sin \acrshort{adaline}.
-
-Tiene tres límites medidos. Primero, la fase no se corrige: el modelo termina entre $10^\circ$ y $12^\circ$ parta de donde parta, y aparece un desbalance de $6$ a $8\%$ entre los ejes $\alpha$ y $\beta$ que crece con el tiempo. Sospechamos que el observador reconstruye la \acrshort{bemf} a partir de la tensión comandada y no de la aplicada, de modo que el tiempo muerto y las asimetrías del inversor se cuelan en lo aprendido. No lo hemos comprobado. Segundo, con la ganancia de la simulación el lazo es inestable: el error se multiplica por $2.8$ y salta la protección de sobrecorriente. Tercero, con una ganancia veinte veces menor el aprendizaje no estorba a velocidad constante, pero con velocidad variable el error sube a más del doble, y lo atribuimos a que, al pasar cerca de cero, la \acrshort{bemf} es pequeña y el ruido del observador domina.
-
-Queda un resultado sin explicar. Partiendo del modelo equivocado, el error sube hasta $11\%$ por encima del de referencia, pero la sensibilidad calculada arriba predice un efecto de apenas $1$ mA. Algo en la interacción entre lo aprendido y el controlador escapa a esa cuenta.
+Partiendo del modelo equivocado, el error con aprendizaje termina un $11\%$ por encima del de referencia. La sensibilidad calculada arriba predice que lo aprendido mueve apenas $1$ mA. Algo en la interacción entre lo aprendido y el controlador escapa a esa cuenta; el lazo a través del sector de la sección \ref{ssec:estabilidad} es un candidato, no verificado.
 
 \subsection{Alcance}
 
-Todo se midió a $300$ rpm y con una corriente $i_q$ del orden de $10$ mA. El rizo de par por forma de \acrshort{bemf} escala con $i_q$, de modo que un experimento con carga es razonable, aunque la cota seguiría siendo del orden de la distorsión, $0.5\%$. La ablación entre amplitud y forma en simulación está escrita y sin correr; separaría cuánto de la ganancia simulada se debe a la amplitud y cuánto a la forma. \pend{Cerrar con la conclusión: en qué motor y condiciones el aprendizaje de la forma sí paga.}
+Todo se midió a $300$ rpm y con una corriente $i_q$ del orden de $10$ mA. El rizo de par debido a la forma de la \acrshort{bemf} escala con $i_q$, así que un experimento con carga tiene sentido, aunque la cota seguiría siendo del orden de la distorsión, $0.5\%$. En simulación falta separar cuánto de la ganancia se debe a corregir la amplitud y cuánto a corregir la forma; el experimento está escrito y sin correr.
+
+Con estas mediciones, el aprendizaje de la forma solo puede notarse cuando el error que corrige es comparable con el piso del controlador. Por la vía de la referencia, eso exige una \acrshort{bemf} con varios por ciento de distorsión. Por la vía de la predicción, un error de \acrshort{bemf} que sea una fracción apreciable de la tensión del bus. El 2804 a $12$ V no cumple ninguna de las dos condiciones; la planta del capítulo \ref{cap:validacion} cumple la primera.
 
 \end{document}
