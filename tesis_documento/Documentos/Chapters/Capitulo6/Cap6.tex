@@ -288,7 +288,34 @@ El rizo que importa para el par aparece en el sexto armónico de la frecuencia e
 
 La planta sintética del capítulo \ref{cap:validacion} tiene un \acrshort{thd} de $10.6\%$, entre $16$ y $25$ veces el del banco. Ahí un modelo trapezoidal o senoidal se equivoca en una fracción grande de la \acrshort{bemf}, y esa diferencia llega al par por las dos vías de la sección \ref{sec:rizo-mismatch}. En el banco el \acrshort{thd} es de $0.4$ a $0.7\%$, y la cota del rizo de par atribuible a la forma es del mismo orden. Con un rizo de conmutación de unos $300$ mA pico a pico, esa cota no se distingue en la corriente.
 
-La vía de la predicción admite un criterio compacto. Su efecto relativo al rizo de conmutación $V_{dc}T_s/L$ es $2G\,\delta e / (V_{dc}T_s/L) = 2\,\delta e/V_{dc}$: la inductancia y el periodo se cancelan, y solo importa el error de \acrshort{bemf} frente a la tensión del bus. Con la distorsión real del 2804 a $300$ rpm, $\delta e \approx 4.5$ mV y el cociente es de $7.5\times 10^{-4}$. \pend{Evaluar el mismo cociente para la planta sintética del capítulo \ref{cap:validacion} con un script trazable. Una estimación gruesa da del orden de $3\times 10^{-2}$, también pequeña: si se confirma, la ganancia simulada vendría sobre todo de la vía de la referencia, y el párrafo anterior debe decirlo.}
+La vía de la predicción admite un criterio compacto. Su efecto relativo al rizo de conmutación $V_{dc}T_s/L$ es
+\begin{equation}
+    \kappa = \frac{2G\,\delta e}{V_{dc}T_s/L} = \frac{2\,\delta e}{V_{dc}},
+    \label{eq:kappa}
+\end{equation}
+donde $\delta e$ es la amplitud de pico equivalente del error de modelo en el eje $\alpha$. La inductancia y el periodo se cancelan: solo importa el error de \acrshort{bemf} frente a la tensión del bus. El cuadro \ref{tab:kappa} evalúa $\kappa$ en los dos casos, en el punto de operación de cada uno.
+
+% Fuente: python_scripts/cociente_prediccion.py
+\begin{table}[htbp]
+    \centering
+    \caption{Cociente $\kappa$ de \eqref{eq:kappa} en el banco ($300$ rpm, $12$ V) y en la simulación del capítulo \ref{cap:validacion} ($80$ rad/s, $240$ V). Entre paréntesis, la parte debida solo a la forma, con el modelo reescalado al fundamental de la planta.}
+    \label{tab:kappa}
+    \begin{tabular}{lcc}
+        \toprule
+        Caso & $\delta e$ & $\kappa$ \\
+        \midrule
+        Banco, distorsión real frente al modelo senoidal & $4.4$ mV & $7.4\times 10^{-4}$ \\
+        Banco, modelo equivocado ($0.8\lambda$, $+10^\circ$) & $0.19$ V & $0.032$ \\
+        Banco, error que subiría el \acrshort{rmse} un $10\%$ & $0.48$ V & $0.079$ \\
+        Simulación, SIN frente a la planta & $8.2$ V ($2.6$ V) & $0.068$ ($0.022$) \\
+        Simulación, TRAP frente a la planta & $14.9$ V ($2.3$ V) & $0.124$ ($0.019$) \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+El cuadro deja dos lecturas. La primera: la distorsión real del 2804 da un $\kappa$ unas cuarenta veces menor que el del modelo equivocado de la sección \ref{ssec:resultados-300}, y ese modelo equivocado ya no cambió el error de seguimiento. Por la vía de la predicción, en el banco no hay nada que ganar.
+
+La segunda lectura es sobre la simulación. Ahí la mayor parte del error de los modelos fijos es de amplitud, no de forma. SIN y TRAP suponen una forma de amplitud unitaria, mientras que el fundamental de la planta sintética vale $0.76$. Solo la forma da $\kappa \approx 0.02$, del orden del modelo equivocado del banco; con la amplitud, $\kappa$ sube a $0.07$--$0.12$. No sabemos qué parte de la ganancia del capítulo \ref{cap:validacion} viene de corregir la amplitud y qué parte de corregir la forma. En el banco, un error de amplitud y fase se tradujo en un sesgo de la corriente media y no en rizo, lo que sugiere que la forma pesa más en el rizo de par, pero esa inferencia cruza dos plantas distintas. La ablación entre amplitud y forma en simulación lo separaría.
 
 \subsection{Resultado sin explicar}
 
@@ -296,8 +323,8 @@ Partiendo del modelo equivocado, el error con aprendizaje termina un $11\%$ por 
 
 \subsection{Alcance}
 
-Todo se midió a $300$ rpm y con una corriente $i_q$ del orden de $10$ mA. El rizo de par debido a la forma de la \acrshort{bemf} escala con $i_q$, así que un experimento con carga tiene sentido, aunque la cota seguiría siendo del orden de la distorsión, $0.5\%$. En simulación falta separar cuánto de la ganancia se debe a corregir la amplitud y cuánto a corregir la forma; el experimento está escrito y sin correr.
+Todo se midió a $300$ rpm y con una corriente $i_q$ del orden de $10$ mA. El rizo de par debido a la forma de la \acrshort{bemf} escala con $i_q$, así que un experimento con carga tiene sentido, aunque la cota seguiría siendo del orden de la distorsión, $0.5\%$. La ablación entre amplitud y forma del cuadro \ref{tab:kappa} está escrita y sin correr.
 
-Con estas mediciones, el aprendizaje de la forma solo puede notarse cuando el error que corrige es comparable con el piso del controlador. Por la vía de la referencia, eso exige una \acrshort{bemf} con varios por ciento de distorsión. Por la vía de la predicción, un error de \acrshort{bemf} que sea una fracción apreciable de la tensión del bus. El 2804 a $12$ V no cumple ninguna de las dos condiciones; la planta del capítulo \ref{cap:validacion} cumple la primera.
+Con estas mediciones, el aprendizaje de la forma solo puede notarse cuando el error que corrige es comparable con el piso del controlador. Por la vía de la referencia, eso exige una \acrshort{bemf} con varios por ciento de distorsión. Por la vía de la predicción, en el banco haría falta $\kappa \approx 0.08$ para subir el error un $10\%$. El 2804 a $12$ V queda lejos de ambas condiciones. La planta del capítulo \ref{cap:validacion} cumple la primera; la segunda solo si se cuenta el error de amplitud.
 
 \end{document}

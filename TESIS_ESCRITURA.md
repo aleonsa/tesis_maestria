@@ -185,9 +185,11 @@ sesgo del registro), 6.5 ADALINE (presupuesto, cuadro de 4 corridas, identificad
 (escalas, sesgo DC, armónico 6, frontera, resultado sin explicar, alcance y condición de cuándo paga).
 Figuras en `Capitulo6/FigureC6/banco_*.pdf`: copias de `presentation/fig/asesor_*.pdf` (make_advisor_figs.py).
 No se usó `asesor_sensibilidad.pdf`: sus etiquetas "sim." se refieren a la LUT de dSPACE (2.6 %), no a la planta del Cap. 5.
-**Pendientes (`\pend`, en rojo):** cita de Libert y Soulard 2004 (no está en el .bib); cociente 2·δe/V_dc de la planta
-sintética con script trazable (estimación gruesa ~3e-2: si se confirma, la ganancia simulada viene sobre todo de la
-vía de la referencia y 6.6 debe decirlo).
+**Pendiente (`\pend`, en rojo):** cita de Libert y Soulard 2004 (no está en el .bib).
+**Cociente κ = 2δe/V_dc resuelto** (`python_scripts/cociente_prediccion.py`, cuadro `tab:kappa`): banco 7.4e-4 (distorsión real),
+0.032 (modelo equivocado, sin efecto medible), 0.079 para +10 % de RMS; simulación SIN 0.068 y TRAP 0.124, pero solo forma
+0.022/0.019. En simulación el error de los modelos fijos es sobre todo de AMPLITUD (fundamental de la planta 0.76 vs 1 de
+SIN/TRAP): la ablación amplitud vs forma (`main_ablation_ke_vs_shape.m`, sin correr, requiere MATLAB) es ahora la pieza que falta.
 Otros: la figura `banco_rms_experimento.pdf` recorta la etiqueta del eje y ("[mA"); regenerar si se pule.
 **Compila limpio** (68 págs, 0 errores, 0 refs indefinidas; TeX Live 2026 instalado vía MacTeX el 2026-11-15).
 
