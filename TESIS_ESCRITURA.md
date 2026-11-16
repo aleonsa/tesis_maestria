@@ -183,15 +183,20 @@ Pendiente de decisión: si los objetivos de `sec:objetivos` y `sec:contribucione
 6.3 BEMF en circuito abierto (cuadro + figura), 6.4 seguimiento (piso 48.4 mA, resolución 19 mA, sesgo, trayectorias,
 sesgo del registro), 6.5 ADALINE (presupuesto, cuadro de 4 corridas, identificador, estabilidad), 6.6 discusión
 (escalas, sesgo DC, armónico 6, frontera, resultado sin explicar, alcance y condición de cuándo paga).
-Figuras en `Capitulo6/FigureC6/banco_*.pdf`: copias de `presentation/fig/asesor_*.pdf` (make_advisor_figs.py).
-No se usó `asesor_sensibilidad.pdf`: sus etiquetas "sim." se refieren a la LUT de dSPACE (2.6 %), no a la planta del Cap. 5.
+**Figuras rehechas (2026-11-15):** 7 figuras `Capitulo6/FigureC6/c6_*.pdf` generadas por `python_scripts/make_cap6_figs.py`
+(desde `datos_banco/`, `bemf_2804_oc.json`, `bemf_lut.mat`; números en `c6_numeros.json`). Una figura, un mensaje, colores fijos:
+azul = banco, naranja = simulación, aqua/violeta = ADALINE desde nominal/equivocado, negro/gris = modelos fijos.
+c6_bemf_forma (6.3, banco vs planta del Cap. 5), c6_escalon (6.4, nueva: el rizo de conmutación), c6_rms_modelos (6.5, sustituye
+cuadro + figura), c6_identificacion, c6_estabilidad (paneles separados por régimen; (a) es H=7 al borde del presupuesto),
+c6_sesgo_rizo (6.6, sesgo + rizo a 6f_e), c6_kappa (6.6, nueva: todos los casos sobre el eje κ). Se retiraron las 7 `banco_*.pdf`.
+`make_advisor_figs.py` reproduce `asesor_numeros.json` exacto desde los logs (verificado 2026-11-15).
 **Pendiente (`\pend`, en rojo):** cita de Libert y Soulard 2004 (no está en el .bib).
 **Cociente κ = 2δe/V_dc resuelto** (`python_scripts/cociente_prediccion.py`, cuadro `tab:kappa`): banco 7.4e-4 (distorsión real),
 0.032 (modelo equivocado, sin efecto medible), 0.079 para +10 % de RMS; simulación SIN 0.068 y TRAP 0.124, pero solo forma
 0.022/0.019. En simulación el error de los modelos fijos es sobre todo de AMPLITUD (fundamental de la planta 0.76 vs 1 de
 SIN/TRAP): la ablación amplitud vs forma (`main_ablation_ke_vs_shape.m`, sin correr, requiere MATLAB) es ahora la pieza que falta.
 Otros: la figura `banco_rms_experimento.pdf` recorta la etiqueta del eje y ("[mA"); regenerar si se pule.
-**Compila limpio** (68 págs, 0 errores, 0 refs indefinidas; TeX Live 2026 instalado vía MacTeX el 2026-11-15).
+**Compila limpio** (71 págs, 0 errores, 0 refs indefinidas; TeX Live 2026 instalado vía MacTeX el 2026-11-15).
 
 ---
 
