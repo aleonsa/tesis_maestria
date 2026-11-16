@@ -179,7 +179,13 @@ Secciones: 6.1 banco (con cuadro sim vs banco), 6.2 M2PC en punto fijo, 6.3 BEMF
 (4) R y L del 2804 del cuadro vienen de PLANNING (aprox.), verificar.
 **Correcciones del Dr. Icaza (PDF 17-ago):** "Supervisor" → "Tutor principal" (portada y jurado); "Posgrado de Ingeniería" → "Instituto de Ingeniería".
 Pendiente de decisión: si los objetivos de `sec:objetivos` y `sec:contribuciones` deben mencionar la validación experimental.
-**Compila limpio** (60 págs, 0 errores, 0 refs indefinidas; TeX Live 2026 instalado vía MacTeX el 2026-11-15).
+**Redactado (2026-11-15, 63 págs):** intro y ruta, 6.1 (banco + cuadro sim vs banco, THD 10.6 % vs 0.4-0.7 % con `python_scripts/thd_lut_sim.py`),
+6.2 (punto fijo, regla de sector u_ss) y 6.6 (sensibilidad G·δe, sesgo, armónico 6, mecanismo y límites del ADALINE, alcance).
+Cifras de 6.6 salen de `presentation/fig/asesor_numeros.json` (make_advisor_figs.py sobre `datos_banco/`).
+**Pendiente en 6.6:** evaluar 2·δe/V_dc para banco y planta sintética antes de afirmar la comparación (`\pend`); conclusión final de la sección.
+**Aviso:** las cifras 13 %/3 % de la presentación al asesor vienen de una tabla vieja (mar-may 2026, LUT real, hardcodeadas en make_advisor_figs.py:227-229); no usarlas. La planta del Cap. 5 tiene THD 10.6 %, no 2.6 %.
+Sin redactar aún: 6.3, 6.4, 6.5 (esqueleto con cifras en comentarios).
+**Compila limpio** (63 págs, 0 errores, 0 refs indefinidas; TeX Live 2026 instalado vía MacTeX el 2026-11-15).
 
 ---
 
